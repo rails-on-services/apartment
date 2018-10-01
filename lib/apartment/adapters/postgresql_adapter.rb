@@ -63,9 +63,9 @@ module Apartment
       #
       def connect_to_new(tenant = nil)
         return reset if tenant.nil?
-        raise ActiveRecord::StatementInvalid.new("Could not find schema #{tenant}") unless Apartment.connection.schema_exists?(tenant.to_s)
+        raise ActiveRecord::StatementInvalid.new("Could not find schema #{tenant}") unless schema_exists?(tenant)
 
-        @current = tenant.to_s
+        @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
         Apartment.connection.schema_search_path = full_search_path
 
         # When the PostgreSQL version is < 9.3,
@@ -99,6 +99,10 @@ module Apartment
         # ActiveRecord::ConnectionAdapters::PostgreSQLAdapter#postgresql_version is
         # public from Rails 5.0.
         Apartment.connection.send(:postgresql_version)
+      end
+
+      def schema_exists?(schemas)
+        [*schemas].all? { |schema| Apartment.connection.schema_exists?(schema.to_s) }
       end
     end
 
