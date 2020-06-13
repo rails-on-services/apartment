@@ -23,6 +23,9 @@ module Apartment
       # before init is called
       @already_initialized = true
       init
+    rescue ActiveRecord::StatementInvalid
+      # If we are creating the database, we can't init yet because the database doesn't exist
+      @already_initialized = false
     end
 
     def reinitialize
