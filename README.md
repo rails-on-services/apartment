@@ -612,6 +612,14 @@ If you face problems running bundle install in OSX, try installing the gem runni
 
 `gem install mysql2 -v '0.5.3' -- --with-ldflags=-L/usr/local/opt/openssl/lib --with-cppflags=-I/usr/local/opt/openssl/include`
 
+### Run the test suite
+
+We use appraisal gem to generate different environment test setups. In order to
+run the test suite against a specific combination of ruby/rails, you need to set
+your ruby version and then run the tests selecting the right gemfile:
+
+e.g. be appraisal rails-6-0 rake spec
+
 ## License
 
 Apartment is released under the [MIT License](http://www.opensource.org/licenses/MIT).
