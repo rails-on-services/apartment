@@ -37,15 +37,13 @@ module Apartment
     module ApartmentInitializer
       def connection
         super.tap do
-          Apartment::Tenant.init_once
-        rescue ActiveRecord::NoDatabaseError
+          Apartment::Tenant.init_once rescue ActiveRecord::NoDatabaseError
         end
       end
 
       def arel_table
-        Apartment::Tenant.init_once
+        Apartment::Tenant.init_once rescue ActiveRecord::NoDatabaseError
         super
-        rescue ActiveRecord::NoDatabaseError
       end
     end
     ActiveRecord::Base.singleton_class.prepend ApartmentInitializer
