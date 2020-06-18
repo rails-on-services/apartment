@@ -27,7 +27,8 @@ module Apartment
       def initialize(config)
         super
 
-        reset rescue ActiveRecord::NoDatabaseError
+        reset 
+      rescue ActiveRecord::NoDatabaseError
       end
 
       #   Reset schema search path to the default schema_search_path
