@@ -121,7 +121,11 @@ module Apartment
                           .select { |c| c.instance_variable_defined?(:@sequence_name) }
                           .reject { |c| c.instance_variable_defined?(:@explicit_sequence_name) && c.instance_variable_get(:@explicit_sequence_name) }
                           .each do |c|
-                            c.remove_instance_variable :@sequence_name
+                            if c.instance_variable_defined?(:@sequence_name)
+                              c.remove_instance_variable :@sequence_name
+                            else
+                              puts "Missing @sequence_name in #{c.inspect}"
+                            end
                           end
       end
     end
