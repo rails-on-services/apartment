@@ -15,13 +15,6 @@ module ActiveRecord
       "#{database}#{schema}"
     end
 
-    def payload_binds(binds, type_casted_binds)
-      return unless (binds || []).empty?
-
-      casted_params = type_casted_binds(type_casted_binds)
-      '  ' + binds.zip(casted_params).map { |attr, value| render_bind(attr, value) }.inspect
-    end
-
     def sql(event)
       self.class.runtime += event.duration
       return unless logger.debug?
@@ -32,13 +25,20 @@ module ActiveRecord
 
       name  = "#{payload[:name]} (#{event.duration.round(1)}ms)"
       name  = "CACHE #{name}" if payload[:cached]
-      sql = payload[:sql]
-      binds = payload_binds(payload[:binds], payload[:type_casted_binds])
+      sql   = payload[:sql]
+      binds = nil
+
+      unless (payload[:binds] || []).empty?
+        casted_params = type_casted_binds(payload[:type_casted_binds])
+        binds = "  " + payload[:binds].zip(casted_params).map { |attr, value|
+          render_bind(attr, value)
+        }.inspect
+      end
 
       name = colorize_payload_name(name, payload[:name])
       sql  = color(sql, sql_color(sql), true) if colorize_logging
 
-      debug "    #{apartment_log}#{name} #{sql}#{binds}"
+      debug "  #{apartment_log}#{name}  #{sql}#{binds}"
     end
   end
 end
