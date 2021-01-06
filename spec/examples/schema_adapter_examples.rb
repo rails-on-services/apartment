@@ -27,6 +27,9 @@ shared_examples_for 'a schema based apartment adapter' do
       Apartment::Tenant.init
 
       expect(Company.table_name).to eq('public.companies')
+      expect(User.table_name).to eq('users')
+      expect(Company.sequence_name).to eq('public.companies_id_seq')
+      expect(User.sequence_name).to eq('users_id_seq')
     end
 
     context 'with a default_tenant', default_tenant: true do
@@ -34,6 +37,9 @@ shared_examples_for 'a schema based apartment adapter' do
         Apartment::Tenant.init
 
         expect(Company.table_name).to eq("#{default_tenant}.companies")
+        expect(User.table_name).to eq('users')
+        expect(Company.sequence_name).to eq("#{default_tenant}.companies_id_seq")
+        expect(User.sequence_name).to eq('users_id_seq')
       end
 
       it 'sets the search_path correctly' do
@@ -121,11 +127,9 @@ shared_examples_for 'a schema based apartment adapter' do
     it 'connects and resets' do
       subject.switch(schema1) do
         expect(connection.schema_search_path).to start_with %("#{schema1}")
-        expect(User.sequence_name).to eq "#{schema1}.#{User.table_name}_id_seq"
       end
 
       expect(connection.schema_search_path).to start_with %("#{public_schema}")
-      expect(User.sequence_name).to eq "#{public_schema}.#{User.table_name}_id_seq"
     end
   end
 
