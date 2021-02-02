@@ -42,11 +42,21 @@ module Apartment
       create_tenant(tenant_name) if strategy == :create_tenant
 
       puts("Migrating #{tenant_name} tenant")
-      Apartment::Migrator.migrate tenant_name
+      Apartment::Migrator.migrate(tenant_name)
     rescue Apartment::TenantNotFound => e
       raise e if strategy == :raise_exception
 
       puts e.message
+    end
+
+    def self.run_with_advisory_lock
+      db_name_hash = Zlib.crc32(ActiveRecord::Base.connection.current_database) * 2053462845
+      obtained_lock = ActiveRecord::Base.connection.select_value("select pg_try_advisory_lock(#{db_name_hash});")
+      begin
+      yield
+      ensure
+        ActiveRecord::Base.connection.execute("select pg_advisory_unlock(#{db_name_hash});")
+    end
     end
   end
 end
