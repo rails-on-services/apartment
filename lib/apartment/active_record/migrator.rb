@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Monkey patch ActiveRecord::Migrator to allow parallel ros-apartment migrations
 # see -> https://github.com/rails/rails/pull/40251
 # TODO -> Remove whenever ros-apartment or rails implements a fix for threaded migrations
