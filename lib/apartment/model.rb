@@ -5,6 +5,17 @@ module Apartment
     extend ActiveSupport::Concern
 
     module ClassMethods
+
+      def sequence_name
+        res = super
+        schema_prefix = "#{Apartment::Tenant.current}."
+        if !res&.starts_with?(schema_prefix) || Apartment.excluded_models.any? { |m| m.constantize.table_name == table_name }
+          res = connection.default_sequence_name(table_name, primary_key)
+        end
+
+        res
+      end
+
       # NOTE: key can either be an array of symbols or a single value.
       # E.g. If we run the following query:
       # `Setting.find_by(key: 'something', value: 'amazing')` key will have an array of symbols: `[:key, :something]`
