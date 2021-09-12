@@ -39,7 +39,7 @@ shared_examples_for 'a schema based apartment adapter' do
       it 'sets the search_path correctly' do
         Apartment::Tenant.init
 
-        expect(User.connection.schema_search_path).to match(/|#{default_tenant}|/)
+        expect(UserWithTenantModel.connection.schema_search_path).to match(/|#{default_tenant}|/)
       end
     end
 
@@ -66,14 +66,14 @@ shared_examples_for 'a schema based apartment adapter' do
       @count = 0 # set our variable so its visible in and outside of blocks
 
       subject.create(schema2) do
-        @count = User.count
+        @count = UserWithTenantModel.count
         expect(connection.schema_search_path).to start_with %("#{schema2}")
-        User.create
+        UserWithTenantModel.create
       end
 
       expect(connection.schema_search_path).not_to start_with %("#{schema2}")
 
-      subject.switch(schema2) { expect(User.count).to eq(@count + 1) }
+      subject.switch(schema2) { expect(UserWithTenantModel.count).to eq(@count + 1) }
     end
 
     context 'numeric database names' do
@@ -117,13 +117,14 @@ shared_examples_for 'a schema based apartment adapter' do
 
   describe '#switch' do
     it 'connects and resets' do
+      Apartment::Tenant.init
       subject.switch(schema1) do
         expect(connection.schema_search_path).to start_with %("#{schema1}")
-        expect(User.sequence_name).to eq "#{schema1}.#{User.table_name}_id_seq"
+        expect(UserWithTenantModel.sequence_name).to eq "#{schema1}.#{UserWithTenantModel.table_name}_id_seq"
       end
 
       expect(connection.schema_search_path).to start_with %("#{public_schema}")
-      expect(User.sequence_name).to eq "#{public_schema}.#{User.table_name}_id_seq"
+      expect(UserWithTenantModel.sequence_name).to eq "#{public_schema}.#{UserWithTenantModel.table_name}_id_seq"
     end
 
     it 'allows a list of schemas' do
