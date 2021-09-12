@@ -5,15 +5,11 @@ module Apartment
     extend ActiveSupport::Concern
 
     module ClassMethods
-
       def sequence_name
-        res = super
-        schema_prefix = "#{Apartment::Tenant.current}."
-        if !res&.starts_with?(schema_prefix) || Apartment.excluded_models.any? { |m| m.constantize.table_name == table_name }
-          res = connection.default_sequence_name(table_name, primary_key)
-        end
+        current_sequence_name = super
+        return current_sequence_name if sequence_name_matches_tenant?(current_sequence_name)
 
-        res
+        connection.default_sequence_name(table_name, primary_key)
       end
 
       # NOTE: key can either be an array of symbols or a single value.
@@ -34,6 +30,12 @@ module Apartment
                     end
         cache = @find_by_statement_cache[connection.prepared_statements]
         cache.compute_if_absent(cache_key) { ActiveRecord::StatementCache.create(connection, &block) }
+      end
+
+      def sequence_name_matches_tenant?(sequence_name)
+        schema_prefix = "#{Apartment::Tenant.current}."
+        sequence_name&.starts_with?(schema_prefix) &&
+          Apartment.excluded_models.none? { |m| m.constantize.table_name == table_name }
       end
     end
   end
