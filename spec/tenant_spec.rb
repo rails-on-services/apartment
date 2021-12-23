@@ -68,6 +68,14 @@ describe Apartment::Tenant do
           thread.join
           expect(subject.current).to eq(db1)
         end
+
+        it 'maintains the current tenant across fibers within a thread' do
+          subject.switch!(db1)
+          expect(subject.current).to eq(db1)
+          fiber = Fiber.new { expect(subject.current).to eq(db1) }
+          fiber.resume
+          expect(subject.current).to eq(db1)
+        end
       end
     end
 
