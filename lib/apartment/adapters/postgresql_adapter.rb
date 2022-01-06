@@ -270,7 +270,8 @@ module Apartment
       end
 
       def swap_schema_qualifier(sql)
-        sql.gsub(/#{default_tenant}\.\w*/) do |match|
+        # replace public.* but keep keys referencing public.*
+        sql.gsub(/(?<!REFERENCES\s)#{default_tenant}\.\w*/) do |match|
           if Apartment.pg_excluded_names.any? { |name| match.include? name }
             match
           else
