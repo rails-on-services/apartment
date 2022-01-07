@@ -271,7 +271,7 @@ module Apartment
         sql.gsub(/#{default_tenant}\.\w*/) do |match|
           if Apartment.pg_excluded_names.any? { |name| match.include? name }
             match
-          elsif Apartment.pg_exclude_clone_tables && excluded_tables.any? { |t| match == "#{default_tenant}.#{t}" }
+          elsif Apartment.pg_exclude_clone_tables && excluded_tables.any?(match)
             match
           else
             match.gsub("#{default_tenant}.", %("#{current}".))

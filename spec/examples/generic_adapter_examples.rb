@@ -55,7 +55,7 @@ shared_examples_for 'a generic apartment adapter' do
 
     it 'should load schema.rb to new schema' do
       subject.switch(db1) do
-        expect(connection.tables).to include('companies')
+        expect(connection.tables).to include('users')
       end
     end
 

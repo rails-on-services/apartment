@@ -57,7 +57,7 @@ shared_examples_for 'a schema based apartment adapter' do
   describe '#create' do
     it 'should load schema.rb to new schema' do
       connection.schema_search_path = schema1
-      expect(connection.tables).to include('companies')
+      expect(connection.tables).to include('users')
     end
 
     it 'should yield to block if passed and reset' do
