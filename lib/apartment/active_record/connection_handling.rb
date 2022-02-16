@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-module ActiveRecord
-  # This is monkeypatching activerecord to ensure that whenever a new connection is established it
-  # switches to the same tenant as before the connection switching. This problem is more evident when
-  # using read replica in Rails 6
+module ActiveRecord # :nodoc:
   if ActiveRecord::VERSION::MAJOR >= 6
+    # This is monkeypatching Active Record to ensure that whenever a new connection is established it
+    # switches to the same tenant as before the connection switching. This problem is more evident when
+    # using read replica in Rails 6
     module ConnectionHandling
       def connected_to_with_tenant(role: nil, prevent_writes: false, &blk)
         current_tenant = Apartment::Tenant.current
