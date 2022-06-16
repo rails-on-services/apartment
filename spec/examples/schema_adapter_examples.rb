@@ -131,6 +131,10 @@ shared_examples_for 'a schema based apartment adapter' do
     # rubocop:disable RSpec/MultipleExpectations
     it 'connects and resets' do
       subject.switch(schema1) do
+        # Ensure sequence is not cached
+        Company.reset_sequence_name
+        User.reset_sequence_name
+
         expect(connection.schema_search_path).to start_with %("#{schema1}")
         expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
         expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
@@ -142,10 +146,28 @@ shared_examples_for 'a schema based apartment adapter' do
     end
     # rubocop:enable RSpec/MultipleExpectations
 
-    it 'allows a list of schemas' do
-      subject.switch([schema1, schema2]) do
-        expect(connection.schema_search_path).to include %("#{schema1}")
-        expect(connection.schema_search_path).to include %("#{schema2}")
+    describe 'multiple schemas' do
+      it 'allows a list of schemas' do
+        subject.switch([schema1, schema2]) do
+          expect(connection.schema_search_path).to include %("#{schema1}")
+          expect(connection.schema_search_path).to include %("#{schema2}")
+        end
+      end
+
+      it 'connects and resets' do
+        subject.switch([schema1, schema2]) do
+          # Ensure sequence is not cached
+          Company.reset_sequence_name
+          User.reset_sequence_name
+
+          expect(connection.schema_search_path).to start_with %("#{schema1}")
+          expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+          expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
+        end
+
+        expect(connection.schema_search_path).to start_with %("#{public_schema}")
+        expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+        expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
       end
     end
   end

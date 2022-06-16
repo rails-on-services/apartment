@@ -32,6 +32,10 @@ jobs:
       #       - vendor/bundle
 
       - run:
+          name: Get latest package info
+          command: sudo apt-get update
+
+      - run:
           name: Install postgres client
           command: sudo apt install -y postgresql-client
 
@@ -44,11 +48,11 @@ jobs:
           command: bundle exec rake db:copy_credentials
 
       - run:
-          name: wait for postgresql
+          name: Wait for postgresql
           command: dockerize -wait tcp://localhost:5432 -timeout 1m
 
       - run:
-          name: wait for mysql
+          name: Wait for mysql
           command: dockerize -wait tcp://localhost:3306 -timeout 1m
 
       - run:
