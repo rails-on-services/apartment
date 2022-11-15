@@ -72,6 +72,10 @@ module Apartment
       #
       def connect_to_new(tenant = nil)
         return reset if tenant.nil?
+
+        Apartment.establish_connection multi_tenantify(tenant, false)
+        Apartment.connection.active? # call active? to manually check if this connection is valid
+
         raise ActiveRecord::StatementInvalid, "Could not find schema #{tenant}" unless schema_exists?(tenant)
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
