@@ -41,12 +41,18 @@ module Apartment
       #
       def reset
         @current = default_tenant
-        Apartment.connection.schema_search_path = full_search_path
+
+        if Apartment.connection.schema_search_path != full_search_path
+          Apartment.connection.schema_search_path = full_search_path
+        end
       end
 
       def init
         super
-        Apartment.connection.schema_search_path = full_search_path
+
+        if Apartment.connection.schema_search_path != full_search_path
+          Apartment.connection.schema_search_path = full_search_path
+        end
       end
 
       def current
@@ -75,7 +81,10 @@ module Apartment
         raise ActiveRecord::StatementInvalid, "Could not find schema #{tenant}" unless schema_exists?(tenant)
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
-        Apartment.connection.schema_search_path = full_search_path
+
+        if Apartment.connection.schema_search_path != full_search_path
+          Apartment.connection.schema_search_path = full_search_path
+        end
 
         # When the PostgreSQL version is < 9.3,
         # there is a issue for prepared statement with changing search_path.
