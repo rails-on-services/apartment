@@ -2,7 +2,6 @@
 
 require 'rails'
 require 'apartment/tenant'
-require 'apartment/reloader'
 
 module Apartment
   class Railtie < Rails::Railtie
@@ -32,7 +31,7 @@ module Apartment
     #
     config.to_prepare do
       next if ARGV.any? { |arg| arg =~ /\Aassets:(?:precompile|clean)\z/ }
-      next if ARGV.any? { |arg| arg == 'webpacker:compile' }
+      next if ARGV.any?('webpacker:compile')
       next if ENV['APARTMENT_DISABLE_INIT']
 
       begin
@@ -48,7 +47,12 @@ module Apartment
     config.after_initialize do
       # NOTE: Load the custom log subscriber if enabled
       if Apartment.active_record_log
-        ActiveSupport::Notifications.unsubscribe 'sql.active_record'
+        ActiveSupport::Notifications.notifier.listeners_for('sql.active_record').each do |listener|
+          next unless listener.instance_variable_get('@delegate').is_a?(ActiveRecord::LogSubscriber)
+
+          ActiveSupport::Notifications.unsubscribe listener
+        end
+
         Apartment::LogSubscriber.attach_to :active_record
       end
     end
@@ -59,26 +63,6 @@ module Apartment
     rake_tasks do
       load 'tasks/apartment.rake'
       require 'apartment/tasks/enhancements' if Apartment.db_migrate_tenants
-    end
-
-    #
-    #   The following initializers are a workaround to the fact that I can't properly hook into the rails reloader
-    #   Note this is technically valid for any environment where cache_classes is false, for us, it's just development
-    #
-    if Rails.env.development?
-
-      # Apartment::Reloader is middleware to initialize things properly on each request to dev
-      initializer 'apartment.init' do |app|
-        app.config.middleware.use Apartment::Reloader
-      end
-
-      # Overrides reload! to also call Apartment::Tenant.init as well
-      # so that the reloaded classes have the proper table_names
-      # rubocop:disable Lint/Debugger
-      console do
-        require 'apartment/console'
-      end
-      # rubocop:enable Lint/Debugger
     end
   end
 end
