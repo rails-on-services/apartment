@@ -5,6 +5,9 @@ module Apartment
     def self.each_tenant(&block)
       Parallel.each(tenants_without_default, in_threads: Apartment.parallel_migration_threads) do |tenant|
         block.call(tenant)
+        puts "inside each tenant for tenant: #{tenant}"
+        rescue => e
+         puts "Each tenant failed for #{tenant}"
       end
     end
 
@@ -47,6 +50,8 @@ module Apartment
       raise e if strategy == :raise_exception
 
       puts e.message
+      rescue => error
+      puts "Error while migrating tenant: #{tenant_name} message: #{error.message}"
     end
   end
 end
