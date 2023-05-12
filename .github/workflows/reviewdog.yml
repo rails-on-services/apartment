@@ -8,7 +8,7 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v2
       - name: Read ruby version
-        run: echo ::set-output name=RUBY_VERSION::$(cat .ruby-version | cut -f 1,2 -d .)
+        run: echo "RUBY_VERSION=$(cat .ruby-version | cut -f 1,2 -d .)" >> $GITHUB_OUTPUT
         id: rv
       - uses: ruby/setup-ruby@v1
         with:
