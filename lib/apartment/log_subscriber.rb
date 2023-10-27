@@ -21,7 +21,7 @@ module Apartment
     end
 
     def apartment_log
-      database = color("[#{database_name}] ", ActiveSupport::LogSubscriber::MAGENTA, true)
+      database = color("[#{database_name}] ",  ActiveSupport::LogSubscriber::MAGENTA.to_sym, bold: true)
       schema = current_search_path
       schema = color("[#{schema.tr('"', '')}] ", ActiveSupport::LogSubscriber::YELLOW, true) unless schema.nil?
       "#{database}#{schema}"
