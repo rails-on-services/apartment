@@ -3,9 +3,9 @@ version: 2.1
 jobs:
   build:
     docker:
-      - image: circleci/<< parameters.ruby_version >>
-      - image: circleci/postgres:9.6.2-alpine
-      - image: circleci/mysql:5.7
+      - image: cimg/<< parameters.ruby_version >>
+      - image: cimg/postgres:12.13
+      - image: cimg/mysql:8.0
         environment:
           MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
     parameters:
@@ -17,19 +17,12 @@ jobs:
       BUNDLE_GEMFILE: << parameters.gemfile >>
     steps:
       - checkout
-      # Restore Cached Dependencies
-      # - restore_cache:
-      #     keys:
-      #       - gem-cache-v1-{{ arch }}-{{ .Branch }}-{{ checksum "<< parameters.gemfile >>.lock" }}
-      #       - gem-cache-v1-{{ arch }}-{{ .Branch }}
-      #       - gem-cache-v1
 
       - run: bundle install --path vendor/bundle
 
-      # - save_cache:
-      #     key: gem-cache-v1-{{ arch }}-{{ .Branch }}-{{ checksum "<< parameters.gemfile >>.lock" }}
-      #     paths:
-      #       - vendor/bundle
+      - run:
+          name: Update apt
+          command: sudo apt update
 
       - run:
           name: Install postgres client
@@ -69,10 +62,12 @@ workflows:
       - build:
           matrix:
             parameters:
-              ruby_version: ["ruby:2.6-buster", "ruby:2.7-buster", "ruby:3.0-buster"]
-              gemfile: ["gemfiles/rails_5_2.gemfile", "gemfiles/rails_6_0.gemfile", "gemfiles/rails_6_1.gemfile", "gemfiles/rails_7_0.gemfile"]
+              ruby_version: ["ruby:2.7.8", "ruby:3.0.6", "ruby:3.1.4", "ruby:3.2.2"]
+              gemfile: ["gemfiles/rails_5_2.gemfile", "gemfiles/rails_6_0.gemfile", "gemfiles/rails_6_1.gemfile", "gemfiles/rails_7_0.gemfile", "gemfiles/rails_7_1.gemfile"]
             exclude:
-              - ruby_version: "ruby:3.0-buster"
+              - ruby_version: "ruby:3.0.6"
                 gemfile: "gemfiles/rails_5_2.gemfile"
-              - ruby_version: "ruby:2.6-buster"
-                gemfile: "gemfiles/rails_7_0.gemfile"
+              - ruby_version: "ruby:3.1.4"
+                gemfile: "gemfiles/rails_5_2.gemfile"
+              - ruby_version: "ruby:3.2.2"
+                gemfile: "gemfiles/rails_5_2.gemfile"
