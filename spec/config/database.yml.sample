@@ -1,29 +1,3 @@
-<% if defined?(JRUBY_VERSION) %>
-connections:
-  postgresql:
-    adapter: postgresql
-    database: apartment_postgresql_test
-    username: postgres
-    min_messages: WARNING
-    driver: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/apartment_postgresql_test
-    timeout: 5000
-    pool: 5
-    host: localhost
-    port: 5432
-
-  mysql:
-    adapter: mysql
-    database: apartment_mysql_test
-    username: root
-    min_messages: WARNING
-    driver: com.mysql.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/apartment_mysql_test
-    timeout: 5000
-    pool: 5
-    host: 127.0.0.1
-    port: 3306
-<% else %>
 connections:
   postgresql:
     adapter: postgresql
@@ -46,4 +20,3 @@ connections:
   sqlite:
     adapter: sqlite3
     database: <%= File.expand_path('../spec/dummy/db', __FILE__) %>/default.sqlite3
-<% end %>

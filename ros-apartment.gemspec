@@ -27,7 +27,7 @@ Gem::Specification.new do |s|
   s.homepage = 'https://github.com/rails-on-services/apartment'
   s.licenses = ['MIT']
 
-  s.add_dependency 'activerecord', '>= 5.0.0', '< 7.1'
+  s.add_dependency 'activerecord', '>= 5.0.0', '>= 7.1'
   s.add_dependency 'parallel', '< 2.0'
   s.add_dependency 'public_suffix', '>= 2.0.5', '< 5.0'
   s.add_dependency 'rack', '>= 1.3.6', '< 3.0'
@@ -37,23 +37,14 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'guard-rspec', '~> 4.2'
   s.add_development_dependency 'pry'
   s.add_development_dependency 'rake', '~> 13.0'
-  s.add_development_dependency 'rspec', '~> 3.4'
+  s.add_development_dependency 'rspec', '>= 3.9.0'
   s.add_development_dependency 'rspec_junit_formatter'
-  s.add_development_dependency 'rspec-rails', '~> 3.4'
-  s.add_development_dependency 'rubocop', '~> 0.93'
-  s.add_development_dependency 'rubocop-performance', '~> 1.10'
-  s.add_development_dependency 'rubocop-rails', '~> 2.1'
-  s.add_development_dependency 'rubocop-rspec', '~> 1.44'
-
-  if defined?(JRUBY_VERSION)
-    s.add_development_dependency 'activerecord-jdbc-adapter'
-    s.add_development_dependency 'activerecord-jdbcmysql-adapter'
-    s.add_development_dependency 'activerecord-jdbcpostgresql-adapter'
-    s.add_development_dependency 'jdbc-mysql'
-    s.add_development_dependency 'jdbc-postgres'
-  else
-    s.add_development_dependency 'mysql2',  '~> 0.5'
-    s.add_development_dependency 'pg',      '~> 1.2'
-    s.add_development_dependency 'sqlite3', '~> 1.3.6'
-  end
+  s.add_development_dependency 'rspec-rails', '~> 6.0.4'
+  s.add_development_dependency 'rubocop', '>= 1.42.0'
+  s.add_development_dependency 'rubocop-performance', '>= 1.16.0'
+  s.add_development_dependency 'rubocop-rails', '>= 2.18.0'
+  s.add_development_dependency 'rubocop-rspec', '>= 2.17.0'
+  s.add_development_dependency 'mysql2',  '~> 0.5'
+  s.add_development_dependency 'pg',      '~> 1.2'
+  s.add_development_dependency 'sqlite3', '> 1.4'
 end
