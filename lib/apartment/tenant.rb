@@ -19,7 +19,8 @@ module Apartment
     #   @return {subclass of Apartment::AbstractAdapter}
     #
     def adapter
-      Thread.current[:apartment_adapter] ||= begin
+      return Thread.current.thread_variable_get(:apartment_adapter) if Thread.current.thread_variable_get(:apartment_adapter)
+      adapter = begin
         adapter_method = "#{config[:adapter]}_adapter"
 
         if defined?(JRUBY_VERSION)
@@ -43,12 +44,14 @@ module Apartment
 
         send(adapter_method, config)
       end
+      Thread.current.thread_variable_set(:apartment_adapter, adapter)
+      Thread.current.thread_variable_get(:apartment_adapter)
     end
 
     #   Reset config and adapter so they are regenerated
     #
     def reload!(config = nil)
-      Thread.current[:apartment_adapter] = nil
+      Thread.current.thread_variable_set(:apartment_adapter,  nil)
       @config = config
     end
 
