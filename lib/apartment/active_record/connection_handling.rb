@@ -14,6 +14,15 @@ module ActiveRecord # :nodoc:
           yield(blk)
         end
       end
+    elsif ActiveRecord.version.release >= Gem::Version.new('7.1')
+      def connected_to_with_tenant(role: nil, shard: nil, prevent_writes: false, &blk)
+        current_tenant = Apartment::Tenant.current
+
+        connected_to_without_tenant(role: role, shard: shard, prevent_writes: prevent_writes) do
+          Apartment::Tenant.switch!(current_tenant)
+          yield(blk)
+        end
+      end
     else
       def connected_to_with_tenant(role: nil, prevent_writes: false, &blk)
         current_tenant = Apartment::Tenant.current
