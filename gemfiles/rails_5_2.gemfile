@@ -4,6 +4,10 @@ source "http://rubygems.org"
 
 gem "rails", "~> 5.2.0"
 
+platforms :ruby do
+  gem "sqlite3", "~> 1.6"
+end
+
 platforms :jruby do
   gem "activerecord-jdbc-adapter", "~> 52.0"
   gem "activerecord-jdbcpostgresql-adapter", "~> 52.0"

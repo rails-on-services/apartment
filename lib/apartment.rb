@@ -17,6 +17,14 @@ if ActiveRecord.version.release >= Gem::Version.new('6.1')
   require_relative 'apartment/active_record/internal_metadata'
 end
 
+if ActiveRecord.version.release >= Gem::Version.new('7.0')
+  require_relative 'apartment/active_record/enum_patch'
+end
+
+if ActiveRecord.version.release >= Gem::Version.new('7.1')
+  require_relative 'apartment/active_record/postgres/schema_dumper'
+end
+
 # Apartment main definitions
 module Apartment
   class << self

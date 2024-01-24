@@ -8,6 +8,12 @@ module ActiveRecord
       def table_exists?
         connection.table_exists?(table_name)
       end
+      alias :table_name :name
     end
   end
+end
+
+# TODO: required only for ransack < 4.1
+class Arel::Table
+  alias :table_name :name
 end

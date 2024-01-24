@@ -21,10 +21,17 @@ module Apartment
     end
 
     def apartment_log
-      database = color("[#{database_name}] ", ActiveSupport::LogSubscriber::MAGENTA, true)
+      # Use MAGENTA color and bold mode for the database name
+      database = color("[#{database_name}]", ActiveSupport::LogSubscriber::MAGENTA, bold: true)
+
+      # Get the current search path and colorize it using YELLOW and bold mode
       schema = current_search_path
-      schema = color("[#{schema.tr('"', '')}] ", ActiveSupport::LogSubscriber::YELLOW, true) unless schema.nil?
-      "#{database}#{schema}"
+      unless schema.nil?
+        schema = color("[#{schema.tr('"', '')}]", ActiveSupport::LogSubscriber::YELLOW, bold: true)
+      end
+
+      # Return the concatenated string of database and schema
+      "#{database} #{schema}"
     end
 
     def current_search_path

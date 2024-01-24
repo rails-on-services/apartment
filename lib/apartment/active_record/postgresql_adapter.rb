@@ -5,7 +5,7 @@
 # NOTE: This patch is meant to remove any schema_prefix appart from the ones for
 # excluded models. The schema_prefix would be resolved by apartment's setting
 # of search path
-module Apartment::PostgreSqlAdapterPatch
+module Apartment::PostgreSqlAdapterSchemaPrefixPatch
   def default_sequence_name(table, _column)
     res = super
     schema_prefix = "#{Apartment::Tenant.current}."
@@ -34,6 +34,6 @@ require 'active_record/connection_adapters/postgresql_adapter'
 
 # NOTE: inject this into postgresql adapters
 class ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
-  include Apartment::PostgreSqlAdapterPatch
+  include Apartment::PostgreSqlAdapterSchemaPrefixPatch
 end
 # rubocop:enable Style/ClassAndModuleChildren
