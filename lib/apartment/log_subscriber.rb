@@ -21,13 +21,25 @@ module Apartment
     end
 
     def apartment_log
-      database = color("[#{Apartment.connection.raw_connection.db}] ", ActiveSupport::LogSubscriber::MAGENTA, true)
-      schema = nil
-      unless Apartment.connection.schema_search_path.nil?
-        schema = color("[#{Apartment.connection.schema_search_path.tr('"', '')}] ",
-                       ActiveSupport::LogSubscriber::YELLOW, true)
-      end
+      database = color("[#{database_name}] ", ActiveSupport::LogSubscriber::MAGENTA, true)
+      schema = current_search_path
+      schema = color("[#{schema.tr('"', '')}] ", ActiveSupport::LogSubscriber::YELLOW, true) unless schema.nil?
       "#{database}#{schema}"
+    end
+
+    def current_search_path
+      if Apartment.connection.respond_to?(:schema_search_path)
+        Apartment.connection.schema_search_path
+      else
+        Apartment::Tenant.current # all others
+      end
+    end
+
+    def database_name
+      db_name = Apartment.connection.raw_connection.try(:db) # PostgreSQL, PostGIS
+      db_name ||= Apartment.connection.raw_connection.try(:query_options)&.dig(:database) # Mysql
+      db_name ||= Apartment.connection.current_database # Failover
+      db_name
     end
   end
 end

@@ -63,6 +63,7 @@ RSpec/ContextWording:
 RSpec/DescribeClass:
   Exclude:
     - 'spec/integration/apartment_rake_integration_spec.rb'
+    - 'spec/integration/connection_handling_spec.rb'
     - 'spec/integration/query_caching_spec.rb'
     - 'spec/integration/use_within_an_engine_spec.rb'
     - 'spec/tasks/apartment_rake_spec.rb'
