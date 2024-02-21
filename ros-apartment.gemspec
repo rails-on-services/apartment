@@ -27,7 +27,7 @@ Gem::Specification.new do |s|
   s.homepage = 'https://github.com/rails-on-services/apartment'
   s.licenses = ['MIT']
 
-  s.add_dependency 'activerecord', '>= 5.0.0', '< 7.1'
+  s.add_dependency 'activerecord', '>= 6.1.0', '< 7.2'
   s.add_dependency 'parallel', '< 2.0'
   s.add_dependency 'public_suffix', '>= 2.0.5', '< 5.0'
   s.add_dependency 'rack', '>= 1.3.6', '< 3.0'
@@ -39,7 +39,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'rake', '~> 13.0'
   s.add_development_dependency 'rspec', '~> 3.4'
   s.add_development_dependency 'rspec_junit_formatter'
-  s.add_development_dependency 'rspec-rails', '~> 3.4'
+  s.add_development_dependency 'rspec-rails', '~> 6.1'
   s.add_development_dependency 'rubocop', '~> 0.93'
   s.add_development_dependency 'rubocop-performance', '~> 1.10'
   s.add_development_dependency 'rubocop-rails', '~> 2.1'

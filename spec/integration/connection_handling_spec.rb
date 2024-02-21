@@ -26,12 +26,6 @@ describe 'connection handling monkey patch' do
     Company.delete_all
   end
 
-  context 'when ActiveRecord 5.x', if: ActiveRecord::VERSION::MAJOR == 5 do
-    it 'is not monkey patched' do
-      expect(ActiveRecord::ConnectionHandling.instance_methods).not_to include(:connected_to_with_tenant)
-    end
-  end
-
   context 'when ActiveRecord >= 6.0', if: ActiveRecord::VERSION::MAJOR >= 6 do
     let(:role) do
       # Choose the role depending on the ActiveRecord version.

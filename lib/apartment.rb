@@ -7,15 +7,9 @@ require 'active_record'
 require 'apartment/tenant'
 
 require_relative 'apartment/log_subscriber'
-
-if ActiveRecord.version.release >= Gem::Version.new('6.0')
-  require_relative 'apartment/active_record/connection_handling'
-end
-
-if ActiveRecord.version.release >= Gem::Version.new('6.1')
-  require_relative 'apartment/active_record/schema_migration'
-  require_relative 'apartment/active_record/internal_metadata'
-end
+require_relative 'apartment/active_record/connection_handling'
+require_relative 'apartment/active_record/schema_migration'
+require_relative 'apartment/active_record/internal_metadata'
 
 # Apartment main definitions
 module Apartment
@@ -33,14 +27,10 @@ module Apartment
     attr_accessor(*ACCESSOR_METHODS)
     attr_writer(*WRITER_METHODS)
 
-    if ActiveRecord.version.release >= Gem::Version.new('6.1')
-      def_delegators :connection_class, :connection, :connection_db_config, :establish_connection
+    def_delegators :connection_class, :connection, :connection_db_config, :establish_connection
 
-      def connection_config
-        connection_db_config.configuration_hash
-      end
-    else
-      def_delegators :connection_class, :connection, :connection_config, :establish_connection
+    def connection_config
+      connection_db_config.configuration_hash
     end
 
     # configure apartment with available options

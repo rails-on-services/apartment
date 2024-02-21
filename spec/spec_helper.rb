@@ -13,8 +13,8 @@ require File.expand_path('dummy/config/environment.rb', __dir__)
 Apartment.excluded_models.each do |model|
   klass = model.constantize
 
-  Apartment.connection_class.remove_connection(klass)
-  klass.clear_all_connections!
+  klass.remove_connection
+  klass.connection_handler.clear_all_connections!
   klass.reset_table_name
 end
 
