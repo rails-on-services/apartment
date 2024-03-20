@@ -25,7 +25,7 @@ module Apartment
     ACCESSOR_METHODS = %i[use_schemas use_sql seed_after_create prepend_environment default_tenant
                           append_environment with_multi_server_setup tenant_presence_check active_record_log].freeze
 
-    WRITER_METHODS = %i[tenant_names database_schema_file excluded_models
+    WRITER_METHODS = %i[db_config_getter tenant_names database_schema_file excluded_models
                         persistent_schemas connection_class
                         db_migrate_tenants db_migrate_tenant_missing_strategy seed_data_file
                         parallel_migration_threads pg_excluded_names].freeze
@@ -61,7 +61,12 @@ module Apartment
     end
 
     def db_config_for(tenant)
-      (tenants_with_config[tenant] || connection_config)
+      if @db_config_getter && @db_config_getter.respond_to?(:call)
+        (@db_config_getter.call(tenant) || connection_config).with_indifferent_access
+      else
+        # Fallback to the original implementation
+        (tenants_with_config[tenant] || connection_config).with_indifferent_access
+      end
     end
 
     # Whether or not db:migrate should also migrate tenants
