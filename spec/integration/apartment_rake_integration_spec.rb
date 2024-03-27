@@ -47,35 +47,8 @@ describe 'apartment rake tasks', database: :postgresql do
       Company.delete_all
     end
 
-    context 'with ActiveRecord below 5.2.0' do
-      before do
-        allow(ActiveRecord::Migrator).to receive(:migrations_paths) { %w[spec/dummy/db/migrate] }
-        allow(Apartment::Migrator).to receive(:activerecord_below_5_2?) { true }
-      end
-
-      describe '#migrate' do
-        it 'should migrate all databases' do
-          expect(ActiveRecord::Migrator).to receive(:migrate).exactly(company_count).times
-
-          @rake['apartment:migrate'].invoke
-        end
-      end
-
-      describe '#rollback' do
-        it 'should rollback all dbs' do
-          expect(ActiveRecord::Migrator).to receive(:rollback).exactly(company_count).times
-
-          @rake['apartment:rollback'].invoke
-        end
-      end
-    end
-
     context 'with ActiveRecord above or equal to 5.2.0' do
       let(:migration_context_double) { double(:migration_context) }
-
-      before do
-        allow(Apartment::Migrator).to receive(:activerecord_below_5_2?) { false }
-      end
 
       describe '#migrate' do
         it 'should migrate all databases' do

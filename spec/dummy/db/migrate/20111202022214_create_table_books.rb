@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-migration_class = ActiveRecord::VERSION::MAJOR >= 5 ? ActiveRecord::Migration[4.2] : ActiveRecord::Migration
-class CreateTableBooks < migration_class
+class CreateTableBooks < ActiveRecord::Migration[4.2]
   def up
     create_table :books do |t|
       t.string :name
