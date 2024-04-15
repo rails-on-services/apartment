@@ -43,6 +43,14 @@ connections:
     host: 127.0.0.1
     port: 3306
 
+  trilogy:
+    adapter: trilogy
+    database: apartment_mysql_test
+    username: root
+    password:
+    host: 127.0.0.1
+    port: 3306
+
   sqlite:
     adapter: sqlite3
     database: <%= File.expand_path('../spec/dummy/db', __FILE__) %>/default.sqlite3

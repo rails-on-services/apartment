@@ -173,4 +173,41 @@ describe Apartment::Tenant do
       end
     end
   end
+
+  context "using trilogy", database: :trilogy do
+    unless Rails.version < '7.1' # Rails < 7.1 do not have support for Trilogy
+      before { subject.reload!(config) }
+
+      describe '#adapter' do
+        it 'should load trilogy adapter' do
+          subject.adapter
+          expect(Apartment::Adapters::TrilogyAdapter).to be_a(Class)
+        end
+      end
+
+      # TODO: re-organize these tests
+      context 'with prefix and schemas' do
+        describe '#create' do
+          before do
+            Apartment.configure do |config|
+              config.prepend_environment = true
+              config.use_schemas = true
+            end
+
+            subject.reload!(config)
+          end
+
+          after do
+            subject.drop 'db_with_prefix'
+          rescue StandardError => _e
+            nil
+          end
+
+          it 'should create a new database' do
+            subject.create 'db_with_prefix'
+          end
+        end
+      end
+    end
+  end
 end

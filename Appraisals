@@ -25,7 +25,7 @@ appraise 'rails-7-0' do
 end
 
 appraise 'rails-7-1' do
-  gem 'rails', '~> 7.1.0'
+  gem 'rails', '~> 7.1.3'
   platforms :ruby do
     gem 'sqlite3', '~> 1.6'
   end

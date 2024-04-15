@@ -207,7 +207,7 @@ module Apartment
 
       #   Dump data from schema_migrations table
       #
-      #   @return {String} raw SQL contaning inserts with data from schema_migrations
+      #   @return {String} raw SQL containing inserts with data from schema_migrations
       #
       # rubocop:disable Layout/LineLength
       def pg_dump_schema_migrations_data

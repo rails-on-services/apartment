@@ -5,7 +5,7 @@ jobs:
     docker:
       - image: cimg/<< parameters.ruby_version >>
       - image: cimg/postgres:12.13
-      - image: cimg/mysql:8.0
+      - image: cimg/mysql:5.7
         environment:
           MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
     parameters:
