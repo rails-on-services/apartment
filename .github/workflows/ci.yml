@@ -1,0 +1,72 @@
+---
+name: CI
+on:
+  - push
+  - pull_request
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby:
+          - "3.0"
+          - "3.1"
+          - "3.2"
+          - "3.3"
+        rails:
+          - "6-1"
+          - "7-0"
+          - "7-1"
+
+    services:
+      mysql:
+        image: "mysql:8.0"
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+      postgres:
+        image: "postgres:14.11"
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: false
+
+      - name: Bundle for Appraisal
+        run: bundle
+
+      - name: Install Appraisal dependencies
+        run: bundle exec appraisal rails-${{ matrix.rails }} bundle
+
+      - name: Configure config database.yml
+        run: bundle exec appraisal rails-${{ matrix.rails }} bundle exec rake db:copy_credentials
+
+      - name: Setup database
+        run: bundle exec appraisal rails-${{ matrix.rails }} bundle exec rake db:test:prepare
+
+      - name: Run tests
+        run: bundle exec appraisal rails-${{ matrix.rails }} bundle exec rspec --format documentation --format RspecJunitFormatter --out rspec.xml
+
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "rspec.xml"
+        if: always()
