@@ -7,6 +7,7 @@ require:
 
 AllCops:
   Exclude:
+    - vendor/bundle/**/*
     - gemfiles/**/*.gemfile
     - gemfiles/vendor/**/*
     - spec/dummy_engine/dummy_engine.gemspec
@@ -29,4 +30,7 @@ Rails/ApplicationRecord:
   Enabled: false
 
 Rails/Output:
+  Enabled: false
+
+Style/Documentation:
   Enabled: false
