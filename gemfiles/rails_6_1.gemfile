@@ -9,6 +9,7 @@ platforms :ruby do
 end
 
 platforms :jruby do
+  gem "nio4r", "2.7.1"
   gem "activerecord-jdbc-adapter", "~> 61.0"
   gem "activerecord-jdbcpostgresql-adapter", "~> 61.0"
   gem "activerecord-jdbcmysql-adapter", "~> 61.0"
