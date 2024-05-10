@@ -13,17 +13,25 @@ jobs:
     name: rails / rspec
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         ruby_version:
+          - 3.0
           - 3.1
           - 3.2
+          - 3.3
+          - jruby
         rails_version:
           - 6_1
           - 7_0
           - 7_1
-          #- master
+          # - master # versions failing
+        exclude:
+          - ruby_version: jruby
+            rails_version: 7_1
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}.gemfile
+      CI: true
     services:
       postgres:
         image: postgres:14 # pg_dump tests currently depend on this version
