@@ -8,6 +8,8 @@
 module Apartment::PostgreSqlAdapterPatch
   def default_sequence_name(table, _column)
     res = super
+    res.delete!('"') # if rescued in super_method, trim leading and trailing quotes
+
     schema_prefix = "#{Apartment::Tenant.current}."
     default_tenant_prefix = "#{Apartment::Tenant.default_tenant}."
 
