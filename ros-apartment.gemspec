@@ -40,10 +40,10 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'rspec', '~> 3.4'
   s.add_development_dependency 'rspec_junit_formatter'
   s.add_development_dependency 'rspec-rails', '~> 6.1'
-  s.add_development_dependency 'rubocop', '~> 0.93'
-  s.add_development_dependency 'rubocop-performance', '~> 1.10'
-  s.add_development_dependency 'rubocop-rails', '~> 2.1'
-  s.add_development_dependency 'rubocop-rspec', '~> 1.44'
+  s.add_development_dependency 'rubocop', '~> 1.63'
+  s.add_development_dependency 'rubocop-performance', '~> 1.21'
+  s.add_development_dependency 'rubocop-rails', '~> 2.24'
+  s.add_development_dependency 'rubocop-rspec', '~> 2.29'
 
   if defined?(JRUBY_VERSION)
     s.add_development_dependency 'activerecord-jdbc-adapter'

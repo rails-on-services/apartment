@@ -42,9 +42,11 @@ RSpec.configure do |config|
   config.include Apartment::Spec::Setup
 
   # Somewhat brutal hack so that rails 4 postgres extensions don't modify this file
+  # rubocop:disable RSpec/BeforeAfterAll
   config.after(:all) do
     `git checkout -- spec/dummy/db/schema.rb`
   end
+  # rubocop:enable RSpec/BeforeAfterAll
 
   # rspec-rails 3 will no longer automatically infer an example group's spec type
   # from the file location. You can explicitly opt-in to the feature using this
