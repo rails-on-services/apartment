@@ -9,9 +9,7 @@ describe Apartment::Adapters::TrilogyAdapter, database: :mysql do
     subject(:adapter) { Apartment::Tenant.adapter }
 
     def tenant_names
-      ActiveRecord::Base.connection.execute('SELECT schema_name FROM information_schema.schemata').collect do |row|
-        row[0]
-      end
+      ActiveRecord::Base.connection.execute('SELECT schema_name FROM information_schema.schemata').pluck(0)
     end
 
     let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.current_database } }
