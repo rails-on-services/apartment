@@ -2,6 +2,8 @@ name: Ruby
 on:
   push:
     branches:
+      - development
+      - master
       - main
   pull_request:
     types: [opened, synchronize, reopened]
