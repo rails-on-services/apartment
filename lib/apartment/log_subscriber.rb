@@ -8,16 +8,16 @@ module Apartment
     # NOTE: for some reason, if the method definition is not here, then the custom debug method is not called
     # rubocop:disable Lint/UselessMethodDefinition
     def sql(event)
-      super(event)
+      super
     end
     # rubocop:enable Lint/UselessMethodDefinition
 
     private
 
-    def debug(progname = nil, &block)
+    def debug(progname = nil, &)
       progname = "  #{apartment_log}#{progname}" unless progname.nil?
 
-      super(progname, &block)
+      super
     end
 
     def apartment_log
