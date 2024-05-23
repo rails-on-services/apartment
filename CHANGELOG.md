@@ -1,8 +1,10 @@
-# Changelog
+# Changelog [DEPRECATED]
 
-## [Unreleased](https://github.com/rails-on-services/apartment/tree/HEAD)
+Changes are now being tracked in the [releases](https://github.com/rails-on-services/apartment/releases) section of the repository.
 
-[Full Changelog](https://github.com/rails-on-services/apartment/compare/v2.8.0...HEAD)
+## [v2.8.1](https://github.com/rails-on-services/apartment/tree/v2.8.1) (2020-12-17)
+
+[Full Changelog](https://github.com/rails-on-services/apartment/compare/v2.8.0...v2.8.1)
 
 **Implemented enhancements:**
 
