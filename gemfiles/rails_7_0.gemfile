@@ -9,9 +9,9 @@ platforms :ruby do
 end
 
 platforms :jruby do
-  gem "activerecord-jdbc-adapter", "~> 61.0"
-  gem "activerecord-jdbcpostgresql-adapter", "~> 61.0"
-  gem "activerecord-jdbcmysql-adapter", "~> 61.0"
+  gem "activerecord-jdbc-adapter", "~> 70.0"
+  gem "activerecord-jdbcpostgresql-adapter", "~> 70.0"
+  gem "activerecord-jdbcmysql-adapter", "~> 70.0"
 end
 
 gemspec path: "../"
