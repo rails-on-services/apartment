@@ -1,4 +1,4 @@
-name: Ruby Gem Publish
+name: Publish to RubyGems
 on:
   push:
     branches: [ 'main' ]
