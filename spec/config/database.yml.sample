@@ -45,5 +45,5 @@ connections:
 
   sqlite:
     adapter: sqlite3
-    database: <%= File.expand_path('../spec/dummy/db', __FILE__) %>/default.sqlite3
+    database: <%= File.expand_path('../spec/dummy/db', __FILE__) %>/test.sqlite3
 <% end %>
