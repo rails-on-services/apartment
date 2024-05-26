@@ -18,9 +18,9 @@ appraise 'rails-7-0' do
     gem 'sqlite3', '~> 1.4'
   end
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 61.0'
-    gem 'activerecord-jdbcpostgresql-adapter', '~> 61.0'
-    gem 'activerecord-jdbcmysql-adapter', '~> 61.0'
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcpostgresql-adapter', '~> 70.0'
+    gem 'activerecord-jdbcmysql-adapter', '~> 70.0'
   end
 end
 
@@ -30,20 +30,21 @@ appraise 'rails-7-1' do
     gem 'sqlite3', '~> 1.6'
   end
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 61.0'
-    gem 'activerecord-jdbcpostgresql-adapter', '~> 61.0'
-    gem 'activerecord-jdbcmysql-adapter', '~> 61.0'
+    gem 'activerecord-jdbc-adapter', '~> 71.0'
+    gem 'activerecord-jdbcpostgresql-adapter', '~> 71.0'
+    gem 'activerecord-jdbcmysql-adapter', '~> 71.0'
   end
 end
 
-appraise 'rails-master' do
-  gem 'rails', git: 'https://github.com/rails/rails.git'
-  platforms :ruby do
-    gem 'sqlite3', '~> 1.4'
-  end
-  platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 61.0'
-    gem 'activerecord-jdbcpostgresql-adapter', '~> 61.0'
-    gem 'activerecord-jdbcmysql-adapter', '~> 61.0'
-  end
-end
+# Install Rails from the main branch are failing
+# appraise 'rails-master' do
+#   gem 'rails', git: 'https://github.com/rails/rails.git'
+#   platforms :ruby do
+#     gem 'sqlite3', '~> 2.0'
+#   end
+#   platforms :jruby do
+#     gem 'activerecord-jdbc-adapter', '~> 61.0'
+#     gem 'activerecord-jdbcpostgresql-adapter', '~> 61.0'
+#     gem 'activerecord-jdbcmysql-adapter', '~> 61.0'
+#   end
+# end

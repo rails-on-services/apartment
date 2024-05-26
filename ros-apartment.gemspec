@@ -17,7 +17,7 @@ Gem::Specification.new do |s|
   s.files = Dir.chdir(File.expand_path(__dir__)) do
     `git ls-files -z`.split("\x0").reject do |f|
       # NOTE: ignore all test related
-      f.match(%r{^(test|spec|features|documentation)/})
+      f.match(%r{^(test|spec|features|documentation|gemfiles|.github)/})
     end
   end
   s.executables   = s.files.grep(%r{^bin/}).map { |f| File.basename(f) }
@@ -26,6 +26,11 @@ Gem::Specification.new do |s|
 
   s.homepage = 'https://github.com/rails-on-services/apartment'
   s.licenses = ['MIT']
+  s.metadata = {
+    'github_repo' => 'ssh://github.com/rails-on-services/apartment'
+  }
+
+  s.required_ruby_version = '>= 3.0', '< 3.4'
 
   s.add_dependency 'activerecord', '>= 6.1.0', '< 7.2'
   s.add_dependency 'parallel', '< 2.0'
@@ -53,8 +58,8 @@ Gem::Specification.new do |s|
     s.add_development_dependency 'jdbc-postgres'
   else
     s.add_development_dependency 'mysql2',  '~> 0.5'
-    s.add_development_dependency 'pg',      '~> 1.2'
-    s.add_development_dependency 'sqlite3', '~> 1.3.6'
+    s.add_development_dependency 'pg',      '~> 1.5'
+    s.add_development_dependency 'sqlite3', '< 2.0'
     s.add_development_dependency 'trilogy', '< 3.0'
   end
 end

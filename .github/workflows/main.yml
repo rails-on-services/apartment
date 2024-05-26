@@ -1,7 +1,8 @@
-name: Ruby
+name: RSpec
 on:
   push:
     branches:
+      - development
       - main
   pull_request:
     types: [opened, synchronize, reopened]

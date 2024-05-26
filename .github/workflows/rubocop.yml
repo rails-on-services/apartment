@@ -1,4 +1,4 @@
-name: Ruby
+name: Rubocop
 on:
   push:
     branches:

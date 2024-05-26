@@ -1,0 +1,31 @@
+name: Publish to RubyGems
+on:
+  push:
+    branches: [ 'main' ]
+    paths:
+      - 'lib/apartment/version.rb'
+  pull_request:
+    branches: [ 'main' ]
+    types: [ 'closed' ]
+    paths:
+      - 'lib/apartment/version.rb'
+
+jobs:
+  build:
+    if: github.event.pull_request.merged == true
+    name: Build + Publish
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: ruby/setup-ruby@v1
+      with:
+        bundler-cache: true
+        rubygems: latest
+        bundler: latest
+    - name: Publish to RubyGems
+      uses: rubygems/release-gem@v1
