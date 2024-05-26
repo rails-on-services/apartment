@@ -3,7 +3,7 @@
 require 'apartment/adapters/mysql2_adapter'
 
 module Apartment
-  # Helper module to decide wether to use mysql2 adapter or mysql2 adapter with schemas
+  # Helper module to decide wether to use trilogy adapter or trilogy adapter with schemas
   module Tenant
     def self.trilogy_adapter(config)
       if Apartment.use_schemas
