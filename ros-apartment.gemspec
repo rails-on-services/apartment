@@ -60,5 +60,6 @@ Gem::Specification.new do |s|
     s.add_development_dependency 'mysql2',  '~> 0.5'
     s.add_development_dependency 'pg',      '~> 1.5'
     s.add_development_dependency 'sqlite3', '< 2.0'
+    s.add_development_dependency 'trilogy', '< 3.0'
   end
 end

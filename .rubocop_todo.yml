@@ -207,6 +207,7 @@ RSpec/ExampleWording:
 RSpec/FilePath:
   Exclude:
     - 'spec/adapters/mysql2_adapter_spec.rb'
+    - 'spec/adapters/trilogy_adapter_spec.rb'
     - 'spec/adapters/postgresql_adapter_spec.rb'
     - 'spec/adapters/sqlite3_adapter_spec.rb'
     - 'spec/tenant_spec.rb'
@@ -292,6 +293,7 @@ RSpec/MultipleExpectations:
 RSpec/NamedSubject:
   Exclude:
     - 'spec/adapters/mysql2_adapter_spec.rb'
+    - 'spec/adapters/trilogy_adapter_spec.rb'
     - 'spec/adapters/sqlite3_adapter_spec.rb'
     - 'spec/support/contexts.rb'
     - 'spec/support/requirements.rb'
@@ -315,6 +317,7 @@ RSpec/NoExpectationExample:
 RSpec/SpecFilePathFormat:
   Exclude:
     - 'spec/adapters/mysql2_adapter_spec.rb'
+    - 'spec/adapters/trilogy_adapter_spec.rb'
     - 'spec/adapters/postgresql_adapter_spec.rb'
     - 'spec/adapters/sqlite3_adapter_spec.rb'
     - 'spec/tenant_spec.rb'
