@@ -181,7 +181,7 @@ module Apartment
         query_cache_enabled = ActiveRecord::Base.connection.query_cache_enabled
 
         Apartment.establish_connection multi_tenantify(tenant)
-        Apartment.connection.active? # call active? to manually check if this connection is valid
+        Apartment.connection.verify! # call active? to manually check if this connection is valid
 
         Apartment.connection.enable_query_cache! if query_cache_enabled
       rescue *rescuable_exceptions => e
