@@ -27,14 +27,13 @@ module Apartment
             example.run
 
             # after
-            Rails.configuration.database_configuration = {}
-            ActiveRecord::Base.clear_all_connections!
+            ActiveRecord::Base.connection_handler.clear_all_connections!
 
             Apartment.excluded_models.each do |model|
               klass = model.constantize
 
-              Apartment.connection_class.remove_connection(klass)
-              klass.clear_all_connections!
+              klass.remove_connection
+              klass.connection_handler.clear_all_connections!
               klass.reset_table_name
             end
             Apartment.reset

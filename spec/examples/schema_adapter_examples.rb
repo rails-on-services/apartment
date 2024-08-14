@@ -27,6 +27,9 @@ shared_examples_for 'a schema based apartment adapter' do
       Apartment::Tenant.init
 
       expect(Company.table_name).to eq('public.companies')
+      expect(Company.sequence_name).to eq('public.companies_id_seq')
+      expect(User.table_name).to eq('users')
+      expect(User.sequence_name).to eq('users_id_seq')
     end
 
     context 'with a default_tenant', default_tenant: true do
@@ -34,6 +37,9 @@ shared_examples_for 'a schema based apartment adapter' do
         Apartment::Tenant.init
 
         expect(Company.table_name).to eq("#{default_tenant}.companies")
+        expect(Company.sequence_name).to eq("#{default_tenant}.companies_id_seq")
+        expect(User.table_name).to eq('users')
+        expect(User.sequence_name).to eq('users_id_seq')
       end
 
       it 'sets the search_path correctly' do
@@ -116,20 +122,50 @@ shared_examples_for 'a schema based apartment adapter' do
   end
 
   describe '#switch' do
+    before do
+      Apartment.configure do |config|
+        config.excluded_models = ['Company']
+      end
+    end
+
     it 'connects and resets' do
       subject.switch(schema1) do
+        # Ensure sequence is not cached
+        Company.reset_sequence_name
+        User.reset_sequence_name
+
         expect(connection.schema_search_path).to start_with %("#{schema1}")
-        expect(User.sequence_name).to eq "#{schema1}.#{User.table_name}_id_seq"
+        expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+        expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
       end
 
       expect(connection.schema_search_path).to start_with %("#{public_schema}")
-      expect(User.sequence_name).to eq "#{public_schema}.#{User.table_name}_id_seq"
+      expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+      expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
     end
 
-    it 'allows a list of schemas' do
-      subject.switch([schema1, schema2]) do
-        expect(connection.schema_search_path).to include %("#{schema1}")
-        expect(connection.schema_search_path).to include %("#{schema2}")
+    describe 'multiple schemas' do
+      it 'allows a list of schemas' do
+        subject.switch([schema1, schema2]) do
+          expect(connection.schema_search_path).to include %("#{schema1}")
+          expect(connection.schema_search_path).to include %("#{schema2}")
+        end
+      end
+
+      it 'connects and resets' do
+        subject.switch([schema1, schema2]) do
+          # Ensure sequence is not cached
+          Company.reset_sequence_name
+          User.reset_sequence_name
+
+          expect(connection.schema_search_path).to start_with %("#{schema1}")
+          expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+          expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
+        end
+
+        expect(connection.schema_search_path).to start_with %("#{public_schema}")
+        expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+        expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
       end
     end
   end
@@ -197,7 +233,7 @@ shared_examples_for 'a schema based apartment adapter' do
       it 'should not raise any errors' do
         expect do
           subject.switch! 'unknown_schema'
-        end.not_to raise_error(Apartment::TenantNotFound)
+        end.not_to raise_error
       end
     end
 

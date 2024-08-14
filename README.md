@@ -1,8 +1,7 @@
 # Apartment
 
-[![Gem Version](https://badge.fury.io/rb/ros-apartment.svg)](https://badge.fury.io/rb/apartment)
+[![Gem Version](https://badge.fury.io/rb/ros-apartment.svg)](https://badge.fury.io/rb/ros-apartment)
 [![Code Climate](https://api.codeclimate.com/v1/badges/b0dc327380bb8438f991/maintainability)](https://codeclimate.com/github/rails-on-services/apartment/maintainability)
-[![Build Status](https://travis-ci.org/rails-on-services/apartment.svg?branch=development)](https://travis-ci.org/rails-on-services/apartment)
 
 *Multitenancy for Rails and ActiveRecord*
 
@@ -68,7 +67,7 @@ you need to create a new tenant, you can run the following command:
 Apartment::Tenant.create('tenant_name')
 ```
 
-If you're using the [prepend environment](https://github.com/influitive/apartment#handling-environments) config option or you AREN'T using Postgresql Schemas, this will create a tenant in the following format: "#{environment}\_tenant_name".
+If you're using the [prepend environment](https://github.com/rails-on-services/apartment#handling-environments) config option or you AREN'T using Postgresql Schemas, this will create a tenant in the following format: "#{environment}\_tenant_name".
 In the case of a sqlite database, this will be created in your 'db/' folder. With
 other databases, the tenant will be created as a new DB within the system.
 
@@ -275,7 +274,7 @@ In the examples above, we show the Apartment middleware being appended to the Ra
 Rails.application.config.middleware.use Apartment::Elevators::Subdomain
 ```
 
-By default, the Subdomain middleware switches into a Tenant based on the subdomain at the beginning of the request, and when the request is finished, it switches back to the "public" Tenant. This happens in the [Generic](https://github.com/influitive/apartment/blob/development/lib/apartment/elevators/generic.rb#L22) elevator, so all elevators that inherit from this elevator will operate as such.
+By default, the Subdomain middleware switches into a Tenant based on the subdomain at the beginning of the request, and when the request is finished, it switches back to the "public" Tenant. This happens in the [Generic](https://github.com/rails-on-services/apartment/blob/development/lib/apartment/elevators/generic.rb#L22) elevator, so all elevators that inherit from this elevator will operate as such.
 
 It's also good to note that Apartment switches back to the "public" tenant any time an error is raised in your application.
 
@@ -344,7 +343,7 @@ Setting this configuration value to `false` will disable the schema presence che
 
 ```ruby
 Apartment.configure do |config|
-  tenant_presence_check = false
+  config.tenant_presence_check = false
 end
 ```
 
@@ -531,7 +530,7 @@ You can then migrate your tenants using the normal rake task:
 rake db:migrate
 ```
 
-This just invokes `Apartment::Tenant.migrate(#{tenant_name})` for each tenant name supplied
+This just invokes `Apartment::Migrator.migrate(#{tenant_name})` for each tenant name supplied
 from `Apartment.tenant_names`
 
 Note that you can disable the default migrating of all tenants with `db:migrate` by setting

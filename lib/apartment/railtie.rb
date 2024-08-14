@@ -47,7 +47,12 @@ module Apartment
     config.after_initialize do
       # NOTE: Load the custom log subscriber if enabled
       if Apartment.active_record_log
-        ActiveSupport::Notifications.unsubscribe 'sql.active_record'
+        ActiveSupport::Notifications.notifier.listeners_for('sql.active_record').each do |listener|
+          next unless listener.instance_variable_get('@delegate').is_a?(ActiveRecord::LogSubscriber)
+
+          ActiveSupport::Notifications.unsubscribe listener
+        end
+
         Apartment::LogSubscriber.attach_to :active_record
       end
     end

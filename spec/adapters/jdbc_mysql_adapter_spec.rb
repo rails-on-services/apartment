@@ -6,11 +6,11 @@ if defined?(JRUBY_VERSION)
   require 'apartment/adapters/jdbc_mysql_adapter'
 
   describe Apartment::Adapters::JDBCMysqlAdapter, database: :mysql do
-    subject { Apartment::Tenant.jdbc_mysql_adapter config.symbolize_keys }
+    subject(:adapter) { Apartment::Tenant.adapter }
 
     def tenant_names
-      ActiveRecord::Base.connection.execute('SELECT schema_name FROM information_schema.schemata').collect do |row|
-        row['schema_name']
+      ActiveRecord::Base.connection.execute('SELECT SCHEMA_NAME FROM information_schema.schemata').collect do |row|
+        row['SCHEMA_NAME']
       end
     end
 

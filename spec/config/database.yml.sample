@@ -17,7 +17,7 @@ connections:
     database: apartment_mysql_test
     username: root
     min_messages: WARNING
-    driver: com.mysql.jdbc.Driver
+    driver: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/apartment_mysql_test
     timeout: 5000
     pool: 5
@@ -45,5 +45,5 @@ connections:
 
   sqlite:
     adapter: sqlite3
-    database: <%= File.expand_path('../spec/dummy/db', __FILE__) %>/default.sqlite3
+    database: <%= File.expand_path('../spec/dummy/db', __FILE__) %>/test.sqlite3
 <% end %>

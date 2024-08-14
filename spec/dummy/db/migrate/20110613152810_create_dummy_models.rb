@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-migration_class = ActiveRecord::VERSION::MAJOR >= 5 ? ActiveRecord::Migration[4.2] : ActiveRecord::Migration
-class CreateDummyModels < migration_class
+class CreateDummyModels < ActiveRecord::Migration[4.2]
   def self.up
     create_table :companies do |t|
       t.boolean :dummy
