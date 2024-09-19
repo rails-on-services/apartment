@@ -5,6 +5,8 @@ require "active_record/connection_adapters/abstract/schema_dumper"
 require "active_record/connection_adapters/postgresql/schema_dumper"
 
 class ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper
+  alias_method :_original_schemas, :schemas
   def schemas(stream)
+    _original_schemas(stream) unless Apartment.use_schemas
   end
 end
