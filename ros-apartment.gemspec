@@ -30,11 +30,11 @@ Gem::Specification.new do |s|
     'github_repo' => 'ssh://github.com/rails-on-services/apartment'
   }
 
-  s.required_ruby_version = '>= 3.0', '< 3.4'
+  s.required_ruby_version = '>= 3.1', '<= 3.4'
 
-  s.add_dependency 'activerecord', '>= 6.1.0', '< 7.2'
+  s.add_dependency 'activerecord', '>= 6.1.0', '<= 8.1'
   s.add_dependency 'parallel', '< 2.0'
-  s.add_dependency 'public_suffix', '>= 2.0.5', '< 6.0'
+  s.add_dependency 'public_suffix', '>= 2.0.5', '<= 6.0.1'
   s.add_dependency 'rack', '>= 1.3.6', '< 4.0'
 
   s.add_development_dependency 'appraisal', '~> 2.2'
