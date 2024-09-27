@@ -135,7 +135,7 @@ end
 def migrate
   # TODO: Figure out if there is any other possibility that can/should be
   # passed here as the second argument for the migration context
-  if ActiveRecord.version > "7.1"
+  if ActiveRecord.version > '7.1'
     ActiveRecord::MigrationContext.new('spec/dummy/db/migrate').migrate
   else
     ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', ActiveRecord::SchemaMigration).migrate

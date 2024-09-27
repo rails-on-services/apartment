@@ -5,6 +5,7 @@ require 'active_support/core_ext/object/blank'
 require 'forwardable'
 require 'active_record'
 require 'apartment/tenant'
+require 'apartment/deprecation'
 
 require_relative 'apartment/log_subscriber'
 require_relative 'apartment/active_record/connection_handling'
@@ -47,7 +48,7 @@ module Apartment
     end
 
     def tld_length=(_)
-      Apartment::Deprecation.warn('`config.tld_length` have no effect because it was removed in https://github.com/influitive/apartment/pull/309')
+      Apartment::DEPRECATOR.warn('`config.tld_length` have no effect because it was removed in https://github.com/influitive/apartment/pull/309')
     end
 
     def db_config_for(tenant)
