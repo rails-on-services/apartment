@@ -4,7 +4,9 @@ module Apartment
   module TaskHelper
     def self.each_tenant(&block)
       Parallel.each(tenants_without_default, in_threads: Apartment.parallel_migration_threads) do |tenant|
-        block.call(tenant)
+        Rails.application.executor.wrap do
+          block.call(tenant)
+        end
       end
     end
 
