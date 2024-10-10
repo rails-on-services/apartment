@@ -19,36 +19,37 @@ module Apartment
     #   @return {subclass of Apartment::AbstractAdapter}
     #
     def adapter
-      Thread.current[:apartment_adapter] ||= begin
-        adapter_method = "#{config[:adapter]}_adapter"
+      current_adapter = Thread.current.thread_variable_get(:apartment_adapter)
+      return current_adapter if current_adapter
 
-        if defined?(JRUBY_VERSION)
-          case config[:adapter]
-          when /mysql/
-            adapter_method = 'jdbc_mysql_adapter'
-          when /postgresql/
-            adapter_method = 'jdbc_postgresql_adapter'
-          end
+      adapter_method = "#{config[:adapter]}_adapter"
+
+      if defined?(JRUBY_VERSION)
+        case config[:adapter]
+        when /mysql/
+          adapter_method = 'jdbc_mysql_adapter'
+        when /postgresql/
+          adapter_method = 'jdbc_postgresql_adapter'
         end
-
-        begin
-          require "apartment/adapters/#{adapter_method}"
-        rescue LoadError
-          raise "The adapter `#{adapter_method}` is not yet supported"
-        end
-
-        unless respond_to?(adapter_method)
-          raise AdapterNotFound, "database configuration specifies nonexistent #{config[:adapter]} adapter"
-        end
-
-        send(adapter_method, config)
       end
+
+      begin
+        require "apartment/adapters/#{adapter_method}"
+      rescue LoadError
+        raise "The adapter `#{adapter_method}` is not yet supported"
+      end
+
+      unless respond_to?(adapter_method)
+        raise AdapterNotFound, "database configuration specifies nonexistent #{config[:adapter]} adapter"
+      end
+
+      Thread.current.thread_variable_set(:apartment_adapter, send(adapter_method, config))
     end
 
     #   Reset config and adapter so they are regenerated
     #
     def reload!(config = nil)
-      Thread.current[:apartment_adapter] = nil
+      Thread.current.thread_variable_set(:apartment_adapter, nil)
       @config = config
     end
 
