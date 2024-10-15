@@ -1,4 +1,4 @@
-name: RSpec
+name: RSpec MySQL 8.0
 on:
   push:
     branches:
@@ -36,19 +36,6 @@ jobs:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}.gemfile
       CI: true
     services:
-      postgres:
-        image: postgres:14 # pg_dump tests currently depend on this version
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_HOST_AUTH_METHOD: trust
-          POSTGRES_DB: apartment_postgresql_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
       mysql:
         image: mysql:8.0
         env:
@@ -73,4 +60,4 @@ jobs:
       - name: Database Setup
         run: bundle exec rake db:test:prepare
       - name: Run tests
-        run: bundle exec rspec --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml
+        run: bundle exec rspec --tag database:mysql --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml
