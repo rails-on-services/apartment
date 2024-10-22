@@ -46,20 +46,22 @@ namespace :db do
 
   desc "copy sample database credential files over if real files don't exist"
   task :load_db_credentials do
-    require 'fileutils'
-
     return unless ENV['DATABASE_ENGINE']
 
     # Load spec db config
-    db_config_string = ERB.new("spec/config/#{ENV['DATABASE_ENGINE']}.yml.erb").result
-    FileUtils.cp_r(db_config_string, 'spec/config/database.yml', verbose: true)
+    db_config_string = ERB.new(File.read("spec/config/#{ENV['DATABASE_ENGINE']}.yml.erb")).result
+    File.open('spec/config/database.yml', 'w') do |f|
+      f.write(db_config_string)
+    end
 
     puts YAML.safe_load(db_config_string)
 
     # Load dummy app db config
-    db_config = YAML.safe_load(db_config_string)[:connections][ENV['DATABASE_ENGINE'].to_sym]
+    db_config = YAML.safe_load(db_config_string)
 
-    FileUtils.cp_r({ test: db_config }, 'spec/dummy/config/database.yml', verbose: true)
+    File.open('spec/dummy/config/database.yml', 'w') do |f|
+      f.write({ test: db_config['connections'][ENV['DATABASE_ENGINE']] }.to_yaml)
+    end
   end
 end
 
