@@ -11,7 +11,7 @@ on:
 
 jobs:
   test:
-    name: rails / rspec
+    name: ${{ github.action }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -42,9 +42,5 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby_version }}
           bundler-cache: true
-      - name: Configure config database.yml
-        run: bundle exec rake db:copy_credentials
-      - name: Database Setup
-        run: bundle exec rake db:test:prepare
       - name: Run tests
-        run: bundle exec rspec --tag ~database --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml
+        run: bundle exec rspec --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml

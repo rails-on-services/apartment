@@ -37,19 +37,19 @@ task default: :spec
 
 namespace :db do
   namespace :test do
-    task prepare: %w[postgres:drop_db postgres:build_db mysql:drop_db mysql:build_db]
+    if ENV['DATABASE_ENGINE'] == 'postgresql'
+      task prepare: %w[postgres:drop_db postgres:build_db]
+    elsif ENV['DATABASE_ENGINE'] == 'mysql'
+      task prepare: %w[mysql:drop_db mysql:build_db]
+    end
   end
 
   desc "copy sample database credential files over if real files don't exist"
   task :copy_credentials do
     require 'fileutils'
-    apartment_db_file = 'spec/config/database.yml'
-    rails_db_file = 'spec/dummy/config/database.yml'
-
-    unless File.exist?(apartment_db_file)
-      FileUtils.copy("#{apartment_db_file}.sample", apartment_db_file, verbose: true)
-    end
-    FileUtils.copy("#{rails_db_file}.sample", rails_db_file, verbose: true) unless File.exist?(rails_db_file)
+    db_config_string = ERB.new("spec/config/#{ENV['DATABASE_ENGINE']}.yml").result
+    FileUtils.cp_r(db_config_string, 'spec/config/database.yml', verbose: true)
+    FileUtils.cp_r(db_config_string, 'spec/dummy/config/database.yml', verbose: true)
   end
 end
 

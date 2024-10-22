@@ -11,7 +11,7 @@ on:
 
 jobs:
   test:
-    name: rails / rspec
+    name: ${{ github.action }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -35,6 +35,7 @@ jobs:
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}.gemfile
       CI: true
+      DATABASE_ENGINE: postgresql
     services:
       postgres:
         image: postgres:14 # pg_dump tests currently depend on this version
@@ -61,4 +62,4 @@ jobs:
       - name: Database Setup
         run: bundle exec rake db:test:prepare
       - name: Run tests
-        run: bundle exec rspec --tag database:postgresql --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml
+        run: bundle exec rspec --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml

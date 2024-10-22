@@ -45,7 +45,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'rake', '~> 13.0'
   s.add_development_dependency 'rspec', '~> 3.4'
   s.add_development_dependency 'rspec_junit_formatter'
-  s.add_development_dependency 'rspec-rails', '~> 6.1'
+  s.add_development_dependency 'rspec-rails', '~> 7.0'
   s.add_development_dependency 'rubocop', '~> 1.63'
   s.add_development_dependency 'rubocop-performance', '~> 1.21'
   s.add_development_dependency 'rubocop-rails', '~> 2.24'
@@ -60,7 +60,7 @@ Gem::Specification.new do |s|
   else
     s.add_development_dependency 'mysql2',  '~> 0.5'
     s.add_development_dependency 'pg',      '~> 1.5'
-    s.add_development_dependency 'sqlite3', '< 2.0'
+    s.add_development_dependency 'sqlite3', '~> 2.0'
     s.add_development_dependency 'trilogy', '< 3.0'
   end
 end
