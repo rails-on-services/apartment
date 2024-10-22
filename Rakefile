@@ -47,7 +47,7 @@ namespace :db do
   desc "copy sample database credential files over if real files don't exist"
   task :copy_credentials do
     require 'fileutils'
-    db_config_string = ERB.new("spec/config/#{ENV['DATABASE_ENGINE']}.yml").result
+    db_config_string = ERB.new("spec/config/#{ENV['DATABASE_ENGINE']}.yml.erb").result
     FileUtils.cp_r(db_config_string, 'spec/config/database.yml', verbose: true)
     FileUtils.cp_r(db_config_string, 'spec/dummy/config/database.yml', verbose: true)
   end
