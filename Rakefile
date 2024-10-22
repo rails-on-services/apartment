@@ -54,7 +54,8 @@ namespace :db do
 
   desc "copy sample database credential files over if real files don't exist"
   task :load_db_credentials do
-    db_engine = ENV['DATABASE_ENGINE']
+    # If no DATABASE_ENGINE is specified, we default to sqlite so that a db config is generated
+    db_engine = ENV.fetch('DATABASE_ENGINE', 'sqlite')
 
     next unless db_engine && %w[postgresql mysql sqlite].include?(db_engine)
 
