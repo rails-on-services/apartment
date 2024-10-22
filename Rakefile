@@ -54,8 +54,10 @@ namespace :db do
     db_config_string = ERB.new("spec/config/#{ENV['DATABASE_ENGINE']}.yml.erb").result
     FileUtils.cp_r(db_config_string, 'spec/config/database.yml', verbose: true)
 
+    puts YAML.safe_load(db_config_string)
+
     # Load dummy app db config
-    db_config = YAML.safe_load(db_config_string)[ENV['DATABASE_ENGINE']]
+    db_config = YAML.safe_load(db_config_string)[:connections][ENV['DATABASE_ENGINE'].to_sym]
 
     FileUtils.cp_r({ test: db_config }, 'spec/dummy/config/database.yml', verbose: true)
   end
