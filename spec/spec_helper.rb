@@ -58,6 +58,18 @@ RSpec.configure do |config|
   #       # Equivalent to being in spec/controllers
   #     end
   config.infer_spec_type_from_file_location!
+
+  if ENV['DATABASE_ENGINE'] == 'postgresql'
+    config.filter_run_including database: :postgresql
+  elsif ENV['DATABASE_ENGINE'] == 'mysql'
+    config.filter_run_including database: :mysql
+  elsif ENV['DATABASE_ENGINE'] == 'sqlite'
+    config.filter_run_including database: :sqlite
+  else
+    config.filter_run_excluding database: :postgresql
+    config.filter_run_excluding database: :mysql
+    config.filter_run_excluding database: :sqlite
+  end
 end
 
 # Load shared examples, must happen after configure for RSpec 3

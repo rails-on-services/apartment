@@ -42,5 +42,7 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby_version }}
           bundler-cache: true
+      - name: Configure config database.yml
+        run: bundle exec rake db:load_db_credentials
       - name: Run tests
         run: bundle exec rspec --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml

@@ -13,7 +13,7 @@ require 'appraisal'
 require 'rspec'
 require 'rspec/core/rake_task'
 
-RSpec::Core::RakeTask.new(spec: %w[db:copy_credentials db:test:prepare]) do |spec|
+RSpec::Core::RakeTask.new(spec: %w[db:load_db_credentials db:test:prepare]) do |spec|
   spec.pattern = 'spec/**/*_spec.rb'
   # spec.rspec_opts = '--order rand:47078'
 end
@@ -45,11 +45,19 @@ namespace :db do
   end
 
   desc "copy sample database credential files over if real files don't exist"
-  task :copy_credentials do
+  task :load_db_credentials do
     require 'fileutils'
+
+    return unless ENV['DATABASE_ENGINE']
+
+    # Load spec db config
     db_config_string = ERB.new("spec/config/#{ENV['DATABASE_ENGINE']}.yml.erb").result
     FileUtils.cp_r(db_config_string, 'spec/config/database.yml', verbose: true)
-    FileUtils.cp_r(db_config_string, 'spec/dummy/config/database.yml', verbose: true)
+
+    # Load dummy app db config
+    db_config = YAML.safe_load(db_config_string)[ENV['DATABASE_ENGINE']]
+
+    FileUtils.cp_r({ test: db_config }, 'spec/dummy/config/database.yml', verbose: true)
   end
 end
 
