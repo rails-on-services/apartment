@@ -41,26 +41,33 @@ namespace :db do
       task prepare: %w[postgres:drop_db postgres:build_db]
     elsif ENV['DATABASE_ENGINE'] == 'mysql'
       task prepare: %w[mysql:drop_db mysql:build_db]
+    elsif ENV['DATABASE_ENGINE'] == 'sqlite'
+      task :prepare do
+        puts 'No need to prepare sqlite3 database'
+      end
+    else
+      task :prepare do
+        puts 'No database engine specified, skipping db:test:prepare'
+      end
     end
   end
 
   desc "copy sample database credential files over if real files don't exist"
   task :load_db_credentials do
-    return unless ENV['DATABASE_ENGINE']
+    db_engine = ENV['DATABASE_ENGINE']
 
-    # Load spec db config
-    db_config_string = ERB.new(File.read("spec/config/#{ENV['DATABASE_ENGINE']}.yml.erb")).result
+    next unless db_engine && %w[postgresql mysql sqlite].include?(db_engine)
+
+    # Load and write spec db config
+    db_config_string = ERB.new(File.read("spec/config/#{db_engine}.yml.erb")).result
     File.open('spec/config/database.yml', 'w') do |f|
       f.write(db_config_string)
     end
 
-    puts YAML.safe_load(db_config_string)
-
-    # Load dummy app db config
+    # Load and write dummy app db config
     db_config = YAML.safe_load(db_config_string)
-
     File.open('spec/dummy/config/database.yml', 'w') do |f|
-      f.write({ test: db_config['connections'][ENV['DATABASE_ENGINE']] }.to_yaml)
+      f.write({ test: db_config['connections'][db_engine] }.to_yaml)
     end
   end
 end

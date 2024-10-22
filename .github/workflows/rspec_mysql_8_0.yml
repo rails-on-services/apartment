@@ -11,7 +11,7 @@ on:
 
 jobs:
   test:
-    name: ${{ github.workflow }} ${{ matrix.ruby_version }} ${{ matrix.rails_version }}
+    name: ${{ github.workflow }}: Ruby ${{ matrix.ruby_version }}, Rails ${{ matrix.rails_version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
