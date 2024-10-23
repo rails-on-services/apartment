@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
+
   require 'spec_helper'
   require 'apartment/adapters/trilogy_adapter'
 

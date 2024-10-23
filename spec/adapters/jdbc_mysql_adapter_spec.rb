@@ -6,7 +6,6 @@ if defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
   require 'apartment/adapters/jdbc_mysql_adapter'
 
   describe Apartment::Adapters::JDBCMysqlAdapter, database: :mysql do
-
     subject(:adapter) { Apartment::Tenant.adapter }
 
     def tenant_names
