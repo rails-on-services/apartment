@@ -12,7 +12,7 @@ end
 
 appraise 'rails-6-1-sqlite3' do
   gem 'rails', '~> 6.1.0'
-  gem 'sqlite3' # Let Rails specify the version to use
+  gem 'sqlite3', '~> 1.4'
 end
 
 appraise 'rails-6-1-jdbc-postgresql' do
@@ -54,7 +54,7 @@ end
 
 appraise 'rails-7-0-sqlite3' do
   gem 'rails', '~> 7.0.0'
-  gem 'sqlite3' # Let Rails specify the version to use
+  gem 'sqlite3', '~> 1.4'
 end
 
 appraise 'rails-7-0-jdbc-postgresql' do
@@ -96,7 +96,7 @@ end
 
 appraise 'rails-7-1-sqlite3' do
   gem 'rails', '~> 7.1.0'
-  gem 'sqlite3' # Let Rails specify the version to use
+  gem 'sqlite3', '~> 2.1'
 end
 
 appraise 'rails-7-1-jdbc-postgresql' do
@@ -138,7 +138,7 @@ end
 
 appraise 'rails-7-2-sqlite3' do
   gem 'rails', '~> 7.2.0'
-  gem 'sqlite3' # Let Rails specify the version to use
+  gem 'sqlite3', '~> 2.1'
 end
 
 appraise 'rails-7-2-jdbc-postgresql' do

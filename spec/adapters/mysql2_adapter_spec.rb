@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'apartment/adapters/mysql2_adapter'
 
 describe Apartment::Adapters::Mysql2Adapter, database: :mysql do
+  require 'apartment/adapters/mysql2_adapter'
+
   unless defined?(JRUBY_VERSION)
 
     subject(:adapter) { Apartment::Tenant.adapter }

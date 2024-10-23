@@ -3,9 +3,10 @@
 if defined?(JRUBY_VERSION)
 
   require 'spec_helper'
-  require 'apartment/adapters/jdbc_mysql_adapter'
 
   describe Apartment::Adapters::JDBCMysqlAdapter, database: :mysql do
+    require 'apartment/adapters/jdbc_mysql_adapter'
+
     subject(:adapter) { Apartment::Tenant.adapter }
 
     def tenant_names

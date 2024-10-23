@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'apartment/adapters/postgresql_adapter'
 
 describe Apartment::Adapters::PostgresqlAdapter, database: :postgresql do
+  require 'apartment/adapters/postgresql_adapter'
+
   unless defined?(JRUBY_VERSION)
 
     subject { Apartment::Tenant.adapter }

@@ -3,9 +3,10 @@
 if defined?(JRUBY_VERSION)
 
   require 'spec_helper'
-  require 'apartment/adapters/jdbc_postgresql_adapter'
 
   describe Apartment::Adapters::JDBCPostgresqlAdapter, database: :postgresql do
+      require 'apartment/adapters/jdbc_postgresql_adapter'
+
     subject(:adapter) { Apartment::Tenant.adapter }
 
     it_behaves_like 'a generic apartment adapter callbacks'

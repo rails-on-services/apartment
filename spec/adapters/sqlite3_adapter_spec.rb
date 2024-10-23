@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'apartment/adapters/sqlite3_adapter'
 
 describe Apartment::Adapters::Sqlite3Adapter, database: :sqlite do
+  require 'apartment/adapters/sqlite3_adapter'
+
   unless defined?(JRUBY_VERSION)
 
     subject(:adapter) { Apartment::Tenant.adapter }
