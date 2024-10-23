@@ -102,8 +102,8 @@ end
 appraise 'rails-7-1-jdbc-postgresql' do
   gem 'rails', '~> 7.1.0'
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 71.0'
-    gem 'activerecord-jdbcpostgresql-adapter', '~> 71.0'
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcpostgresql-adapter', '~> 70.0'
     gem 'jdbc-postgres'
   end
 end
@@ -111,8 +111,8 @@ end
 appraise 'rails-7-1-jdbc-mysql' do
   gem 'rails', '~> 7.1.0'
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 71.0'
-    gem 'activerecord-jdbcmysql-adapter', '~> 71.0'
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcmysql-adapter', '~> 70.0'
     gem 'jdbc-mysql'
   end
 end
@@ -120,8 +120,8 @@ end
 appraise 'rails-7-1-jdbc-sqlite3' do
   gem 'rails', '~> 7.1.0'
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 71.0'
-    gem 'activerecord-jdbcsqlite3-adapter', '~> 71.0'
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcsqlite3-adapter', '~> 70.0'
     gem 'jdbc-sqlite3'
   end
 end
@@ -144,8 +144,8 @@ end
 appraise 'rails-7-2-jdbc-postgresql' do
   gem 'rails', '~> 7.2.0'
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 71.0'
-    gem 'activerecord-jdbcpostgresql-adapter', '~> 71.0'
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcpostgresql-adapter', '~> 70.0'
     gem 'jdbc-postgres'
   end
 end
@@ -153,8 +153,8 @@ end
 appraise 'rails-7-2-jdbc-mysql' do
   gem 'rails', '~> 7.2.0'
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 71.0'
-    gem 'activerecord-jdbcmysql-adapter', '~> 71.0'
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcmysql-adapter', '~> 70.0'
     gem 'jdbc-mysql'
   end
 end
@@ -162,8 +162,8 @@ end
 appraise 'rails-7-2-jdbc-sqlite3' do
   gem 'rails', '~> 7.2.0'
   platforms :jruby do
-    gem 'activerecord-jdbc-adapter', '~> 71.0'
-    gem 'activerecord-jdbcsqlite3-adapter', '~> 71.0'
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcsqlite3-adapter', '~> 70.0'
     gem 'jdbc-sqlite3'
   end
 end
