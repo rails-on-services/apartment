@@ -13,7 +13,7 @@ jobs:
     name: runner / rubocop
     runs-on: ubuntu-latest
     env:
-      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_7_0.gemfile
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_7_2_postgresql.gemfile
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
