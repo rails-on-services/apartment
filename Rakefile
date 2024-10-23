@@ -37,11 +37,12 @@ task default: :spec
 
 namespace :db do
   namespace :test do
-    if ENV['DATABASE_ENGINE'] == 'postgresql'
+    case ENV.fetch('DATABASE_ENGINE', nil)
+    when 'postgresql'
       task prepare: %w[postgres:drop_db postgres:build_db]
-    elsif ENV['DATABASE_ENGINE'] == 'mysql'
+    when 'mysql'
       task prepare: %w[mysql:drop_db mysql:build_db]
-    elsif ENV['DATABASE_ENGINE'] == 'sqlite'
+    when 'sqlite'
       task :prepare do
         puts 'No need to prepare sqlite3 database'
       end
@@ -61,15 +62,11 @@ namespace :db do
 
     # Load and write spec db config
     db_config_string = ERB.new(File.read("spec/config/#{db_engine}.yml.erb")).result
-    File.open('spec/config/database.yml', 'w') do |f|
-      f.write(db_config_string)
-    end
+    File.write('spec/config/database.yml', db_config_string)
 
     # Load and write dummy app db config
     db_config = YAML.safe_load(db_config_string)
-    File.open('spec/dummy/config/database.yml', 'w') do |f|
-      f.write({ test: db_config['connections'][db_engine] }.to_yaml)
-    end
+    File.write('spec/dummy/config/database.yml', { test: db_config['connections'][db_engine] }.to_yaml)
   end
 end
 

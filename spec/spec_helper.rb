@@ -59,16 +59,16 @@ RSpec.configure do |config|
   #     end
   config.infer_spec_type_from_file_location!
 
-  if ENV['DATABASE_ENGINE'] == 'postgresql'
-    config.filter_run_including database: :postgresql
-  elsif ENV['DATABASE_ENGINE'] == 'mysql'
-    config.filter_run_including database: :mysql
-  elsif ENV['DATABASE_ENGINE'] == 'sqlite'
-    config.filter_run_including database: :sqlite
-  else
-    config.filter_run_excluding database: :postgresql
+  case ENV.fetch('DATABASE_ENGINE', nil)
+  when 'postgresql'
     config.filter_run_excluding database: :mysql
     config.filter_run_excluding database: :sqlite
+  when 'mysql'
+    config.filter_run_excluding database: :postgresql
+    config.filter_run_excluding database: :sqlite
+  when 'sqlite'
+    config.filter_run_excluding database: :postgresql
+    config.filter_run_excluding database: :mysql
   end
 end
 
