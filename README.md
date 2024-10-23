@@ -19,7 +19,7 @@ This project thrives on community support. Whether you have an idea for a new fe
 
 ### Maintainer Update
 
-As of May 2024, Apartment is maintained by [Mauricio Novelo](https://www.linkedin.com/in/mauricionovelo) with the support of [CampusESP](https://www.campusesp.com). We continue to keep Apartment open-source under the MIT license. We also want to recognize and thank the previous maintainers for their valuable contributions to this project.
+As of May 2024, Apartment is maintained with the support of [CampusESP](https://www.campusesp.com). We continue to keep Apartment open-source under the MIT license. We also want to recognize and thank the previous maintainers for their valuable contributions to this project.
 
 ## Installation
 
