@@ -59,13 +59,14 @@ RSpec.configure do |config|
   #     end
   config.infer_spec_type_from_file_location!
 
-  if ENV['DATABASE_ENGINE']
+  if ENV['DATABASE_ENGINE'] == 'sqlite'
+    # If DATABASE_ENGINE is sqlite, just skip mysql and postgresql specs
+    config.filter_run_excluding database: ->(engine) { %w[mysql postgresql].include?(engine) }
+  else
+    # If DATABASE_ENGINE is mysql or postgresql, only run their specs
     config.filter_run_including database: lambda { |engine|
       ENV['DATABASE_ENGINE'] == engine.to_s
     }
-  else
-    # If no DATABASE_ENGINE is specified, skip all database tests
-    config.filter_run_excluding database: ->(_engine) { true }
   end
 end
 
