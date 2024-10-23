@@ -59,8 +59,8 @@ RSpec.configure do |config|
   #     end
   config.infer_spec_type_from_file_location!
 
-  config.filter_run_including database: lambda { |engine|
-    ENV.fetch('DATABASE_ENGINE', nil) == engine.to_s
+  config.filter_run_excluding database: lambda { |engine|
+    ENV['DATABASE_ENGINE'] != engine.to_s
   }
 end
 
