@@ -59,17 +59,9 @@ RSpec.configure do |config|
   #     end
   config.infer_spec_type_from_file_location!
 
-  case ENV.fetch('DATABASE_ENGINE', nil)
-  when 'postgresql'
-    config.filter_run_excluding database: :mysql
-    config.filter_run_excluding database: :sqlite
-  when 'mysql'
-    config.filter_run_excluding database: :postgresql
-    config.filter_run_excluding database: :sqlite
-  when 'sqlite'
-    config.filter_run_excluding database: :postgresql
-    config.filter_run_excluding database: :mysql
-  end
+  config.filter_run_including database: lambda { |engine|
+    ENV.fetch('DATABASE_ENGINE', nil) == engine.to_s
+  }
 end
 
 # Load shared examples, must happen after configure for RSpec 3
