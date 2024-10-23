@@ -59,9 +59,13 @@ RSpec.configure do |config|
   #     end
   config.infer_spec_type_from_file_location!
 
-  config.filter_run_excluding database: lambda { |engine|
-    ENV['DATABASE_ENGINE'] != engine.to_s
-  }
+  if ENV['DATABASE_ENGINE']
+    config.filter_run_including database: lambda { |engine|
+      ENV['DATABASE_ENGINE'] == engine.to_s
+    }
+  else
+    config.filter_run_excluding database: ->(_engine) { true }
+  end
 end
 
 # Load shared examples, must happen after configure for RSpec 3
