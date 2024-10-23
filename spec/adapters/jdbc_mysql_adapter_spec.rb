@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-if defined?(JRUBY_VERSION)
+if defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
 
   require 'spec_helper'
+  require 'apartment/adapters/jdbc_mysql_adapter'
 
   describe Apartment::Adapters::JDBCMysqlAdapter, database: :mysql do
-    require 'apartment/adapters/jdbc_mysql_adapter'
 
     subject(:adapter) { Apartment::Tenant.adapter }
 
