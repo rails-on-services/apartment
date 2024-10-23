@@ -50,17 +50,4 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'rubocop-performance', '~> 1.21'
   s.add_development_dependency 'rubocop-rails', '~> 2.24'
   s.add_development_dependency 'rubocop-rspec', '~> 2.29'
-
-  if defined?(JRUBY_VERSION)
-    s.add_development_dependency 'activerecord-jdbc-adapter'
-    s.add_development_dependency 'activerecord-jdbcmysql-adapter'
-    s.add_development_dependency 'activerecord-jdbcpostgresql-adapter'
-    s.add_development_dependency 'jdbc-mysql'
-    s.add_development_dependency 'jdbc-postgres'
-  else
-    s.add_development_dependency 'mysql2',  '~> 0.5'
-    s.add_development_dependency 'pg',      '~> 1.5'
-    s.add_development_dependency 'sqlite3', '>= 1.4', '< 2.2'
-    s.add_development_dependency 'trilogy', '< 3.0'
-  end
 end

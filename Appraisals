@@ -1,19 +1,147 @@
 # frozen_string_literal: true
 
-appraise 'rails-6-1' do
+appraise 'rails-6-1-postgresql' do
   gem 'rails', '~> 6.1.0'
+  gem 'pg', '~> 1.5'
 end
 
-appraise 'rails-7-0' do
+appraise 'rails-6-1-mysql' do
+  gem 'rails', '~> 6.1.0'
+  gem 'mysql2', '~> 0.5'
+end
+
+appraise 'rails-6-1-sqlite3' do
+  gem 'rails', '~> 6.1.0'
+  gem 'sqlite3', '>= 1.4', '< 2.2'
+end
+
+appraise 'rails-6-1-jdbc-postgresql' do
+  gem 'rails', '~> 6.1.0'
+  gem 'activerecord-jdbc-adapter', '~> 61.3'
+  gem 'activerecord-jdbcpostgresql-adapter', '~> 61.3'
+  gem 'jdbc-postgres', '~> 61.3'
+end
+
+appraise 'rails-6-1-jdbc-mysql' do
+  gem 'rails', '~> 6.1.0'
+  gem 'activerecord-jdbc-adapter', '~> 61.3'
+  gem 'activerecord-jdbcmysql-adapter', '~> 61.3'
+  gem 'jdbc-mysql', '~> 61.3'
+end
+
+appraise 'rails-6-1-jdbc-sqlite3' do
+  gem 'rails', '~> 6.1.0'
+  gem 'activerecord-jdbc-adapter', '~> 61.3'
+  gem 'activerecord-jdbcsqlite3-adapter', '~> 61.3'
+  gem 'jdbc-sqlite3', '~> 61.3'
+end
+
+appraise 'rails-7-0-postgresql' do
   gem 'rails', '~> 7.0.0'
+  gem 'pg', '~> 1.5'
 end
 
-appraise 'rails-7-1' do
+appraise 'rails-7-0-mysql' do
+  gem 'rails', '~> 7.0.0'
+  gem 'mysql2', '~> 0.5'
+end
+
+appraise 'rails-7-0-sqlite3' do
+  gem 'rails', '~> 7.0.0'
+  gem 'sqlite3', '>= 1.4', '< 2.2'
+end
+
+appraise 'rails-7-0-jdbc-postgresql' do
+  gem 'rails', '~> 7.0.0'
+  gem 'activerecord-jdbc-adapter', '~> 70.0'
+  gem 'activerecord-jdbcpostgresql-adapter', '~> 70.0'
+  gem 'jdbc-postgres', '~> 70.0'
+end
+
+appraise 'rails-7-0-jdbc-mysql' do
+  gem 'rails', '~> 7.0.0'
+  gem 'activerecord-jdbc-adapter', '~> 70.0'
+  gem 'activerecord-jdbcmysql-adapter', '~> 70.0'
+  gem 'jdbc-mysql', '~> 70.0'
+end
+
+appraise 'rails-7-0-jdbc-sqlite3' do
+  gem 'rails', '~> 7.0.0'
+  gem 'activerecord-jdbc-adapter', '~> 70.0'
+  gem 'activerecord-jdbcsqlite3-adapter', '~> 70.0'
+  gem 'jdbc-sqlite3', '~> 70.0'
+end
+
+appraise 'rails-7-1-postgresql' do
   gem 'rails', '~> 7.1.0'
+  gem 'pg', '~> 1.5'
 end
 
-appraise 'rails-7-2' do
+appraise 'rails-7-1-mysql' do
+  gem 'rails', '~> 7.1.0'
+  gem 'mysql2', '~> 0.5'
+end
+
+appraise 'rails-7-1-sqlite3' do
+  gem 'rails', '~> 7.1.0'
+  gem 'sqlite3', '>= 1.4', '< 2.2'
+end
+
+appraise 'rails-7-1-jdbc-postgresql' do
+  gem 'rails', '~> 7.1.0'
+  gem 'activerecord-jdbc-adapter', '~> 71.0'
+  gem 'activerecord-jdbcpostgresql-adapter', '~> 71.0'
+  gem 'jdbc-postgres', '~> 71.0'
+end
+
+appraise 'rails-7-1-jdbc-mysql' do
+  gem 'rails', '~> 7.1.0'
+  gem 'activerecord-jdbc-adapter', '~> 71.0'
+  gem 'activerecord-jdbcmysql-adapter', '~> 71.0'
+  gem 'jdbc-mysql', '~> 71.0'
+end
+
+appraise 'rails-7-1-jdbc-sqlite3' do
+  gem 'rails', '~> 7.1.0'
+  gem 'activerecord-jdbc-adapter', '~> 71.0'
+  gem 'activerecord-jdbcsqlite3-adapter', '~> 71.0'
+  gem 'jdbc-sqlite3', '~> 71.0'
+end
+
+appraise 'rails-7-2-postgresql' do
   gem 'rails', '~> 7.2.0'
+  gem 'pg', '~> 1.5'
+end
+
+appraise 'rails-7-2-mysql' do
+  gem 'rails', '~> 7.2.0'
+  gem 'mysql2', '~> 0.5'
+end
+
+appraise 'rails-7-2-sqlite3' do
+  gem 'rails', '~> 7.2.0'
+  gem 'sqlite3', '>= 1.4', '< 2.2'
+end
+
+appraise 'rails-7-2-jdbc-postgresql' do
+  gem 'rails', '~> 7.2.0'
+  gem 'activerecord-jdbc-adapter', '~> 71.0'
+  gem 'activerecord-jdbcpostgresql-adapter', '~> 71.0'
+  gem 'jdbc-postgres', '~> 71.0'
+end
+
+appraise 'rails-7-2-jdbc-mysql' do
+  gem 'rails', '~> 7.2.0'
+  gem 'activerecord-jdbc-adapter', '~> 71.0'
+  gem 'activerecord-jdbcmysql-adapter', '~> 71.0'
+  gem 'jdbc-mysql', '~> 71.0'
+end
+
+appraise 'rails-7-2-jdbc-sqlite3' do
+  gem 'rails', '~> 7.2.0'
+  gem 'activerecord-jdbc-adapter', '~> 71.0'
+  gem 'activerecord-jdbcsqlite3-adapter', '~> 71.0'
+  gem 'jdbc-sqlite3', '~> 71.0'
 end
 
 # Install Rails from the main branch are failing
