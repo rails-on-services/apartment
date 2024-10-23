@@ -3,8 +3,11 @@
 source "http://rubygems.org"
 
 gem "rails", "~> 7.1.0"
-gem "activerecord-jdbc-adapter", "~> 71.0"
-gem "activerecord-jdbcpostgresql-adapter", "~> 71.0"
-gem "jdbc-postgres", "~> 71.0"
+
+platforms :jruby do
+  gem "activerecord-jdbc-adapter", "~> 71.0"
+  gem "activerecord-jdbcpostgresql-adapter", "~> 71.0"
+  gem "jdbc-postgres", "~> 71.0"
+end
 
 gemspec path: "../"

@@ -3,6 +3,6 @@
 source "http://rubygems.org"
 
 gem "rails", "~> 7.1.0"
-gem "sqlite3", ">= 1.4", "< 2.2"
+gem "sqlite3"
 
 gemspec path: "../"
