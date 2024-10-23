@@ -7,10 +7,10 @@ Gem::Specification.new do |s|
   s.name = 'ros-apartment'
   s.version = Apartment::VERSION
 
-  s.authors       = ['Ryan Brunner', 'Brad Robertson', 'Rui Baltazar']
+  s.authors       = ['Ryan Brunner', 'Brad Robertson', 'Rui Baltazar', 'Mauricio Novelo']
   s.summary       = 'A Ruby gem for managing database multitenancy. Apartment Gem drop in replacement'
   s.description   = 'Apartment allows Rack applications to deal with database multitenancy through ActiveRecord'
-  s.email         = ['ryan@influitive.com', 'brad@influitive.com', 'rui.p.baltazar@gmail.com']
+  s.email         = ['ryan@influitive.com', 'brad@influitive.com', 'rui.p.baltazar@gmail.com', 'mauricio@campusesp.com']
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been
   # added into git.
@@ -45,7 +45,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'rake', '~> 13.0'
   s.add_development_dependency 'rspec', '~> 3.4'
   s.add_development_dependency 'rspec_junit_formatter'
-  s.add_development_dependency 'rspec-rails', '~> 6.1' # Use the version that matches the minimum Rails version
+  s.add_development_dependency 'rspec-rails', '>= 6.1'
   s.add_development_dependency 'rubocop', '~> 1.63'
   s.add_development_dependency 'rubocop-performance', '~> 1.21'
   s.add_development_dependency 'rubocop-rails', '~> 2.24'
@@ -60,7 +60,7 @@ Gem::Specification.new do |s|
   else
     s.add_development_dependency 'mysql2',  '~> 0.5'
     s.add_development_dependency 'pg',      '~> 1.5'
-    s.add_development_dependency 'sqlite3', '~> 2.0'
+    s.add_development_dependency 'sqlite3', '>= 1.4', '< 2.2'
     s.add_development_dependency 'trilogy', '< 3.0'
   end
 end

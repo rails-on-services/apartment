@@ -44,7 +44,7 @@ jobs:
           ruby-version: ${{ matrix.ruby_version }}
           bundler-cache: true
       - name: Configure config database.yml
-        run: bundle exec rake db:load_db_credentials
+        run: bundle exec rake db:load_credentials
       - name: Database Setup
         run: bundle exec rake db:test:prepare
       - name: Run tests

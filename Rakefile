@@ -13,7 +13,7 @@ require 'appraisal'
 require 'rspec'
 require 'rspec/core/rake_task'
 
-RSpec::Core::RakeTask.new(spec: %w[db:load_db_credentials db:test:prepare]) do |spec|
+RSpec::Core::RakeTask.new(spec: %w[db:load_credentials db:test:prepare]) do |spec|
   spec.pattern = 'spec/**/*_spec.rb'
   # spec.rspec_opts = '--order rand:47078'
 end
@@ -54,9 +54,9 @@ namespace :db do
   end
 
   desc "copy sample database credential files over if real files don't exist"
-  task :load_db_credentials do
+  task :load_credentials do
     # If no DATABASE_ENGINE is specified, we default to sqlite so that a db config is generated
-    db_engine = ENV.fetch('DATABASE_ENGINE', 'postgresql')
+    db_engine = ENV.fetch('DATABASE_ENGINE', 'sqlite')
 
     next unless db_engine && %w[postgresql mysql sqlite].include?(db_engine)
 

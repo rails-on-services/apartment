@@ -64,6 +64,7 @@ RSpec.configure do |config|
       ENV['DATABASE_ENGINE'] == engine.to_s
     }
   else
+    # If no DATABASE_ENGINE is specified, skip all database tests
     config.filter_run_excluding database: ->(_engine) { true }
   end
 end
