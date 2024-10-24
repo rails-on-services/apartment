@@ -88,8 +88,8 @@ namespace :postgres do
     rescue StandardError
       'test db already exists'
     end
-    ActiveRecord::Base.establish_connection(pg_config)
-    migrate
+    conn = ActiveRecord::Base.establish_connection(pg_config)
+    migrate(conn)
   end
 
   desc 'drop the PostgreSQL test database'
@@ -120,8 +120,8 @@ namespace :mysql do
     rescue StandardError
       'test db already exists'
     end
-    ActiveRecord::Base.establish_connection(my_config)
-    migrate
+    conn = ActiveRecord::Base.establish_connection(my_config)
+    migrate(conn)
   end
 
   desc 'drop the MySQL test database'
@@ -148,6 +148,10 @@ def my_config
   config['mysql']
 end
 
-def migrate
-  ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', ActiveRecord::SchemaMigration).migrate
+def migrate(connection)
+  if ActiveRecord.version.release <= Gem::Version.new('7.0')
+    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', ActiveRecord::SchemaMigration).migrate
+  else
+    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', connection.schema_migration).migrate
+  end
 end
