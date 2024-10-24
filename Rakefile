@@ -88,7 +88,7 @@ namespace :postgres do
     rescue StandardError
       'test db already exists'
     end
-    ActiveRecord::Base.establish_connection pg_config
+    ActiveRecord::Base.establish_connection(pg_config)
     migrate
   end
 
@@ -120,7 +120,7 @@ namespace :mysql do
     rescue StandardError
       'test db already exists'
     end
-    ActiveRecord::Base.establish_connection my_config
+    ActiveRecord::Base.establish_connection(my_config)
     migrate
   end
 
@@ -136,7 +136,6 @@ namespace :mysql do
   end
 end
 
-# TODO: clean this up
 def config
   Apartment::Test.config['connections']
 end
@@ -150,11 +149,5 @@ def my_config
 end
 
 def migrate
-  # TODO: Figure out if there is any other possibility that can/should be
-  # passed here as the second argument for the migration context
-  if ActiveRecord.version > '7.1'
-    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate').migrate
-  else
-    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', ActiveRecord::SchemaMigration).migrate
-  end
+  ActiveRecord::MigrationContext.new('spec/dummy/db/migrate').migrate
 end
