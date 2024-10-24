@@ -27,7 +27,7 @@ module Apartment::PostgreSqlAdapterPatch
 
       if schema_prefix != default_tenant_prefix
         res&.delete_prefix!(schema_prefix)
-        res = default_tenant_prefix + res
+        res = default_tenant_prefix + res unless res&.starts_with?(default_tenant_prefix)
       end
 
       puts "res: #{res}"
