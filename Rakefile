@@ -84,7 +84,7 @@ namespace :postgres do
     params << "-p#{pg_config['port']}" if pg_config['port']
 
     begin
-      `createdb #{params.join(' ')}`
+      system("createdb #{params.join(' ')}")
     rescue StandardError
       'test db already exists'
     end
@@ -100,7 +100,7 @@ namespace :postgres do
     params << "-U#{pg_config['username']}"
     params << "-h#{pg_config['host']}" if pg_config['host']
     params << "-p#{pg_config['port']}" if pg_config['port']
-    `dropdb #{params.join(' ')}`
+    system("dropdb #{params.join(' ')}")
   end
 end
 
@@ -113,10 +113,10 @@ namespace :mysql do
     params = []
     params << "-h #{my_config['host']}" if my_config['host']
     params << "-u #{my_config['username']}" if my_config['username']
-    params << "-p#{my_config['password']}" if my_config['password']
-    params << "--port #{my_config['port']}" if my_config['port']
+    params << "-p #{my_config['password']}" if my_config['password']
+    params << "-P #{my_config['port']}" if my_config['port']
     begin
-      `mysqladmin #{params.join(' ')} create #{my_config['database']}`
+      system("mysqladmin #{params.join(' ')} create #{my_config['database']}")
     rescue StandardError
       'test db already exists'
     end
@@ -130,9 +130,9 @@ namespace :mysql do
     params = []
     params << "-h #{my_config['host']}" if my_config['host']
     params << "-u #{my_config['username']}" if my_config['username']
-    params << "-p#{my_config['password']}" if my_config['password']
-    params << "--port #{my_config['port']}" if my_config['port']
-    `mysqladmin #{params.join(' ')} drop #{my_config['database']} --force`
+    params << "-p #{my_config['password']}" if my_config['password']
+    params << "-P #{my_config['port']}" if my_config['port']
+    system("mysqladmin #{params.join(' ')} drop #{my_config['database']} --force")
   end
 end
 

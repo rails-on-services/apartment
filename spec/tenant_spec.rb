@@ -8,8 +8,11 @@ describe Apartment::Tenant do
 
     describe '#adapter' do
       it 'should load mysql adapter' do
-        subject.adapter
-        expect(Apartment::Adapters::Mysql2Adapter).to be_a(Class)
+        if defined?(JRUBY_VERSION)
+          expect(subject.adapter).to be_a(Apartment::Adapters::JDBCMysqlAdapter)
+        else
+          expect(subject.adapter).to be_a(Apartment::Adapters::Mysql2Adapter)
+        end
       end
     end
 
@@ -46,7 +49,11 @@ describe Apartment::Tenant do
 
     describe '#adapter' do
       it 'should load postgresql adapter' do
-        expect(subject.adapter).to be_a(Apartment::Adapters::PostgresqlSchemaAdapter)
+        if defined?(JRUBY_VERSION)
+          expect(subject.adapter).to be_a(Apartment::Adapters::JDBCPostgresqlSchemaAdapter)
+        else
+          expect(subject.adapter).to be_a(Apartment::Adapters::PostgresqlSchemaAdapter)
+        end
       end
 
       it 'raises exception with invalid adapter specified' do
