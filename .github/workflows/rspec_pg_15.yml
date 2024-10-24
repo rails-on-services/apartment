@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-common
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+          echo | sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-client-15
       - uses: actions/checkout@v4
