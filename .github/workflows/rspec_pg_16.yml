@@ -1,4 +1,4 @@
-name: RSpec PostgreSQL 14
+name: RSpec PostgreSQL 16
 on:
   push:
     branches:
