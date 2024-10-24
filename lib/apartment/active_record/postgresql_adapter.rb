@@ -25,13 +25,16 @@ module Apartment::PostgreSqlAdapterPatch
 
       puts "default_tenant_prefix: #{default_tenant_prefix}"
 
-      res.sub!(schema_prefix, default_tenant_prefix) if schema_prefix != default_tenant_prefix
+      if schema_prefix != default_tenant_prefix
+        res&.delete_prefix!(schema_prefix)
+        res = default_tenant_prefix + res
+      end
 
       puts "res: #{res}"
       return res
     end
 
-    res.delete_prefix!(schema_prefix) if res&.starts_with?(schema_prefix)
+    res&.delete_prefix!(schema_prefix)
 
     res
   end
