@@ -195,15 +195,13 @@ module Apartment
       #   @return {String} raw SQL contaning only postgres schema dump
       #
       def pg_dump_schema
-        # Skip excluded tables? :/
-        # excluded_tables =
-        #   collect_table_names(Apartment.excluded_models)
-        #   .map! {|t| "-T #{t}"}
-        #   .join(' ')
-
-        # `pg_dump -s -x -O -n #{default_tenant} #{excluded_tables} #{dbname}`
-
-        with_pg_env { `pg_dump -s -x -O -n #{default_tenant} #{dbname}` }
+        exclude_table =
+          if Apartment.pg_exclude_clone_tables
+            excluded_tables.map! { |t| "-T #{t}" }.join(' ')
+          else
+            ''
+          end
+        with_pg_env { `pg_dump -s -x -O -n #{default_tenant} #{dbname} #{exclude_table}` }
       end
 
       #   Dump data from schema_migrations table
@@ -255,6 +253,8 @@ module Apartment
         sql.gsub(/#{default_tenant}\.\w*/) do |match|
           if Apartment.pg_excluded_names.any? { |name| match.include? name }
             match
+          elsif Apartment.pg_exclude_clone_tables && excluded_tables.any?(match)
+            match
           else
             match.gsub("#{default_tenant}.", %("#{current}".))
           end
@@ -267,10 +267,10 @@ module Apartment
         regexps.select { |c| input.match c }
       end
 
-      #   Collect table names from AR Models
+      # Convenience method for excluded table names
       #
-      def collect_table_names(models)
-        models.map do |m|
+      def excluded_tables
+        Apartment.excluded_models.map do |m|
           m.constantize.table_name
         end
       end
