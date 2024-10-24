@@ -51,6 +51,10 @@ jobs:
         ports:
           - 5432:5432
     steps:
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends postgresql-client-16
       - uses: actions/checkout@v4
       - name: Set up Ruby ${{ matrix.ruby-version }}
         uses: ruby/setup-ruby@v1
