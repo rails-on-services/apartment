@@ -149,5 +149,9 @@ def my_config
 end
 
 def migrate
-  ActiveRecord::MigrationContext.new('spec/dummy/db/migrate').migrate
+  if ActiveRecord.version == '6.1'
+    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', ActiveRecord::SchemaMigration).migrate
+  else
+    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate').migrate
+  end
 end
