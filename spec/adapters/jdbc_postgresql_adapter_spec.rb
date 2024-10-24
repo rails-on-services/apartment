@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-if defined?(JRUBY_VERSION)
+if defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
 
   require 'spec_helper'
   require 'apartment/adapters/jdbc_postgresql_adapter'

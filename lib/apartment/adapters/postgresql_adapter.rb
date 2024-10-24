@@ -76,11 +76,6 @@ module Apartment
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
         Apartment.connection.schema_search_path = full_search_path
-
-        # When the PostgreSQL version is < 9.3,
-        # there is a issue for prepared statement with changing search_path.
-        # https://www.postgresql.org/docs/9.3/static/sql-prepare.html
-        Apartment.connection.clear_cache! if postgresql_version < 90_300
       rescue *rescuable_exceptions => e
         raise_schema_connect_to_new(tenant, e)
       end

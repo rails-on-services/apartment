@@ -60,11 +60,9 @@ describe 'query caching' do
     end
 
     after do
-      # Avoid cannot drop the currently open database. Maybe there is a better way to handle this.
-      Apartment::Tenant.switch! 'template1'
+      Apartment::Tenant.reset
 
       Apartment::Tenant.drop(db_name)
-      Apartment::Tenant.reset
       Company.delete_all
     end
 

@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-require 'spec_helper'
-require 'apartment/adapters/postgresql_adapter'
+if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
 
-describe Apartment::Adapters::PostgresqlAdapter, database: :postgresql do
-  unless defined?(JRUBY_VERSION)
+  require 'spec_helper'
+  require 'apartment/adapters/postgresql_adapter'
 
+  describe Apartment::Adapters::PostgresqlAdapter, database: :postgresql do
     subject { Apartment::Tenant.adapter }
 
     it_behaves_like 'a generic apartment adapter callbacks'

@@ -1,4 +1,4 @@
-name: RSpec
+name: RSpec PostgreSQL 14
 on:
   push:
     branches:
@@ -11,7 +11,7 @@ on:
 
 jobs:
   test:
-    name: rails / rspec
+    name: ${{ github.workflow }}, Ruby ${{ matrix.ruby_version }}, Rails ${{ matrix.rails_version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -33,11 +33,12 @@ jobs:
           - ruby_version: jruby
             rails_version: 7_2
     env:
-      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}.gemfile
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_postgresql.gemfile
       CI: true
+      DATABASE_ENGINE: postgresql
     services:
       postgres:
-        image: postgres:14 # pg_dump tests currently depend on this version
+        image: postgres:14
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_HOST_AUTH_METHOD: trust
@@ -49,19 +50,14 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: true
-          MYSQL_DATABASE: apartment_mysql_test
-        options: >-
-          --health-cmd "mysqladmin ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 3306:3306
     steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-common
+          echo | sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-14
       - uses: actions/checkout@v4
       - name: Set up Ruby ${{ matrix.ruby-version }}
         uses: ruby/setup-ruby@v1
@@ -69,7 +65,7 @@ jobs:
           ruby-version: ${{ matrix.ruby_version }}
           bundler-cache: true
       - name: Configure config database.yml
-        run: bundle exec rake db:copy_credentials
+        run: bundle exec rake db:load_credentials
       - name: Database Setup
         run: bundle exec rake db:test:prepare
       - name: Run tests

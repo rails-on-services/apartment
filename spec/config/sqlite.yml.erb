@@ -1,0 +1,6 @@
+<% unless defined?(JRUBY_VERSION) %>
+connections:
+  sqlite:
+    adapter: sqlite3
+    database: <%= File.expand_path('../spec/dummy/db', __FILE__) %>/test.sqlite3
+<% end %>

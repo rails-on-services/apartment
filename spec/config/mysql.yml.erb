@@ -1,0 +1,14 @@
+connections:
+  mysql:
+    adapter: mysql2
+    database: apartment_mysql_test
+    username: root
+    min_messages: WARNING
+    host: 127.0.0.1
+    port: 3306
+<% if defined?(JRUBY_VERSION) %>
+    driver: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/apartment_mysql_test
+    timeout: 5000
+    pool: 5
+<% end %>
