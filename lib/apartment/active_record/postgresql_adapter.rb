@@ -12,28 +12,24 @@ module Apartment::PostgreSqlAdapterPatch
     # for JDBC driver, if rescued in super_method, trim leading and trailing quotes
     res.delete!('"') if defined?(JRUBY_VERSION)
 
-    puts "default_sequence_name: #{res}"
-
     schema_prefix = "#{sequence_schema(res)}."
-
-    puts "schema_prefix: #{schema_prefix}"
 
     # NOTE: Excluded models should always access the sequence from the default
     # tenant schema
     if excluded_model?(table)
       default_tenant_prefix = "#{Apartment::Tenant.default_tenant}."
 
-      puts "default_tenant_prefix: #{default_tenant_prefix}"
-
-      if schema_prefix != default_tenant_prefix
+      # Unless the res is already prefixed with the default_tenant_prefix
+      # we should delete the schema_prefix and add the default_tenant_prefix
+      unless res&.starts_with?(default_tenant_prefix)
         res&.delete_prefix!(schema_prefix)
-        res = default_tenant_prefix + res unless res&.starts_with?(default_tenant_prefix)
+        res = default_tenant_prefix + res
       end
 
-      puts "res: #{res}"
       return res
     end
 
+    # Delete the schema_prefix from the res if it is present
     res&.delete_prefix!(schema_prefix)
 
     res
