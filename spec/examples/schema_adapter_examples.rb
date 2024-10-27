@@ -93,6 +93,27 @@ shared_examples_for 'a schema based apartment adapter' do
 
       after { subject.drop(db) }
     end
+
+    context 'with a default_tenant', default_tenant: true do
+      let(:from_default_tenant) { 'new_from_custom_default_tenant' }
+
+      before do
+        subject.create(from_default_tenant)
+      end
+
+      after do
+        subject.drop(from_default_tenant)
+      end
+
+      it 'should correctly create the new schema' do
+        expect(tenant_names).to include(from_default_tenant)
+      end
+
+      it 'should load schema.rb to new schema' do
+        connection.schema_search_path = from_default_tenant
+        expect(connection.tables).to include('users')
+      end
+    end
   end
 
   describe '#drop' do
