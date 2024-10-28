@@ -40,7 +40,7 @@ jobs:
       RAILS_VERSION: ${{ matrix.rails_version }}
     services:
       mysql:
-        image: mysql:8.0-alpine
+        image: mysql:8.0
         env:
           MYSQL_ALLOW_EMPTY_PASSWORD: true
           MYSQL_DATABASE: apartment_mysql_test

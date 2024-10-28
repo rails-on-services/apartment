@@ -1,7 +1,7 @@
 # Apartment
 
 [![Gem Version](https://badge.fury.io/rb/ros-apartment.svg)](https://badge.fury.io/rb/ros-apartment)
-
+[![codecov](https://codecov.io/gh/rails-on-services/apartment/graph/badge.svg?token=Q4I5QL78SA)](https://codecov.io/gh/rails-on-services/apartment)
 
 *Multitenancy for Rails and ActiveRecord*
 
