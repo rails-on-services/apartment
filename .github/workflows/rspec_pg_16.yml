@@ -36,9 +36,11 @@ jobs:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_postgresql.gemfile
       CI: true
       DATABASE_ENGINE: postgresql
+      RUBY_VERSION: ${{ matrix.ruby_version }}
+      RAILS_VERSION: ${{ matrix.rails_version }}
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_HOST_AUTH_METHOD: trust
@@ -69,4 +71,30 @@ jobs:
       - name: Database Setup
         run: bundle exec rake db:test:prepare
       - name: Run tests
-        run: bundle exec rspec --format progress --format RspecJunitFormatter -o ~/test-results/rspec/rspec.xml
+        id: rspec-tests
+        timeout-minutes: 20
+        continue-on-error: true
+        run: |
+          mkdir -p ./coverage
+          bundle exec rspec --format progress \
+          --format RspecJunitFormatter -o ./coverage/test-results.xml \
+          --profile
+      - name: Codecov Upload
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
+          disable_search: true
+          env_vars: DATABASE_ENGINE, RUBY_VERSION, RAILS_VERSION
+          file: ./coverage/coverage.json
+      - name: Upload test results to Codecov
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
+          disable_search: true
+          env_vars: DATABASE_ENGINE, RUBY_VERSION, RAILS_VERSION
+          file: ./coverage/test-results.xml
+      - name: Notify of test failure
+        if: steps.rspec-tests.outcome == 'failure'
+        run: exit 1

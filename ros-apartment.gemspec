@@ -21,33 +21,20 @@ Gem::Specification.new do |s|
     end
   end
   s.executables   = s.files.grep(%r{^bin/}).map { |f| File.basename(f) }
-  s.test_files    = s.files.grep(%r{^(test|spec|features)/})
   s.require_paths = ['lib']
 
   s.homepage = 'https://github.com/rails-on-services/apartment'
   s.licenses = ['MIT']
   s.metadata = {
-    'github_repo' => 'ssh://github.com/rails-on-services/apartment'
+    'github_repo' => 'ssh://github.com/rails-on-services/apartment',
+    'rubygems_mfa_required' => 'true',
   }
 
   s.required_ruby_version = '>= 3.1', '<= 3.4'
 
-  s.add_dependency 'activerecord', '>= 6.1.0', '<= 8.1'
-  s.add_dependency 'activesupport', '>= 6.1.0'
-  s.add_dependency 'parallel', '< 2.0'
-  s.add_dependency 'public_suffix', '>= 2.0.5', '<= 6.0.1'
-  s.add_dependency 'rack', '>= 1.3.6', '< 4.0'
-
-  s.add_development_dependency 'appraisal', '~> 2.2'
-  s.add_development_dependency 'bundler', '>= 1.3', '< 3.0'
-  s.add_development_dependency 'guard-rspec', '~> 4.2'
-  s.add_development_dependency 'pry'
-  s.add_development_dependency 'rake', '~> 13.0'
-  s.add_development_dependency 'rspec', '~> 3.4'
-  s.add_development_dependency 'rspec_junit_formatter'
-  s.add_development_dependency 'rspec-rails', '>= 6.1'
-  s.add_development_dependency 'rubocop', '~> 1.63'
-  s.add_development_dependency 'rubocop-performance', '~> 1.21'
-  s.add_development_dependency 'rubocop-rails', '~> 2.24'
-  s.add_development_dependency 'rubocop-rspec', '~> 2.29'
+  s.add_dependency('activerecord', '>= 6.1.0', '< 8.1')
+  s.add_dependency('activesupport', '>= 6.1.0', '< 8.1')
+  s.add_dependency('parallel', '< 2.0')
+  s.add_dependency('public_suffix', '>= 2.0.5', '<= 6.0.1')
+  s.add_dependency('rack', '>= 1.3.6', '< 4.0')
 end

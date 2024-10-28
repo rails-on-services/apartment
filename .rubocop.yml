@@ -1,11 +1,5 @@
-inherit_from: .rubocop_todo.yml
-
-require:
-  - rubocop-rails
-  - rubocop-performance
-  - rubocop-rspec
-
 AllCops:
+  NewCops: enable
   Exclude:
     - vendor/bundle/**/*
     - gemfiles/**/*.gemfile
@@ -13,11 +7,19 @@ AllCops:
     - spec/dummy_engine/dummy_engine.gemspec
     - spec/schemas/**/*.rb
 
-  NewCops: enable
+require:
+  - rubocop-rails
+  - rubocop-performance
+  - rubocop-thread_safety
+  - rubocop-rake
+  - rubocop-rspec
 
 Gemspec/RequiredRubyVersion:
   Exclude:
     - 'ros-apartment.gemspec'
+
+Layout/MultilineMethodCallIndentation:
+  EnforcedStyle: indented
 
 Metrics/BlockLength:
   Exclude:
@@ -34,3 +36,44 @@ Rails/Output:
 
 Style/Documentation:
   Enabled: false
+
+Style/StringLiterals:
+  EnforcedStyle: single_quotes
+
+Style/InlineComment:
+  Enabled: false
+
+Style/FrozenStringLiteralComment:
+  Enabled: true
+  Exclude:
+    - Gemfile
+
+Style/MethodCallWithArgsParentheses:
+  Enabled: true
+  EnforcedStyle: require_parentheses
+  AllowedPatterns:
+    - 'puts'
+    - 'info'
+    - 'warn'
+    - 'debug'
+    - 'error'
+    - 'fatal'
+    - 'fail'
+
+Style/TrailingCommaInArrayLiteral:
+  EnforcedStyleForMultiline: comma
+
+Style/TrailingCommaInHashLiteral:
+  EnforcedStyleForMultiline: comma
+
+Style/ClassAndModuleChildren:
+  EnforcedStyle: nested
+  AutoCorrect: true
+
+Style/CollectionMethods:
+  PreferredMethods:
+    collect: 'map'
+    collect!: 'map!'
+    inject: 'reduce'
+    detect: 'detect'
+    find_all: 'select'
