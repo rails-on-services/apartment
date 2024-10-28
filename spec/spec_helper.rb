@@ -8,6 +8,7 @@ if ENV['CI'].eql?('true') # ENV['CI'] defined as true by GitHub Actions
 
   SimpleCov.start do
     track_files('lib/**/*.rb')
+    add_filter(%r{spec(/|\.)})
   end
 end
 
