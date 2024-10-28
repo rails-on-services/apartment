@@ -6,7 +6,9 @@ if ENV['CI'].eql?('true') # ENV['CI'] defined as true by GitHub Actions
 
   SimpleCov.formatter = SimpleCov::Formatter::JSONFormatter
 
-  SimpleCov.start
+  SimpleCov.start do
+    track_files('lib/**/*.rb')
+  end
 end
 
 $LOAD_PATH.unshift(File.dirname(__FILE__))
