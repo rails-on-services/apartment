@@ -1,7 +1,7 @@
 # Apartment
 
 [![Gem Version](https://badge.fury.io/rb/ros-apartment.svg)](https://badge.fury.io/rb/ros-apartment)
-[![Code Climate](https://api.codeclimate.com/v1/badges/b0dc327380bb8438f991/maintainability)](https://codeclimate.com/github/rails-on-services/apartment/maintainability)
+
 
 *Multitenancy for Rails and ActiveRecord*
 
@@ -15,7 +15,7 @@ This gem is a fork of the original Apartment gem, which is no longer maintained.
 
 ## Community Support
 
-This project thrives on community support. Whether you have an idea for a new feature or find a bug, we encourage you to open issues or submit pull requests. We are committed to maintaining `ros-apartment` and ensuring it remains a valuable tool for Rails developers.
+This project thrives on community support. Whether you have an idea for a new feature, find a bug, or need help with `ros-apartment`, we encourage you to participate! For questions and troubleshooting, check out our [Discussions board](https://github.com/rails-on-services/apartment/discussions) to connect with the community. You can also open issues or submit pull requests directly. We are committed to maintaining `ros-apartment` and ensuring it remains a valuable tool for Rails developers.
 
 ### Maintainer Update
 
@@ -628,8 +628,8 @@ We welcome and appreciate contributions to `ros-apartment`! Whether you want to 
 
 ### How to Contribute
 
-1. **Check Existing Issues**
-   - Before opening a new issue, please check the [issue tracker](https://github.com/rails-on-services/apartment/issues) to see if the bug or feature has already been reported. This helps us avoid duplication and focus on solving the issue efficiently.
+1. **Check Existing Issues and Discussions**
+   - Before opening a new issue, please check the [issue tracker](https://github.com/rails-on-services/apartment/issues) and our [Discussions board](https://github.com/rails-on-services/apartment/discussions) to see if the topic has already been reported or discussed. This helps us avoid duplication and focus on solving the issue efficiently.
 
 2. **Submitting a Bug Report**
    - Ensure your report includes a clear description of the problem, steps to reproduce, and relevant logs or error messages.
@@ -662,7 +662,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ### Questions and Support
 
-If you have any questions or need support while contributing, feel free to open an issue, and someone from the maintainer team will be happy to assist.
+If you have any questions or need support while contributing or using `ros-apartment`, visit our [Discussions board](https://github.com/rails-on-services/apartment/discussions) to ask questions and connect with the maintainer team and community.
 
 We look forward to your contributions and thank you for helping us keep `ros-apartment` a reliable and robust tool for the Rails community!
 
