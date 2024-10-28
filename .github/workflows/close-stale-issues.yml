@@ -1,0 +1,30 @@
+name: Close Stale Issues
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight
+  workflow_dispatch:
+
+permissions:
+  contents: write # only for delete-branch option
+  issues: write
+  pull-requests: write
+
+jobs:
+  close-stale-issues:
+    name: Close Stale Issues
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close stale issues and pull requests
+        uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: 'This issue has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs.'
+          stale-pr-message: 'This pull request has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs.'
+          days-before-stale: 30
+          days-before-close: 7
+          stale-issue-label: 'stale'
+          exempt-issue-labels: 'pinned,security'
+          stale-pr-label: 'stale'
+          exempt-pr-labels: 'work-in-progress'
+          delete-branch: true
