@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-require 'spec_helper'
-require 'apartment/adapters/sqlite3_adapter'
+if !defined?(JRUBY_VERSION) && (ENV['DATABASE_ENGINE'] == 'sqlite' || ENV['DATABASE_ENGINE'].nil?)
 
-describe Apartment::Adapters::Sqlite3Adapter, database: :sqlite do
-  unless defined?(JRUBY_VERSION)
+  require 'spec_helper'
+  require 'apartment/adapters/sqlite3_adapter'
 
+  describe Apartment::Adapters::Sqlite3Adapter, database: :sqlite do
     subject(:adapter) { Apartment::Tenant.adapter }
 
     it_behaves_like 'a generic apartment adapter callbacks'

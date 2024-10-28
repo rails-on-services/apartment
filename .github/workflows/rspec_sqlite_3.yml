@@ -1,0 +1,79 @@
+name: RSpec SQLite 3
+on:
+  push:
+    branches:
+      - development
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+  release:
+    types: [published]
+
+jobs:
+  test:
+    name: ${{ github.workflow }}, Ruby ${{ matrix.ruby_version }}, Rails ${{ matrix.rails_version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby_version:
+          - 3.1
+          - 3.2
+          - 3.3
+          # - jruby # We don't support jruby for sqlite yet
+        rails_version:
+          - 6_1
+          - 7_0
+          - 7_1
+          - 7_2
+          # - master # versions failing
+        exclude:
+          - ruby_version: jruby
+            rails_version: 7_1
+          - ruby_version: jruby
+            rails_version: 7_2
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_sqlite3.gemfile
+      CI: true
+      DATABASE_ENGINE: sqlite
+      RUBY_VERSION: ${{ matrix.ruby_version }}
+      RAILS_VERSION: ${{ matrix.rails_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby ${{ matrix.ruby-version }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby_version }}
+          bundler-cache: true
+      - name: Configure config database.yml
+        run: bundle exec rake db:load_credentials
+      - name: Database Setup
+        run: bundle exec rake db:test:prepare
+      - name: Run tests
+        id: rspec-tests
+        timeout-minutes: 20
+        continue-on-error: true
+        run: |
+          mkdir -p ./coverage
+          bundle exec rspec --format progress \
+          --format RspecJunitFormatter -o ./coverage/test-results.xml \
+          --profile
+      - name: Codecov Upload
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
+          disable_search: true
+          env_vars: DATABASE_ENGINE, RUBY_VERSION, RAILS_VERSION
+          file: ./coverage/coverage.json
+      - name: Upload test results to Codecov
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
+          disable_search: true
+          env_vars: DATABASE_ENGINE, RUBY_VERSION, RAILS_VERSION
+          file: ./coverage/test-results.xml
+      - name: Notify of test failure
+        if: steps.rspec-tests.outcome == 'failure'
+        run: exit 1

@@ -14,4 +14,4 @@ gemspec
 
 # To use debugger
 # gem 'debugger'
-gem 'apartment', path: '../../'
+gem 'ros-apartment', require: 'apartment', path: '../../'
