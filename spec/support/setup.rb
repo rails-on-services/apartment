@@ -17,7 +17,7 @@ module Apartment
             def config
               db = RSpec.current_example.metadata.fetch(:database, :postgresql)
 
-              Apartment::Test.config['connections'][db.to_s].symbolize_keys
+              Apartment::Test.config['connections'][db.to_s]&.symbolize_keys
             end
 
             # before

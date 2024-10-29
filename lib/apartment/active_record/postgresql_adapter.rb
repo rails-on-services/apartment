@@ -19,11 +19,18 @@ module Apartment::PostgreSqlAdapterPatch
     if excluded_model?(table)
       default_tenant_prefix = "#{Apartment::Tenant.default_tenant}."
 
-      res.sub!(schema_prefix, default_tenant_prefix) if schema_prefix != default_tenant_prefix
+      # Unless the res is already prefixed with the default_tenant_prefix
+      # we should delete the schema_prefix and add the default_tenant_prefix
+      unless res&.starts_with?(default_tenant_prefix)
+        res&.delete_prefix!(schema_prefix)
+        res = default_tenant_prefix + res
+      end
+
       return res
     end
 
-    res.delete_prefix!(schema_prefix) if res&.starts_with?(schema_prefix)
+    # Delete the schema_prefix from the res if it is present
+    res&.delete_prefix!(schema_prefix)
 
     res
   end

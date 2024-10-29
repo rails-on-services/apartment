@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-require 'spec_helper'
-require 'apartment/adapters/mysql2_adapter'
+if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
 
-describe Apartment::Adapters::Mysql2Adapter, database: :mysql do
-  unless defined?(JRUBY_VERSION)
+  require 'spec_helper'
+  require 'apartment/adapters/mysql2_adapter'
 
+  describe Apartment::Adapters::Mysql2Adapter, database: :mysql do
     subject(:adapter) { Apartment::Tenant.adapter }
 
     def tenant_names
