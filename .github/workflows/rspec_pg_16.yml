@@ -22,7 +22,6 @@ jobs:
           - 3.3
           - jruby
         rails_version:
-          - 6_1
           - 7_0
           - 7_1
           - 7_2
