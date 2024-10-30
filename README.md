@@ -331,7 +331,7 @@ This is configurable by setting: `tenant_presence_check`. It defaults to true
 in order to maintain the original gem behavior. This is only checked when using one of the PostgreSQL adapters.
 The original gem behavior, when running `switch` would look for the existence of the schema before switching. This adds an extra query on every context switch. While in the default simple scenarios this is a valid check, in high volume platforms this adds some unnecessary overhead which can be detected in some other ways on the application level.
 
-Setting this configuration value to `false` will disable the schema presence check before trying to switch the context.
+Setting this configuration value to `false` will disable the schema presence check before trying to switch the context. Doing so in production is highly recommended if you can ensure that the schema is always present prior to switching into it.
 
 ```ruby
 Apartment.configure do |config|
@@ -535,6 +535,12 @@ Apartment supports parallelizing migrations into multiple threads when
 you have a large number of tenants. By default, parallel migrations is
 turned off. You can enable this by setting `parallel_migration_threads` to
 the number of threads you want to use in your initializer.
+
+You **must** also turn off `advisory_locks` to use parallel migrations because
+they advisory locks are at the database level and not the schema level.
+
+[Overview of `advisory_lock` setting](https://blog.saeloun.com/2019/09/09/rails-6-disable-advisory-locks/)
+[Discussion on per-schema advisory locks](https://github.com/rails/rails/pull/43500)
 
 Keep in mind that because migrations are going to access the database,
 the number of threads indicated here should be less than the pool size
