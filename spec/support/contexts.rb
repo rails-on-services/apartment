@@ -6,7 +6,9 @@ shared_context 'with default schema', default_tenant: true do
   let(:default_tenant) { Apartment::Test.next_db }
 
   before do
-    Apartment::Test.create_schema(default_tenant)
+    # create a new tenant using apartment itself instead of Apartment::Test.create_schema
+    # so the default tenant also have the tables used in tests
+    Apartment::Tenant.create(default_tenant)
     Apartment.default_tenant = default_tenant
   end
 
