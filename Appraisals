@@ -168,6 +168,21 @@ appraise 'rails-7-2-jdbc-sqlite3' do
   end
 end
 
+appraise 'rails-8-0-postgresql' do
+  gem 'rails', '~> 8.0.0.rc2'
+  gem 'pg', '~> 1.5'
+end
+
+appraise 'rails-8-0-mysql' do
+  gem 'rails', '~> 8.0.0.rc2'
+  gem 'mysql2', '~> 0.5'
+end
+
+appraise 'rails-8-0-sqlite3' do
+  gem 'rails', '~> 8.0.0.rc2'
+  gem 'sqlite3', '~> 2.1'
+end
+
 # Install Rails from the main branch are failing
 # appraise 'rails-master' do
 #   gem 'rails', git: 'https://github.com/rails/rails.git'
