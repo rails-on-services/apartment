@@ -33,6 +33,8 @@ jobs:
             rails_version: 7_2
           - ruby_version: jruby
             rails_version: 8_0
+          - ruby_version: 3.1
+            rails_version: 8_0
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_postgresql.gemfile
       CI: true
@@ -77,9 +79,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p ./coverage
-          bundle exec rspec --format progress \
-          --format RspecJunitFormatter -o ./coverage/test-results.xml \
-          --profile
+          bundle exec rspec
       - name: Codecov Upload
         uses: codecov/codecov-action@v4
         with:
