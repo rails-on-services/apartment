@@ -7,8 +7,11 @@ if ENV['CI'].eql?('true') # ENV['CI'] defined as true by GitHub Actions
   SimpleCov.formatter = SimpleCov::Formatter::JSONFormatter
 
   SimpleCov.start do
-    track_files('lib/**/*.rb')
-    add_filter(%r{spec(/|\.)})
+    add_filter '/spec/'
+
+    add_group 'Adapter', 'lib/apartment/adapters'
+    add_group 'Elevators', 'lib/apartment/elevators'
+    add_group 'Core', 'lib/apartment'
   end
 end
 

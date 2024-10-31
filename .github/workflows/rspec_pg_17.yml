@@ -68,9 +68,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p ./coverage
-          bundle exec rspec --format progress \
-          --format RspecJunitFormatter -o ./coverage/test-results.xml \
-          --profile
+          bundle exec rspec
       - name: Codecov Upload
         uses: codecov/codecov-action@v4
         with:
