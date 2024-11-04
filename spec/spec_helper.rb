@@ -20,6 +20,11 @@ $LOAD_PATH.unshift(File.dirname(__FILE__))
 # Configure Rails Environment
 ENV['RAILS_ENV'] = 'test'
 
+# Set legacy_connection_handling to false before loading Rails
+ActiveSupport.on_load(:active_record) do
+  self.legacy_connection_handling = false
+end
+
 require File.expand_path('dummy/config/environment.rb', __dir__)
 
 # Loading dummy applications affects table_name of each excluded models

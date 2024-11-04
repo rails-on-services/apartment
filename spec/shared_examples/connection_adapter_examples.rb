@@ -18,7 +18,8 @@
 # These tests should be run against MySQL, SQLite, and non-schema PostgreSQL adapters.
 
 require 'spec_helper'
-require 'shared_examples/connection_thread_safety_examples'
+require_relative 'core_adapter_examples'
+require_relative 'connection_thread_safety_examples'
 
 shared_examples 'a connection based apartment adapter' do
   # Include core adapter functionality first
