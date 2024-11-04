@@ -21,19 +21,6 @@ require 'spec_helper'
 require_relative 'core_adapter_examples'
 require_relative 'connection_thread_safety_examples'
 
-shared_examples 'a connection based apartment adapter' do
-  # Include core adapter functionality first
-  it_behaves_like 'a basic apartment adapter'
-
-  # Then test connection-specific features
-  it_behaves_like 'handles database connections'
-  it_behaves_like 'manages connection pools'
-  it_behaves_like 'handles cross database operations'
-  it_behaves_like 'supports custom database configs'
-  it_behaves_like 'manages connection state'
-  it_behaves_like 'ensures thread and fiber safety'
-end
-
 # Tests basic database connection management
 shared_examples 'handles database connections' do
   include_context 'with adapter setup'
@@ -283,4 +270,17 @@ shared_examples 'manages connection state' do
       expect(result[0]).to(be_nil)
     end
   end
+end
+
+shared_examples 'a connection based apartment adapter' do
+  # Include core adapter functionality first
+  it_behaves_like 'a basic apartment adapter'
+
+  # Then test connection-specific features
+  it_behaves_like 'handles database connections'
+  it_behaves_like 'manages connection pools'
+  it_behaves_like 'handles cross database operations'
+  it_behaves_like 'supports custom database configs'
+  it_behaves_like 'manages connection state'
+  it_behaves_like 'ensures thread and fiber safety'
 end

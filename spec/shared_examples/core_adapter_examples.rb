@@ -17,18 +17,6 @@
 
 require 'spec_helper'
 
-# Main example group that all adapters should include
-shared_examples 'a basic apartment adapter' do
-  it_behaves_like 'a tenant creator'
-  it_behaves_like 'a tenant switcher'
-  it_behaves_like 'a tenant dropper'
-  it_behaves_like 'a tenant resetter'
-  it_behaves_like 'supports block switching'
-  it_behaves_like 'supports multi-tenant iteration'
-  it_behaves_like 'handles excluded models'
-  it_behaves_like 'handles tenant configuration'
-end
-
 # Tests the basic create operation all adapters must support
 shared_examples 'a tenant creator' do
   include_context 'with adapter setup'
@@ -286,4 +274,16 @@ shared_examples 'handles tenant configuration' do
       expect(Apartment.tenant_names).to(eq(names.call))
     end
   end
+end
+
+# Main example group that all adapters should include
+shared_examples 'a basic apartment adapter' do
+  it_behaves_like 'a tenant creator'
+  it_behaves_like 'a tenant switcher'
+  it_behaves_like 'a tenant dropper'
+  it_behaves_like 'a tenant resetter'
+  it_behaves_like 'supports block switching'
+  it_behaves_like 'supports multi-tenant iteration'
+  it_behaves_like 'handles excluded models'
+  it_behaves_like 'handles tenant configuration'
 end
