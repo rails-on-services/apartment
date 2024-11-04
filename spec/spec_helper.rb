@@ -54,17 +54,6 @@ RSpec.configure do |config|
   end
   # rubocop:enable RSpec/BeforeAfterAll
 
-  # rspec-rails 3 will no longer automatically infer an example group's spec type
-  # from the file location. You can explicitly opt-in to the feature using this
-  # config option.
-  # To explicitly tag specs without using automatic inference, set the `:type`
-  # metadata manually:
-  #
-  #     describe ThingsController, :type => :controller do
-  #       # Equivalent to being in spec/controllers
-  #     end
-  config.infer_spec_type_from_file_location!
-
   config.filter_run_excluding(database: lambda { |engine|
     case ENV.fetch('DATABASE_ENGINE', nil)
     when 'mysql'
@@ -77,6 +66,8 @@ RSpec.configure do |config|
       false
     end
   })
+
+  config.include(MigrationHelpers, type: :migration)
 end
 
 # Load shared examples, must happen after configure for RSpec 3

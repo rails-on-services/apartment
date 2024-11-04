@@ -512,11 +512,10 @@ Note that you can disable the default migrating of all tenants with `db:migrate`
 
 Apartment supports parallelizing migrations into multiple threads when
 you have a large number of tenants. By default, parallel migrations is
-turned off. You can enable this by setting `parallel_migration_threads` to
-the number of threads you want to use in your initializer.
+turned off. You can enable this by setting `parallel_migration_threads` to the number of threads you want to use in your initializer.
 
-You **must** also turn off `advisory_locks` to use parallel migrations because
-they advisory locks are at the database level and not the schema level.
+If using postgresql schemas, you **must** also turn off `advisory_locks` to use parallel migrations because
+the advisory locks are at the database level and not the schema level.
 
 [Overview of `advisory_lock` setting](https://blog.saeloun.com/2019/09/09/rails-6-disable-advisory-locks/)
 [Discussion on per-schema advisory locks](https://github.com/rails/rails/pull/43500)
