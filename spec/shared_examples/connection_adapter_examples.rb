@@ -272,9 +272,9 @@ shared_examples 'manages connection state' do
   end
 end
 
-shared_examples 'a connection based apartment adapter' do
+shared_examples 'a connection based adapter' do
   # Include core adapter functionality first
-  it_behaves_like 'a basic apartment adapter'
+  it_behaves_like 'a basic adapter'
 
   # Then test connection-specific features
   it_behaves_like 'handles database connections'
