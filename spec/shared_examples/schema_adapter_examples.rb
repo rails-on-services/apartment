@@ -25,19 +25,6 @@ require 'spec_helper'
 require_relative 'core_adapter_examples'
 require_relative 'schema_thread_safety_examples'
 
-shared_examples 'a schema based apartment adapter', database: :postgresql do
-  # Include core adapter functionality first
-  it_behaves_like 'a basic apartment adapter'
-
-  # Then test schema-specific features
-  it_behaves_like 'handles schema search paths'
-  it_behaves_like 'handles schema sequences'
-  it_behaves_like 'handles schema persistence'
-  it_behaves_like 'handles schema specific operations'
-  it_behaves_like 'ensures thread and fiber safety'
-  it_behaves_like 'handles pg_exclude_clone_tables properly'
-end
-
 # Tests PostgreSQL schema search path manipulation
 shared_examples 'handles schema search paths', database: :postgresql do
   include_context 'with adapter setup'
@@ -438,4 +425,17 @@ shared_examples 'handles pg_exclude_clone_tables properly' do
       expect(User.count).to(eq(included_model_count))
     end
   end
+end
+
+shared_examples 'a schema based apartment adapter', database: :postgresql do
+  # Include core adapter functionality first
+  it_behaves_like 'a basic apartment adapter'
+
+  # Then test schema-specific features
+  it_behaves_like 'handles schema search paths'
+  it_behaves_like 'handles schema sequences'
+  it_behaves_like 'handles schema persistence'
+  it_behaves_like 'handles schema specific operations'
+  it_behaves_like 'ensures thread and fiber safety'
+  it_behaves_like 'handles pg_exclude_clone_tables properly'
 end
