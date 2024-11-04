@@ -3,7 +3,6 @@
 module Apartment
   module Spec
     module Setup
-      # rubocop:disable Metrics/AbcSize
       def self.included(base)
         base.instance_eval do
           let(:db1) { Apartment::Test.next_db }
@@ -12,28 +11,25 @@ module Apartment
 
           # This around ensures that we run these hooks before and after
           # any before/after hooks defined in individual tests
-          # Otherwise these actually get run after test defined hooks
-          around(:each) do |example|
+          around do |example|
             def config
               db = RSpec.current_example.metadata.fetch(:database, :postgresql)
-
               Apartment::Test.config['connections'][db.to_s]&.symbolize_keys
             end
 
             # before
             Apartment::Tenant.reload!(config)
-            ActiveRecord::Base.establish_connection config
+            ActiveRecord::Base.establish_connection(config)
 
             example.run
 
             # after
-            ActiveRecord::Base.connection_handler.clear_all_connections!
+            ActiveRecord::Base.connection_pools.each(&:disconnect!)
 
             Apartment.excluded_models.each do |model|
               klass = model.constantize
-
               klass.remove_connection
-              klass.connection_handler.clear_all_connections!
+              klass.connection_pool.disconnect! if klass.connection_pool
               klass.reset_table_name
             end
             Apartment.reset
@@ -41,7 +37,6 @@ module Apartment
           end
         end
       end
-      # rubocop:enable Metrics/AbcSize
     end
   end
 end

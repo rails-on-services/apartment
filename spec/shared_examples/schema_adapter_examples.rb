@@ -22,6 +22,8 @@
 # These tests should only be run against PostgreSQL adapters using schema-based separation.
 
 require 'spec_helper'
+require_relative 'core_adapter_examples'
+require_relative 'schema_thread_safety_examples'
 
 shared_examples 'a schema based apartment adapter', database: :postgresql do
   # Include core adapter functionality first
