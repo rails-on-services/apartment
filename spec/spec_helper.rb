@@ -35,10 +35,6 @@ end
 
 require 'rspec/rails'
 
-# Set legacy_connection_handling to false before loading Rails
-ActiveSupport.on_load(:active_record) do
-  self.legacy_connection_handling = false
-end
 ActionMailer::Base.delivery_method = :test
 ActionMailer::Base.perform_deliveries = true
 ActionMailer::Base.default_url_options[:host] = 'test.com'
