@@ -77,3 +77,23 @@ Style/CollectionMethods:
     inject: 'reduce'
     detect: 'detect'
     find_all: 'select'
+
+ThreadSafety/NewThread:
+  Exclude:
+    - 'spec/shared_examples/*thread_safety_examples.rb'
+
+## Rspec
+
+RSpec/ExampleLength:
+  Max: 20
+
+RSpec/IndexedLet:
+  AllowedPatterns:
+    - 'schema'
+    - 'tenant'
+
+RSpec/MultipleExpectations:
+  Max: 5
+
+RSpec/MultipleMemoizedHelpers:
+  Max: 10

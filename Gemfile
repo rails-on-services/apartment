@@ -6,6 +6,8 @@ gemspec
 
 gem 'appraisal', '~> 2.3'
 gem 'bundler', '< 3.0'
+gem 'database_cleaner'
+gem 'faker'
 gem 'pry', '~> 0.13'
 gem 'rake', '< 14.0'
 gem 'rspec', '~> 3.10'

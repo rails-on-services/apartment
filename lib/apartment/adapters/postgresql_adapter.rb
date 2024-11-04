@@ -24,7 +24,7 @@ module Apartment
     end
 
     # Separate Adapter for Postgresql when using schemas
-    class PostgresqlSchemaAdapter < AbstractAdapter
+    class PostgresqlSchemaAdapter < PostgresqlAdapter
       def initialize(config)
         super
 
@@ -72,7 +72,7 @@ module Apartment
       #
       def connect_to_new(tenant = nil)
         return reset if tenant.nil?
-        raise ActiveRecord::StatementInvalid, "Could not find schema #{tenant}" unless schema_exists?(tenant)
+        raise(ActiveRecord::StatementInvalid, "Could not find schema #{tenant}") unless schema_exists?(tenant)
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
         Apartment.connection.schema_search_path = full_search_path
@@ -101,7 +101,7 @@ module Apartment
         end
       rescue *rescuable_exceptions => e
         rollback_transaction(conn)
-        raise e
+        raise(e)
       end
 
       def rollback_transaction(conn)
@@ -131,7 +131,7 @@ module Apartment
       end
 
       def raise_schema_connect_to_new(tenant, exception)
-        raise TenantNotFound, <<~EXCEPTION_MESSAGE
+        raise(TenantNotFound, <<~EXCEPTION_MESSAGE)
           Could not set search path to schemas, they may be invalid: "#{tenant}" #{full_search_path}.
           Original error: #{exception.class}: #{exception}
         EXCEPTION_MESSAGE
@@ -212,10 +212,10 @@ module Apartment
       # Temporary set Postgresql related environment variables if there are in @config
       #
       def with_pg_env
-        pghost = ENV['PGHOST']
-        pgport = ENV['PGPORT']
-        pguser = ENV['PGUSER']
-        pgpassword = ENV['PGPASSWORD']
+        pghost = ENV.fetch('PGHOST', nil)
+        pgport = ENV.fetch('PGPORT', nil)
+        pguser = ENV.fetch('PGUSER', nil)
+        pgpassword = ENV.fetch('PGPASSWORD', nil)
 
         ENV['PGHOST'] = @config[:host] if @config[:host]
         ENV['PGPORT'] = @config[:port].to_s if @config[:port]
@@ -246,9 +246,8 @@ module Apartment
 
       def swap_schema_qualifier(sql)
         sql.gsub(/#{default_tenant}\.\w*/) do |match|
-          if Apartment.pg_excluded_names.any? { |name| match.include? name }
-            match
-          elsif Apartment.pg_exclude_clone_tables && excluded_tables.any?(match)
+          if Apartment.pg_excluded_names.any? { |name| match.include?(name) } ||
+             (Apartment.pg_exclude_clone_tables && excluded_tables.any?(match))
             match
           else
             match.gsub("#{default_tenant}.", %("#{current}".))
@@ -259,7 +258,7 @@ module Apartment
       #   Checks if any of regexps matches against input
       #
       def check_input_against_regexps(input, regexps)
-        regexps.select { |c| input.match c }
+        regexps.select { |c| input.match(c) }
       end
 
       # Convenience method for excluded table names
