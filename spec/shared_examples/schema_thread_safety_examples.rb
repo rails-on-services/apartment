@@ -18,7 +18,6 @@
 
 require 'spec_helper'
 require 'parallel'
-require 'ractor'
 
 shared_examples 'ensures schema thread and fiber safety' do
   include_context 'with adapter setup'
