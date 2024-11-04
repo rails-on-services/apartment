@@ -92,3 +92,7 @@ jobs:
       - name: Notify of test failure
         if: steps.rspec-tests.outcome == 'failure'
         run: exit 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

@@ -21,3 +21,7 @@ jobs:
           bundler-cache: true
       - name: Rubocop
         run: "bundle exec rubocop"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

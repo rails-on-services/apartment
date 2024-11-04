@@ -28,3 +28,7 @@ jobs:
           stale-pr-label: 'stale'
           exempt-pr-labels: 'work-in-progress'
           delete-branch: true
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true

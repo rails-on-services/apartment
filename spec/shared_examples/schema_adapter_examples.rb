@@ -427,9 +427,9 @@ shared_examples 'handles pg_exclude_clone_tables properly' do
   end
 end
 
-shared_examples 'a schema based apartment adapter', database: :postgresql do
+shared_examples 'a schema based adapter', database: :postgresql do
   # Include core adapter functionality first
-  it_behaves_like 'a basic apartment adapter'
+  it_behaves_like 'a basic adapter'
 
   # Then test schema-specific features
   it_behaves_like 'handles schema search paths'

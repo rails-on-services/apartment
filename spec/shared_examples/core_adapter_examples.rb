@@ -277,7 +277,7 @@ shared_examples 'handles tenant configuration' do
 end
 
 # Main example group that all adapters should include
-shared_examples 'a basic apartment adapter' do
+shared_examples 'a basic adapter' do
   it_behaves_like 'a tenant creator'
   it_behaves_like 'a tenant switcher'
   it_behaves_like 'a tenant dropper'
