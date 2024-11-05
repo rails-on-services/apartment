@@ -72,3 +72,4 @@ end
 
 # Load shared examples, must happen after configure for RSpec 3
 Dir["#{File.dirname(__FILE__)}/examples/**/*.rb"].each { |f| require f }
+Dir["#{File.dirname(__FILE__)}/shared_examples/**/*.rb"].each { |f| require f }
