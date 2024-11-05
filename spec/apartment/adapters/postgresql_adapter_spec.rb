@@ -3,10 +3,11 @@
 # spec/apartment/adapters/postgresql_adapter_spec.rb
 
 require 'spec_helper'
-require 'shared_examples/schema_adapter_examples'
 
 describe Apartment::Adapters::PostgresqlAdapter, database: :postgresql do
   subject(:adapter) { described_class.new(config) }
+
+  it_behaves_like 'a basic adapter'
 
   context 'when using schemas with schema.rb' do
     before { Apartment.use_schemas = true }
@@ -19,6 +20,7 @@ describe Apartment::Adapters::PostgresqlAdapter, database: :postgresql do
     let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.schema_search_path.delete('"') } }
 
     it_behaves_like 'a schema based adapter'
+    it_behaves_like 'handles concurrent schema operations'
   end
 
   context 'when using schemas with SQL dump' do
@@ -39,6 +41,7 @@ describe Apartment::Adapters::PostgresqlAdapter, database: :postgresql do
     let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.schema_search_path.delete('"') } }
 
     it_behaves_like 'a schema based adapter'
+    it_behaves_like 'handles concurrent schema operations'
 
     it 'allows for dashes in the schema name' do
       expect { Apartment::Tenant.create('has-dashes') }.not_to(raise_error)
@@ -56,5 +59,6 @@ describe Apartment::Adapters::PostgresqlAdapter, database: :postgresql do
     let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.current_database } }
 
     it_behaves_like 'a connection based adapter'
+    it_behaves_like 'handles concurrent connection operations'
   end
 end

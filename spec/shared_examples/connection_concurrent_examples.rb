@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# spec/shared_examples/connection_thread_safety_examples.rb
+# spec/shared_examples/connection_concurrent_examples.rb
 
 # Purpose: This file contains tests focusing on thread and fiber safety for
 # connection-based adapters. It verifies that tenant connections are properly
@@ -23,7 +23,7 @@
 require 'spec_helper'
 require 'parallel'
 
-shared_examples 'ensures thread and fiber safety' do
+shared_examples 'handles concurrent connection operations' do
   include_context 'with adapter setup'
 
   let(:tenant1) { Apartment::Test.next_db }

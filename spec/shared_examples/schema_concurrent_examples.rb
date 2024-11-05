@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# spec/shared_examples/schema_thread_safety_examples.rb
+# spec/shared_examples/schema_concurrent_examples.rb
 
 # Purpose: This file contains tests focusing on thread and fiber safety for
 # schema-based adapters (PostgreSQL). It verifies that schema search paths
@@ -19,7 +19,7 @@
 require 'spec_helper'
 require 'parallel'
 
-shared_examples 'ensures schema thread and fiber safety' do
+shared_examples 'handles concurrent schema operations' do
   include_context 'with adapter setup'
 
   let(:schema1) { "thread_test_#{Apartment::Test.next_db}" }

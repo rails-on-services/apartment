@@ -17,8 +17,7 @@
 
 require 'spec_helper'
 
-# Tests the basic create operation all adapters must support
-shared_examples 'a tenant creator' do
+shared_examples 'a basic adapter' do
   include_context 'with adapter setup'
 
   describe '#create' do
@@ -38,11 +37,6 @@ shared_examples 'a tenant creator' do
       expect { adapter.create(tenant_name) }.to(raise_error(Apartment::TenantExists))
     end
   end
-end
-
-# Tests tenant switching behavior all adapters must implement
-shared_examples 'a tenant switcher' do
-  include_context 'with adapter setup'
 
   describe '#switch!' do
     before { adapter.create(tenant_name) }
@@ -72,11 +66,6 @@ shared_examples 'a tenant switcher' do
       expect(adapter.current).to(eq(default_tenant))
     end
   end
-end
-
-# Tests tenant removal capabilities
-shared_examples 'a tenant dropper' do
-  include_context 'with adapter setup'
 
   describe '#drop' do
     before { adapter.create(tenant_name) }
@@ -91,11 +80,6 @@ shared_examples 'a tenant dropper' do
         .to(raise_error(Apartment::TenantNotFound))
     end
   end
-end
-
-# Tests the adapter's ability to reset to default state
-shared_examples 'a tenant resetter' do
-  include_context 'with adapter setup'
 
   describe '#reset' do
     before do
@@ -108,11 +92,6 @@ shared_examples 'a tenant resetter' do
       expect(adapter.current).to(eq(default_tenant))
     end
   end
-end
-
-# Tests block-style tenant switching
-shared_examples 'supports block switching' do
-  include_context 'with adapter setup'
 
   describe '#switch' do
     before { adapter.create(tenant_name) }
@@ -144,11 +123,6 @@ shared_examples 'supports block switching' do
       expect(adapter.current).to(eq(default_tenant))
     end
   end
-end
-
-# Tests the ability to iterate over multiple tenants
-shared_examples 'supports multi-tenant iteration' do
-  include_context 'with adapter setup'
 
   describe '#each' do
     before do
@@ -176,47 +150,35 @@ shared_examples 'supports multi-tenant iteration' do
       expect(visited).to(contain_exactly(tenant_name))
     end
   end
-end
 
-# Tests handling of excluded models across tenants
-shared_examples 'handles excluded models' do |model_class: Company|
-  include_context 'with adapter setup'
+  describe 'model exclusion' do
+    let(:model_class) { Company }
 
-  before do
-    Apartment.configure do |config|
-      config.excluded_models = [model_class.name]
+    before do
+      Apartment.configure do |config|
+        config.excluded_models = [model_class.name]
+      end
+      adapter.create(tenant_name)
+
+      # Create records in both tenants
+      adapter.switch(nil) do
+        model_class.create!(name: 'default')
+      end
+      adapter.switch(tenant_name) do
+        model_class.create!(name: tenant_name)
+      end
     end
-    adapter.create(tenant_name)
 
-    # Create records in both tenants
-    adapter.switch(nil) do
-      model_class.create!(name: 'default')
+    it 'finds records from all tenants when in default tenant' do
+      adapter.switch!(nil)
+      expect(model_class.pluck(:name)).to(contain_exactly('default', tenant_name))
     end
-    adapter.switch(tenant_name) do
-      model_class.create!(name: tenant_name)
-    end
-  end
 
-  context 'when in default tenant' do
-    before { adapter.switch!(nil) }
-
-    it 'finds records from all tenants' do
+    it 'finds records from all tenants when in specific tenant' do
+      adapter.switch!(tenant_name)
       expect(model_class.pluck(:name)).to(contain_exactly('default', tenant_name))
     end
   end
-
-  context 'when in specific tenant' do
-    before { adapter.switch!(tenant_name) }
-
-    it 'still finds records from all tenants' do
-      expect(model_class.pluck(:name)).to(contain_exactly('default', tenant_name))
-    end
-  end
-end
-
-# Tests tenant environmental configuration
-shared_examples 'handles tenant configuration' do
-  include_context 'with adapter setup'
 
   describe 'environmental configuration' do
     before do
@@ -259,31 +221,19 @@ shared_examples 'handles tenant configuration' do
         ENV.delete('APARTMENT_DISABLE_INIT')
       end
     end
-  end
 
-  describe 'tenant naming' do
-    it 'allows setting tenant_names via array' do
-      names = %w[tenant1 tenant2]
-      Apartment.tenant_names = names
-      expect(Apartment.tenant_names).to(eq(names))
+    describe 'tenant naming' do
+      it 'allows setting tenant_names via array' do
+        names = %w[tenant1 tenant2]
+        Apartment.tenant_names = names
+        expect(Apartment.tenant_names).to(eq(names))
+      end
+
+      it 'allows setting tenant_names via proc' do
+        names = -> { %w[tenant1 tenant2] }
+        Apartment.tenant_names = names
+        expect(Apartment.tenant_names).to(eq(names.call))
+      end
     end
-
-    it 'allows setting tenant_names via proc' do
-      names = -> { %w[tenant1 tenant2] }
-      Apartment.tenant_names = names
-      expect(Apartment.tenant_names).to(eq(names.call))
-    end
   end
-end
-
-# Main example group that all adapters should include
-shared_examples 'a basic adapter' do
-  it_behaves_like 'a tenant creator'
-  it_behaves_like 'a tenant switcher'
-  it_behaves_like 'a tenant dropper'
-  it_behaves_like 'a tenant resetter'
-  it_behaves_like 'supports block switching'
-  it_behaves_like 'supports multi-tenant iteration'
-  it_behaves_like 'handles excluded models'
-  it_behaves_like 'handles tenant configuration'
 end
