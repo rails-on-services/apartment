@@ -19,7 +19,7 @@ module Apartment
     ACCESSOR_METHODS = %i[use_schemas use_sql seed_after_create prepend_environment default_tenant
                           append_environment with_multi_server_setup tenant_presence_check active_record_log].freeze
 
-    WRITER_METHODS = %i[tenant_names database_schema_file excluded_models
+    WRITER_METHODS = %i[use_sharding unshard_models tenant_names database_schema_file excluded_models
                         persistent_schemas connection_class
                         db_migrate_tenants db_migrate_tenant_missing_strategy seed_data_file
                         parallel_migration_threads pg_excluded_names].freeze
@@ -88,6 +88,14 @@ module Apartment
 
     def persistent_schemas
       @persistent_schemas || []
+    end
+
+    def use_sharding
+      @use_sharding || false
+    end
+
+    def unshard_models
+      @unshard_models || []
     end
 
     def connection_class

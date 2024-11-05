@@ -64,6 +64,20 @@ describe Apartment do
       expect(described_class.active_record_log).to be true
     end
 
+    it 'sets use_sharding' do
+      described_class.configure do |config|
+        config.use_sharding = true
+      end
+      expect(described_class.use_sharding).to be true
+    end
+
+    it 'sets unshard_models' do
+      described_class.configure do |config|
+        config.unshard_models = ['GlobalRecord']
+      end
+      expect(described_class.unshard_models).to eq(['GlobalRecord'])
+    end
+
     context 'when databases' do
       let(:users_conf_hash) { { port: 5444 } }
 
