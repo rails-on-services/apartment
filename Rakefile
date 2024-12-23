@@ -149,7 +149,7 @@ def my_config
 end
 
 def migrate
-  if ActiveRecord.version.release < Gem::Version.new('7.1')
+  if ActiveRecord.version.release < Gem::Version.new('8.1')
     ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', ActiveRecord::SchemaMigration).migrate
   else
     ActiveRecord::MigrationContext.new('spec/dummy/db/migrate').migrate

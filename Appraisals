@@ -168,6 +168,48 @@ appraise 'rails-7-2-jdbc-sqlite3' do
   end
 end
 
+appraise 'rails-8-0-postgresql' do
+  gem 'rails', '~> 8.0.0'
+  gem 'pg', '~> 1.5'
+end
+
+appraise 'rails-8-0-mysql' do
+  gem 'rails', '~> 8.0.0'
+  gem 'mysql2', '~> 0.5'
+end
+
+appraise 'rails-8-0-sqlite3' do
+  gem 'rails', '~> 8.0.0'
+  gem 'sqlite3', '~> 2.1'
+end
+
+appraise 'rails-8-0-jdbc-postgresql' do
+  gem 'rails', '~> 8.0.0'
+  platforms :jruby do
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcpostgresql-adapter', '~> 70.0'
+    gem 'jdbc-postgres'
+  end
+end
+
+appraise 'rails-8-0-jdbc-mysql' do
+  gem 'rails', '~> 8.0.0'
+  platforms :jruby do
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcmysql-adapter', '~> 70.0'
+    gem 'jdbc-mysql'
+  end
+end
+
+appraise 'rails-8-0-jdbc-sqlite3' do
+  gem 'rails', '~> 8.0.0'
+  platforms :jruby do
+    gem 'activerecord-jdbc-adapter', '~> 70.0'
+    gem 'activerecord-jdbcsqlite3-adapter', '~> 70.0'
+    gem 'jdbc-sqlite3'
+  end
+end
+
 # Install Rails from the main branch are failing
 # appraise 'rails-master' do
 #   gem 'rails', git: 'https://github.com/rails/rails.git'

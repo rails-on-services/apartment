@@ -26,6 +26,7 @@ jobs:
           - 7_0
           - 7_1
           - 7_2
+          - 8_0
           # - master # versions failing
         exclude:
           - ruby_version: jruby
