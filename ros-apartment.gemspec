@@ -30,7 +30,7 @@ Gem::Specification.new do |s|
     'rubygems_mfa_required' => 'true',
   }
 
-  s.required_ruby_version = '>= 3.1', '<= 3.4'
+  s.required_ruby_version = '>= 3.1'
 
   s.add_dependency('activerecord', '>= 6.1.0', '< 8.1')
   s.add_dependency('activesupport', '>= 6.1.0', '< 8.1')
