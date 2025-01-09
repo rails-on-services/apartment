@@ -25,11 +25,11 @@ Gem::Specification.new do |s|
     'rubygems_mfa_required' => 'true',
   }
 
-  s.required_ruby_version = '>= 3.1'
+  s.required_ruby_version = '>= 3.2'
 
-  s.add_dependency('activerecord', '>= 7.1.0', '< 8.1')
-  s.add_dependency('activesupport', '>= 7.1.0', '< 8.1')
-  s.add_dependency('parallel', '~> 1.26')
-  s.add_dependency('public_suffix', '~> 6.0.1')
-  s.add_dependency('rack', '~> 3.0.9')
+  s.add_dependency('activerecord', '>= 7.1.0')
+  s.add_dependency('activesupport', '>= 7.1.0')
+  s.add_dependency('parallel', '>= 1.26')
+  s.add_dependency('public_suffix', '>= 6.0.1')
+  s.add_dependency('rack', '>= 3.0.9')
 end

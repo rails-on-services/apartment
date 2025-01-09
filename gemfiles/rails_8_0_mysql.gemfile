@@ -4,8 +4,9 @@ source "http://rubygems.org"
 
 gem "appraisal", ">= 2.3", require: false
 gem "rake", ">= 13.0"
-gem "rails", "~> 7.1.0"
-gem "pg", "~> 1.5"
+gem "rails", "~> 8.0.0"
+gem "mysql2", "~> 0.5"
+gem "trilogy", "< 3.0"
 
 group :test do
   gem "database_cleaner-active_record"
