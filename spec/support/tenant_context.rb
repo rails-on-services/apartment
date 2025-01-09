@@ -49,25 +49,10 @@ RSpec.shared_context('with tenant setup') do
 
   def setup_tenant(name)
     create_tenant_schema(name)
-    load_schema_for_tenant(name)
   end
 
   def cleanup_tenant(name)
     Apartment::Tenant.reset
     drop_tenant_schema(name)
-  end
-
-  def load_schema_for_tenant(name)
-    Apartment::Tenant.switch!(name)
-    load_schema_version
-  end
-
-  private
-
-  def load_schema_version(version = 3)
-    schema_file = Rails.root.join("db/schemas/v#{version}.rb")
-    return unless File.exist?(schema_file)
-
-    silence_warnings { load(schema_file) }
   end
 end

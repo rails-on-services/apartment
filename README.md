@@ -327,7 +327,7 @@ Please note that our custom logger inherits from `ActiveRecord::LogSubscriber` s
 
 **Example log output:**
 
-<img src="documentation/images/log_example.png">
+<img src="docs/images/log_example.png">
 
 ```ruby
 Apartment.configure do |config|

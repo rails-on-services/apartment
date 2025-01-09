@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 begin
-  require 'bundler'
+  require('bundler')
 rescue StandardError
   'You must `gem install bundler` and `bundle install` to run rake tasks'
 end
@@ -9,6 +9,7 @@ Bundler.setup
 Bundler::GemHelper.install_tasks
 
 require 'appraisal'
+require 'yaml'
 
 require 'rspec'
 require 'rspec/core/rake_task'
@@ -39,119 +40,77 @@ namespace :db do
   namespace :test do
     case ENV.fetch('DATABASE_ENGINE', nil)
     when 'postgresql'
-      task prepare: %w[postgres:drop_db postgres:build_db]
+      task(prepare: %w[postgres:drop_db postgres:build_db])
     when 'mysql'
-      task prepare: %w[mysql:drop_db mysql:build_db]
+      task(prepare: %w[mysql:drop_db mysql:build_db])
     when 'sqlite'
-      task :prepare do
+      task(:prepare) do
         puts 'No need to prepare sqlite3 database'
       end
     else
-      task :prepare do
+      task(:prepare) do
         puts 'No database engine specified, skipping db:test:prepare'
       end
     end
   end
-
-  desc "copy sample database credential files over if real files don't exist"
-  task :load_credentials do
-    # If no DATABASE_ENGINE is specified, we default to sqlite so that a db config is generated
-    db_engine = ENV.fetch('DATABASE_ENGINE', 'sqlite')
-
-    next unless db_engine && %w[postgresql mysql sqlite].include?(db_engine)
-
-    # Load and write spec db config
-    db_config_string = ERB.new(File.read("spec/config/#{db_engine}.yml.erb")).result
-    File.write('spec/config/database.yml', db_config_string)
-
-    # Load and write dummy app db config
-    db_config = YAML.safe_load(db_config_string)
-    File.write('spec/dummy/config/database.yml', { test: db_config['connections'][db_engine] }.to_yaml)
-  end
 end
 
 namespace :postgres do
-  require 'active_record'
-  require File.join(File.dirname(__FILE__), 'spec', 'support', 'config').to_s
-
   desc 'Build the PostgreSQL test databases'
   task :build_db do
     params = []
     params << '-E UTF8'
-    params << pg_config['database']
-    params << "-U#{pg_config['username']}"
-    params << "-h#{pg_config['host']}" if pg_config['host']
-    params << "-p#{pg_config['port']}" if pg_config['port']
-
-    begin
-      system("createdb #{params.join(' ')}")
-    rescue StandardError
-      'test db already exists'
+    params << db_config['database']
+    params << "-U #{db_config['username']}" if db_config['username']
+    params << "-h #{db_config['host']}" if db_config['host']
+    params << "-p #{db_config['port']}" if db_config['port']
+    if system("createdb #{params.join(' ')}")
+      puts "Created database #{db_config['database']}"
+    else
+      puts 'Create failed. Does it already exist?'
     end
-    ActiveRecord::Base.establish_connection(pg_config)
-    migrate
   end
 
   desc 'drop the PostgreSQL test database'
   task :drop_db do
-    puts "dropping database #{pg_config['database']}"
+    puts "Dropping database #{db_config['database']}"
     params = []
-    params << pg_config['database']
-    params << "-U#{pg_config['username']}"
-    params << "-h#{pg_config['host']}" if pg_config['host']
-    params << "-p#{pg_config['port']}" if pg_config['port']
+    params << db_config['database']
+    params << "-U #{db_config['username']}" if db_config['username']
+    params << "-h #{db_config['host']}" if db_config['host']
+    params << "-p #{db_config['port']}" if db_config['port']
     system("dropdb #{params.join(' ')}")
   end
 end
 
 namespace :mysql do
-  require 'active_record'
-  require File.join(File.dirname(__FILE__), 'spec', 'support', 'config').to_s
-
   desc 'Build the MySQL test databases'
   task :build_db do
     params = []
-    params << "-h #{my_config['host']}" if my_config['host']
-    params << "-u #{my_config['username']}" if my_config['username']
-    params << "-p #{my_config['password']}" if my_config['password']
-    params << "-P #{my_config['port']}" if my_config['port']
-    begin
-      system("mysqladmin #{params.join(' ')} create #{my_config['database']}")
-    rescue StandardError
-      'test db already exists'
+    params << "-h #{db_config['host']}" if db_config['host']
+    params << "-u #{db_config['username']}" if db_config['username']
+    params << "-p #{db_config['password']}" if db_config['password']
+    params << "-P #{db_config['port']}" if db_config['port']
+
+    if system("mysqladmin #{params.join(' ')} create #{db_config['database']}")
+      puts "Created database #{db_config['database']}"
+    else
+      puts 'Create failed. Does it already exist?'
     end
-    ActiveRecord::Base.establish_connection(my_config)
-    migrate
   end
 
   desc 'drop the MySQL test database'
   task :drop_db do
-    puts "dropping database #{my_config['database']}"
+    puts "Dropping database #{db_config['database']}"
     params = []
-    params << "-h #{my_config['host']}" if my_config['host']
-    params << "-u #{my_config['username']}" if my_config['username']
-    params << "-p #{my_config['password']}" if my_config['password']
-    params << "-P #{my_config['port']}" if my_config['port']
-    system("mysqladmin #{params.join(' ')} drop #{my_config['database']} --force")
+    params << "-h #{db_config['host']}" if db_config['host']
+    params << "-u #{db_config['username']}" if db_config['username']
+    params << "-p #{db_config['password']}" if db_config['password']
+    params << "-P #{db_config['port']}" if db_config['port']
+    system("mysqladmin #{params.join(' ')} drop #{db_config['database']} --force")
   end
 end
 
-def config
-  Apartment::Test.config['connections']
-end
-
-def pg_config
-  config['postgresql']
-end
-
-def my_config
-  config['mysql']
-end
-
-def migrate
-  if ActiveRecord.version.release < Gem::Version.new('7.1')
-    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate', ActiveRecord::SchemaMigration).migrate
-  else
-    ActiveRecord::MigrationContext.new('spec/dummy/db/migrate').migrate
-  end
+def db_config
+  @db_config ||= YAML.safe_load(ERB.new(File.read('spec/dummy/config/database.yml')).result, aliases: true)['test']
 end

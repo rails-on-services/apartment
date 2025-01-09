@@ -1,155 +1,109 @@
 # frozen_string_literal: true
 
-require 'apartment/railtie' if defined?(Rails)
-require 'active_support/core_ext/object/blank'
-require 'forwardable'
+# lib/apartment.rb
+
+require 'active_support'
 require 'active_record'
-require 'apartment/tenant'
-require 'apartment/deprecation'
+require 'forwardable'
+require 'monitor'
 
+require_relative 'apartment/config'
+require_relative 'apartment/tenant'
+require_relative 'apartment/deprecation'
 require_relative 'apartment/log_subscriber'
-require_relative 'apartment/active_record/connection_handling'
-require_relative 'apartment/active_record/schema_migration'
-require_relative 'apartment/active_record/internal_metadata'
 
-if ActiveRecord.version.release >= Gem::Version.new('7.1')
-  require_relative 'apartment/active_record/postgres/schema_dumper'
-end
-
-# Apartment main definitions
+# Apartment module provides functionality for managing multi-tenancy in a Rails application.
+# It includes methods for configuring the Apartment gem, managing tenants, and handling database connections.
 module Apartment
   class << self
     extend Forwardable
+    include MonitorMixin
 
-    ACCESSOR_METHODS = %i[use_schemas use_sql seed_after_create prepend_environment default_tenant
-                          append_environment with_multi_server_setup tenant_presence_check
-                          active_record_log pg_exclude_clone_tables].freeze
+    # @!attribute [r] config
+    # @return [Apartment::Config, nil] the current configuration
+    attr_reader :config
 
-    WRITER_METHODS = %i[tenant_names database_schema_file excluded_models
-                        persistent_schemas connection_class
-                        db_migrate_tenants db_migrate_tenant_missing_strategy seed_data_file
-                        parallel_migration_threads pg_excluded_names].freeze
+    def_delegator :config, :tenants_provider
 
-    attr_accessor(*ACCESSOR_METHODS)
-    attr_writer(*WRITER_METHODS)
+    # Configures the Apartment gem.
+    #
+    # This method allows you to set up the configuration for the Apartment gem.
+    # It ensures that the configuration can only be set once and is thread-safe.
+    # Once the configuration is set, it is validated and frozen to prevent further modifications.
+    #
+    # @yield [Config] The configuration object to be set up.
+    # @raise [ConfigurationError] If the configuration has already been initialized and frozen.
+    #
+    # @example
+    #   Apartment.configure do |config|
+    #     config.some_setting = 'value'
+    #   end
+    def configure(&)
+      raise(ConfigurationError, 'Apartment configuration cannot be changed after initialization') if config&.frozen?
 
-    def_delegators :connection_class, :connection, :connection_db_config, :establish_connection
+      synchronize do
+        @config = Config.new
+
+        yield(@config)
+
+        @config.validate!
+        @config.freeze!
+      end
+    end
+
+    # Resets the configuration to nil in a thread-safe manner.
+    # This method ensures that the reset operation is synchronized
+    # using a mutex to prevent race conditions.
+    def reset_config
+      synchronize do
+        @config = nil
+      end
+    end
+
+    def tenant_names
+      tenants = tenants_provider.call
+
+      return tenants.keys if tenants.is_a?(Hash)
+
+      tenants
+    end
 
     def connection_config
       connection_db_config.configuration_hash
     end
 
-    # configure apartment with available options
-    def configure
-      yield self if block_given?
-    end
-
-    def tenant_names
-      extract_tenant_config.keys.map(&:to_s)
-    end
-
-    def tenants_with_config
-      extract_tenant_config
-    end
-
-    def tld_length=(_)
-      Apartment::DEPRECATOR.warn('`config.tld_length` have no effect because it was removed in https://github.com/influitive/apartment/pull/309')
-    end
-
     def db_config_for(tenant)
-      (tenants_with_config[tenant] || connection_config)
+      tenants_config[tenant] || connection_config
     end
 
-    # Whether or not db:migrate should also migrate tenants
-    # defaults to true
-    def db_migrate_tenants
-      return @db_migrate_tenants if defined?(@db_migrate_tenants)
+    def tenants_config
+      tenants = tenants_provider.call
+      return {} if tenants.blank?
 
-      @db_migrate_tenants = true
+      normalize_tenant_configs(tenants).with_indifferent_access
     end
 
-    # How to handle tenant missing on db:migrate
-    # defaults to :rescue_exception
-    # available options: rescue_exception, raise_exception, create_tenant
-    def db_migrate_tenant_missing_strategy
-      valid = %i[rescue_exception raise_exception create_tenant]
-      value = @db_migrate_tenant_missing_strategy || :rescue_exception
+    private
 
-      return value if valid.include?(value)
-
-      key_name  = 'config.db_migrate_tenant_missing_strategy'
-      opt_names = valid.join(', ')
-
-      raise ApartmentError, "Option #{value} not valid for `#{key_name}`. Use one of #{opt_names}"
-    end
-
-    # Default to empty array
-    def excluded_models
-      @excluded_models || []
-    end
-
-    def parallel_migration_threads
-      @parallel_migration_threads || 0
-    end
-
-    def persistent_schemas
-      @persistent_schemas || []
-    end
-
-    def connection_class
-      @connection_class || ActiveRecord::Base
-    end
-
-    def database_schema_file
-      return @database_schema_file if defined?(@database_schema_file)
-
-      @database_schema_file = Rails.root.join('db/schema.rb')
-    end
-
-    def seed_data_file
-      return @seed_data_file if defined?(@seed_data_file)
-
-      @seed_data_file = Rails.root.join('db/seeds.rb')
-    end
-
-    def pg_excluded_names
-      @pg_excluded_names || []
-    end
-
-    # Reset all the config for Apartment
-    def reset
-      (ACCESSOR_METHODS + WRITER_METHODS).each do |method|
-        remove_instance_variable(:"@#{method}") if instance_variable_defined?(:"@#{method}")
-      end
-    end
-
-    def extract_tenant_config
-      return {} unless @tenant_names
-
-      values = @tenant_names.respond_to?(:call) ? @tenant_names.call : @tenant_names
-      unless values.is_a? Hash
-        values = values.each_with_object({}) do |tenant, hash|
-          hash[tenant] = connection_config
-        end
-      end
-      values.with_indifferent_access
-    rescue ActiveRecord::StatementInvalid
-      {}
+    def normalize_tenant_configs(names)
+      names.is_a?(Hash) ? names : Array(names).index_with { connection_config }
     end
   end
 
   # Exceptions
-  ApartmentError = Class.new(StandardError)
-
+  class ApartmentError < StandardError; end
+  # Raised if Apartment is not properly configured
+  class ConfigurationError < ApartmentError; end
+  # Apartment namespaced version of ArgumentError
+  class ArgumentError < ::ArgumentError; end
+  # Raised when a required file cannot be found
+  class FileNotFound < ApartmentError; end
   # Raised when apartment cannot find the adapter specified in <tt>config/database.yml</tt>
-  AdapterNotFound = Class.new(ApartmentError)
-
-  # Raised when apartment cannot find the file to be loaded
-  FileNotFound = Class.new(ApartmentError)
-
+  class AdapterNotFound < ApartmentError; end
   # Tenant specified is unknown
-  TenantNotFound = Class.new(ApartmentError)
-
+  class TenantNotFound < ApartmentError; end
   # The Tenant attempting to be created already exists
-  TenantExists = Class.new(ApartmentError)
+  class TenantAlreadyExists < ApartmentError; end
 end
+
+require 'apartment/railtie' if defined?(Rails)

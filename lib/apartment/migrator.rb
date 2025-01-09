@@ -4,12 +4,12 @@ require 'apartment/tenant'
 
 module Apartment
   module Migrator
-    extend self
+    module_function
 
     # Migrate to latest
     def migrate(database)
       Tenant.switch(database) do
-        version = ENV['VERSION'] ? ENV['VERSION'].to_i : nil
+        version = ENV['VERSION']&.to_i
 
         migration_scope_block = ->(migration) { ENV['SCOPE'].blank? || (ENV['SCOPE'] == migration.scope) }
 
