@@ -25,7 +25,7 @@ jobs:
           - 7_2
           - 8_0
     env:
-      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_mysql.gemfile
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}_mysql.gemfile
       CI: true
       DATABASE_ENGINE: mysql
       RUBY_VERSION: ${{ matrix.ruby_version }}

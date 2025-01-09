@@ -16,10 +16,10 @@
 # - Schema DDL operation safety
 # - Deadlock prevention with schema operations
 
-require 'spec_helper'
+require 'rails_helper'
 require 'parallel'
 
-shared_examples 'handles concurrent schema operations' do
+RSpec.shared_examples('handles concurrent schema operations') do
   include_context 'with adapter setup'
 
   let(:schema1) { "thread_test_#{Apartment::Test.next_db}" }

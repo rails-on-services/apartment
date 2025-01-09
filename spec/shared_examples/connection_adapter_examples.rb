@@ -17,9 +17,9 @@
 #
 # These tests should be run against MySQL, SQLite, and non-schema PostgreSQL adapters.
 
-require 'spec_helper'
+require 'rails_helper'
 
-shared_examples 'a connection based adapter' do
+RSpec.shared_examples('a connection based adapter') do
   include_context 'with adapter setup'
 
   describe 'connection management' do

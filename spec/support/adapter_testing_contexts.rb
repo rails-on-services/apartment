@@ -46,15 +46,12 @@ require_relative 'database_helpers'
 RSpec.shared_context('with adapter setup', :adapter_test) do
   include DatabaseHelpers
 
+  let(:config) { Rails.configuration.database_configuration['test'] }
   let(:adapter) { described_class.new(config) }
   let(:tenant_name) { generate_tenant_name }
   let(:another_tenant) { generate_tenant_name }
   let(:default_tenant) { Apartment.default_tenant || 'public' }
   let(:connection) { ActiveRecord::Base.connection }
-  let(:config) do
-    db = RSpec.current_example.metadata.fetch(:database, :postgresql)
-    Apartment::Test.config['connections'][db.to_s]&.symbolize_keys
-  end
 
   after do
     cleanup_tenant(tenant_name)

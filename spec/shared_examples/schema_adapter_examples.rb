@@ -21,9 +21,9 @@
 #
 # These tests should only be run against PostgreSQL adapters using schema-based separation.
 
-require 'spec_helper'
+require 'rails_helper'
 
-shared_examples 'a schema based adapter' do
+RSpec.shared_examples('a schema based adapter') do
   include_context 'with adapter setup'
 
   describe 'schema search path manipulation' do

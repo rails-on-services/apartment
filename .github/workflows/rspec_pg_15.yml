@@ -26,16 +26,17 @@ jobs:
           - 7_2
           - 8_0
     env:
-      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_postgresql.gemfile
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}_postgresql.gemfile
       CI: true
       DATABASE_ENGINE: postgresql
       RUBY_VERSION: ${{ matrix.ruby_version }}
       RAILS_VERSION: ${{ matrix.rails_version }}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     services:
       postgres:
         image: postgres:15-alpine
         env:
-          POSTGRES_PASSWORD: postgres
           POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: apartment_postgresql_test
         options: >-

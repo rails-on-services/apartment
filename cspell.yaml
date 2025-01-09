@@ -1,0 +1,15 @@
+version: "0.2"
+language: en
+words:
+  - activerecord
+  - dbname
+  - environmentify
+  - pghost
+  - pgpassword
+  - pgport
+  - pguser
+  - postgis
+  - postgresqladapter
+  - PSQL
+  - rescuable
+  - tenantify
