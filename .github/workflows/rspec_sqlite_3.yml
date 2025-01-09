@@ -28,7 +28,9 @@ jobs:
           - 7_1
           - 7_2
           - 8_0
-        # exclude:
+        exclude:
+          - ruby_version: 3.1
+            rails_version: 8_0
         #   - ruby_version: jruby
         #     rails_version: 7_1
         #   - ruby_version: jruby

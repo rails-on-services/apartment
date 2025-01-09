@@ -35,6 +35,8 @@ jobs:
             rails_version: 7_2
           - ruby_version: jruby
             rails_version: 8_0
+          - ruby_version: 3.1
+            rails_version: 8_0
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_postgresql.gemfile
       CI: true
