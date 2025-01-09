@@ -21,7 +21,7 @@ module Apartment
       #   @param {String} tenant Tenant name
       #
       def create(tenant)
-        run_callbacks :create do
+        run_callbacks(:create) do
           create_tenant(tenant)
 
           switch(tenant) do
@@ -41,7 +41,7 @@ module Apartment
         process_excluded_models
       end
 
-      #   Note alias_method here doesn't work with inheritence apparently ??
+      #   Note alias_method here doesn't work with inheritance apparently ??
       #
       def current
         Apartment.connection.current_database
@@ -72,7 +72,7 @@ module Apartment
       #   @param {String} tenant name
       #
       def switch!(tenant = nil)
-        run_callbacks :switch do
+        run_callbacks(:switch) do
           connect_to_new(tenant).tap do
             Apartment.connection.clear_query_cache
           end
@@ -99,7 +99,7 @@ module Apartment
       #
       def each(tenants = Apartment.tenant_names)
         tenants.each do |tenant|
-          switch(tenant) { yield tenant }
+          switch(tenant) { yield(tenant) }
         end
       end
 
@@ -116,7 +116,7 @@ module Apartment
       #   Reset the tenant connection to the default
       #
       def reset
-        Apartment.establish_connection @config
+        Apartment.establish_connection(@config)
       end
 
       #   Load the rails seed file into the db
@@ -147,7 +147,7 @@ module Apartment
       protected
 
       def process_excluded_model(excluded_model)
-        excluded_model.constantize.establish_connection @config
+        excluded_model.constantize.establish_connection(@config)
       end
 
       def drop_command(conn, tenant)
@@ -180,7 +180,7 @@ module Apartment
 
         query_cache_enabled = ActiveRecord::Base.connection.query_cache_enabled
 
-        Apartment.establish_connection multi_tenantify(tenant)
+        Apartment.establish_connection(multi_tenantify(tenant))
         Apartment.connection.verify! # call active? to manually check if this connection is valid
 
         Apartment.connection.enable_query_cache! if query_cache_enabled
@@ -216,7 +216,7 @@ module Apartment
       #   Load a file or raise error if it doesn't exists
       #
       def load_or_raise(file)
-        raise FileNotFound, "#{file} doesn't exist yet" unless File.exist?(file)
+        raise(FileNotFound, "#{file} doesn't exist yet") unless File.exist?(file)
 
         load(file)
       end
@@ -239,14 +239,14 @@ module Apartment
         Apartment.db_config_for(tenant).dup
       end
 
-      def with_neutral_connection(tenant, &_block)
+      def with_neutral_connection(tenant, &)
         if Apartment.with_multi_server_setup
           # neutral connection is necessary whenever you need to create/remove a database from a server.
           # example: when you use postgresql, you need to connect to the default postgresql database before you create
           # your own.
-          SeparateDbConnectionHandler.establish_connection(multi_tenantify(tenant, false))
-          yield(SeparateDbConnectionHandler.connection)
-          SeparateDbConnectionHandler.connection.close
+          Apartment.establish_connection(multi_tenantify(tenant, false))
+          yield(Apartment.connection)
+          Apartment.connection.close
         else
           yield(Apartment.connection)
         end
@@ -257,18 +257,15 @@ module Apartment
       end
 
       def raise_drop_tenant_error!(tenant, exception)
-        raise TenantNotFound, "Error while dropping tenant #{environmentify(tenant)}: #{exception.message}"
+        raise(TenantNotFound, "Error while dropping tenant #{environmentify(tenant)}: #{exception.message}")
       end
 
       def raise_create_tenant_error!(tenant, exception)
-        raise TenantExists, "Error while creating tenant #{environmentify(tenant)}: #{exception.message}"
+        raise(TenantExists, "Error while creating tenant #{environmentify(tenant)}: #{exception.message}")
       end
 
       def raise_connect_error!(tenant, exception)
-        raise TenantNotFound, "Error while connecting to tenant #{environmentify(tenant)}: #{exception.message}"
-      end
-
-      class SeparateDbConnectionHandler < ::ActiveRecord::Base
+        raise(TenantNotFound, "Error while connecting to tenant #{environmentify(tenant)}: #{exception.message}")
       end
     end
   end

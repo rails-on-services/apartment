@@ -2,6 +2,8 @@
 
 # spec/support/faker_config.rb
 
+require 'faker'
+
 RSpec.configure do |config|
   config.before(:suite) do
     # Reset Faker unique generators before the test suite

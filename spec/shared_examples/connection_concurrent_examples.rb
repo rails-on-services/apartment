@@ -20,10 +20,9 @@
 # These tests ensure thread-safety in multi-threaded and parallel environments
 # and fiber-safety for async operations.
 
-require 'spec_helper'
-require 'parallel'
+require 'rails_helper'
 
-shared_examples 'handles concurrent connection operations' do
+RSpec.shared_examples('handles concurrent connection operations') do
   include_context 'with adapter setup'
 
   let(:tenant1) { Apartment::Test.next_db }

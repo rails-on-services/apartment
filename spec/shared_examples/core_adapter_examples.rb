@@ -15,9 +15,9 @@
 #
 # Any new adapter must pass all these tests to be considered a valid Apartment adapter.
 
-require 'spec_helper'
+require 'rails_helper'
 
-shared_examples 'a basic adapter' do
+RSpec.shared_examples('a basic adapter') do
   include_context 'with adapter setup'
 
   describe '#create' do

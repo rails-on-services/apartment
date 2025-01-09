@@ -12,8 +12,4 @@ RSpec.configure do |config|
       c.default_tenant = nil
     end
   end
-
-  config.after(:suite) do
-    Apartment.reset
-  end
 end
