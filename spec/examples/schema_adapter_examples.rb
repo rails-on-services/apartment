@@ -63,7 +63,7 @@ shared_examples_for 'a schema based apartment adapter' do
   describe '#create' do
     it 'should load schema.rb to new schema' do
       connection.schema_search_path = schema1
-      expect(connection.tables).to include('companies')
+      expect(connection.tables).to include('users')
     end
 
     it 'should yield to block if passed and reset' do
@@ -92,6 +92,27 @@ shared_examples_for 'a schema based apartment adapter' do
       end
 
       after { subject.drop(db) }
+    end
+
+    context 'with a default_tenant', default_tenant: true do
+      let(:from_default_tenant) { 'new_from_custom_default_tenant' }
+
+      before do
+        subject.create(from_default_tenant)
+      end
+
+      after do
+        subject.drop(from_default_tenant)
+      end
+
+      it 'should correctly create the new schema' do
+        expect(tenant_names).to include(from_default_tenant)
+      end
+
+      it 'should load schema.rb to new schema' do
+        connection.schema_search_path = from_default_tenant
+        expect(connection.tables).to include('users')
+      end
     end
   end
 
@@ -130,6 +151,10 @@ shared_examples_for 'a schema based apartment adapter' do
 
     it 'connects and resets' do
       subject.switch(schema1) do
+        # Ensure sequence is not cached
+        Company.reset_sequence_name
+        User.reset_sequence_name
+
         expect(connection.schema_search_path).to start_with %("#{schema1}")
         expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
         expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
@@ -140,10 +165,28 @@ shared_examples_for 'a schema based apartment adapter' do
       expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
     end
 
-    it 'allows a list of schemas' do
-      subject.switch([schema1, schema2]) do
-        expect(connection.schema_search_path).to include %("#{schema1}")
-        expect(connection.schema_search_path).to include %("#{schema2}")
+    describe 'multiple schemas' do
+      it 'allows a list of schemas' do
+        subject.switch([schema1, schema2]) do
+          expect(connection.schema_search_path).to include %("#{schema1}")
+          expect(connection.schema_search_path).to include %("#{schema2}")
+        end
+      end
+
+      it 'connects and resets' do
+        subject.switch([schema1, schema2]) do
+          # Ensure sequence is not cached
+          Company.reset_sequence_name
+          User.reset_sequence_name
+
+          expect(connection.schema_search_path).to start_with %("#{schema1}")
+          expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+          expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
+        end
+
+        expect(connection.schema_search_path).to start_with %("#{public_schema}")
+        expect(User.sequence_name).to eq "#{User.table_name}_id_seq"
+        expect(Company.sequence_name).to eq "#{public_schema}.#{Company.table_name}_id_seq"
       end
     end
   end

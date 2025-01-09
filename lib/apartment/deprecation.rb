@@ -1,11 +1,8 @@
 # frozen_string_literal: true
 
 require 'active_support/deprecation'
+require_relative 'version'
 
 module Apartment
-  module Deprecation
-    def self.warn(message)
-      ActiveSupport::Deprecation.warn message
-    end
-  end
+  DEPRECATOR = ActiveSupport::Deprecation.new(Apartment::VERSION, 'Apartment')
 end

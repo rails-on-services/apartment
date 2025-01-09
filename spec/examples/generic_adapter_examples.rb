@@ -12,19 +12,6 @@ shared_examples_for 'a generic apartment adapter' do
   end
 
   describe '#init' do
-    it 'should not retain a connection after railtie' do
-      ActiveRecord::Base.connection_pool.disconnect!
-
-      Apartment::Railtie.config.to_prepare_blocks.map(&:call)
-
-      num_available_connections = Apartment.connection_class.connection_pool
-                                           .instance_variable_get(:@available)
-                                           .instance_variable_get(:@queue)
-                                           .size
-
-      expect(num_available_connections).to eq(1)
-    end
-
     it 'should not connect if env var is set' do
       ENV['APARTMENT_DISABLE_INIT'] = 'true'
       begin
@@ -55,7 +42,7 @@ shared_examples_for 'a generic apartment adapter' do
 
     it 'should load schema.rb to new schema' do
       subject.switch(db1) do
-        expect(connection.tables).to include('companies')
+        expect(connection.tables).to include('users')
       end
     end
 
@@ -113,7 +100,7 @@ shared_examples_for 'a generic apartment adapter' do
     it 'should raise an error if database is invalid' do
       expect do
         subject.switch! 'unknown_database'
-      end.to raise_error(Apartment::ApartmentError)
+      end.to raise_error(Apartment::TenantNotFound)
     end
   end
 

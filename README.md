@@ -1,7 +1,7 @@
 # Apartment
 
 [![Gem Version](https://badge.fury.io/rb/ros-apartment.svg)](https://badge.fury.io/rb/ros-apartment)
-[![Code Climate](https://api.codeclimate.com/v1/badges/b0dc327380bb8438f991/maintainability)](https://codeclimate.com/github/rails-on-services/apartment/maintainability)
+[![codecov](https://codecov.io/gh/rails-on-services/apartment/graph/badge.svg?token=Q4I5QL78SA)](https://codecov.io/gh/rails-on-services/apartment)
 
 *Multitenancy for Rails and ActiveRecord*
 
@@ -9,21 +9,17 @@ Apartment provides tools to help you deal with multiple tenants in your Rails
 application. If you need to have certain data sequestered based on account or company,
 but still allow some data to exist in a common tenant, Apartment can help.
 
-## Apartment drop in replacement gem
+## Apartment Fork: ros-apartment
 
-After having reached out via github issues and email directly, no replies ever
-came. Since we wanted to upgrade our application to Rails 6 we decided to fork
-and start some development to support Rails 6. Because we don't have access
-to the apartment gem itself, the solution was to release it under a different
-name but providing the exact same API as it was before.
+This gem is a fork of the original Apartment gem, which is no longer maintained. We have continued development under the name `ros-apartment` to keep the gem up-to-date and compatible with the latest versions of Rails. `ros-apartment` is designed as a drop-in replacement for the original, allowing you to seamlessly transition your application without code changes.
 
-## Help wanted
+## Community Support
 
-We were never involved with the development of Apartment gem in the first place
-and this project started out of our own needs. We will be more than happy
-to collaborate to maintain the gem alive and supporting the latest versions
-of ruby and rails, but your help is appreciated. Either by reporting bugs you
-may find or proposing improvements to the gem itself. Feel free to reach out.
+This project thrives on community support. Whether you have an idea for a new feature, find a bug, or need help with `ros-apartment`, we encourage you to participate! For questions and troubleshooting, check out our [Discussions board](https://github.com/rails-on-services/apartment/discussions) to connect with the community. You can also open issues or submit pull requests directly. We are committed to maintaining `ros-apartment` and ensuring it remains a valuable tool for Rails developers.
+
+### Maintainer Update
+
+As of May 2024, Apartment is maintained with the support of [CampusESP](https://www.campusesp.com). We continue to keep Apartment open-source under the MIT license. We also want to recognize and thank the previous maintainers for their valuable contributions to this project.
 
 ## Installation
 
@@ -46,10 +42,6 @@ Configure as needed using the docs below.
 
 That's all you need to set up the Apartment libraries. If you want to switch tenants
 on a per-user basis, look under "Usage - Switching tenants per request", below.
-
-> NOTE: If using [postgresql schemas](http://www.postgresql.org/docs/9.0/static/ddl-schemas.html) you must use:
->
-> * for Rails 3.1.x: _Rails ~> 3.1.2_, it contains a [patch](https://github.com/rails/rails/pull/3232) that makes prepared statements work with multiple schemas
 
 ## Usage
 
@@ -630,24 +622,50 @@ $ APARTMENT_DISABLE_INIT=true DATABASE_URL=postgresql://localhost:1234/buk_devel
 # 1
 ```
 
-## Contributing
+## Contribution Guidelines
 
-* In both `spec/dummy/config` and `spec/config`, you will see `database.yml.sample` files
-  * Copy them into the same directory but with the name `database.yml`
-  * Edit them to fit your own settings
-* Rake tasks (see the Rakefile) will help you setup your dbs necessary to run tests
-* Please issue pull requests to the `development` branch. All development happens here, master is used for releases.
-* Ensure that your code is accompanied with tests. No code will be merged without tests
+We welcome and appreciate contributions to `ros-apartment`! Whether you want to report a bug, propose a new feature, or submit a pull request, your help keeps this project thriving. Please review the guidelines below to ensure a smooth collaboration process.
 
-* If you're looking to help, check out the TODO file for some upcoming changes I'd like to implement in Apartment.
+### How to Contribute
 
-### Running bundle install
+1. **Check Existing Issues and Discussions**
+   - Before opening a new issue, please check the [issue tracker](https://github.com/rails-on-services/apartment/issues) and our [Discussions board](https://github.com/rails-on-services/apartment/discussions) to see if the topic has already been reported or discussed. This helps us avoid duplication and focus on solving the issue efficiently.
 
-mysql2 gem in some cases fails to install.
-If you face problems running bundle install in OSX, try installing the gem running:
+2. **Submitting a Bug Report**
+   - Ensure your report includes a clear description of the problem, steps to reproduce, and relevant logs or error messages.
+   - If possible, provide a minimal reproducible example or a failing test case that demonstrates the issue.
 
-`gem install mysql2 -v '0.5.3' -- --with-ldflags=-L/usr/local/opt/openssl/lib --with-cppflags=-I/usr/local/opt/openssl/include`
+3. **Proposing a Feature**
+   - For new features, open an issue to discuss your idea before starting development. This allows the maintainers and community to provide feedback and ensure the feature aligns with the project's goals.
+   - Please be as detailed as possible when describing the feature, its use case, and its potential impact on the existing functionality.
+
+4. **Submitting a Pull Request**
+   - Fork the repository and create a feature branch (`git checkout -b my-feature-branch`).
+   - Follow the existing code style and ensure your changes are well-documented and tested.
+   - Run the tests locally to verify that your changes do not introduce new issues.
+   - Use [Appraisal](https://github.com/thoughtbot/appraisal) to test against multiple Rails versions. Ensure all tests pass for supported Rails versions.
+   - Submit your pull request to the `development` branch, not `main`.
+   - Include a detailed description of your changes and reference any related issue numbers (e.g., "Fixes #123" or "Closes #456").
+
+5. **Code Review and Merging Process**
+   - The maintainers will review your pull request and may provide feedback or request changes. We appreciate your patience during this process, as we strive to maintain a high standard for code quality.
+   - Once approved, your pull request will be merged into the `development` branch. Periodically, we merge the `development` branch into `main` for official releases.
+
+6. **Testing**
+   - Ensure your code is thoroughly tested. We do not merge code changes without adequate tests. Use RSpec for unit and integration tests.
+   - If your contribution affects multiple versions of Rails, use Appraisal to verify compatibility across versions.
+   - Rake tasks (see the Rakefile) are available to help set up your test databases and run tests.
+
+### Code of Conduct
+
+We are committed to providing a welcoming and inclusive environment for all contributors. Please review and adhere to our [Code of Conduct](CODE_OF_CONDUCT.md) when participating in the project.
+
+### Questions and Support
+
+If you have any questions or need support while contributing or using `ros-apartment`, visit our [Discussions board](https://github.com/rails-on-services/apartment/discussions) to ask questions and connect with the maintainer team and community.
+
+We look forward to your contributions and thank you for helping us keep `ros-apartment` a reliable and robust tool for the Rails community!
 
 ## License
 
-Apartment is released under the [MIT License](http://www.opensource.org/licenses/MIT).
+Apartment remains an open-source project under the [MIT License](http://www.opensource.org/licenses/MIT). We value open-source principles and aim to make multitenancy accessible to all Rails developers.

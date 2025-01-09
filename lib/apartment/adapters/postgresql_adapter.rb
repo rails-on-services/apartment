@@ -76,11 +76,6 @@ module Apartment
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
         Apartment.connection.schema_search_path = full_search_path
-
-        # When the PostgreSQL version is < 9.3,
-        # there is a issue for prepared statement with changing search_path.
-        # https://www.postgresql.org/docs/9.3/static/sql-prepare.html
-        Apartment.connection.clear_cache! if postgresql_version < 90_300
       rescue *rescuable_exceptions => e
         raise_schema_connect_to_new(tenant, e)
       end
@@ -151,8 +146,9 @@ module Apartment
         /SET row_security/i,                          # new in postgresql 9.5
         /SET idle_in_transaction_session_timeout/i,   # new in postgresql 9.6
         /SET default_table_access_method/i,           # new in postgresql 12
-        /CREATE SCHEMA public/i,
-        /COMMENT ON SCHEMA public/i
+        /CREATE SCHEMA/i,
+        /COMMENT ON SCHEMA/i,
+        /SET transaction_timeout/i,                   # new in postgresql 17
 
       ].freeze
 
@@ -194,15 +190,13 @@ module Apartment
       #   @return {String} raw SQL contaning only postgres schema dump
       #
       def pg_dump_schema
-        # Skip excluded tables? :/
-        # excluded_tables =
-        #   collect_table_names(Apartment.excluded_models)
-        #   .map! {|t| "-T #{t}"}
-        #   .join(' ')
-
-        # `pg_dump -s -x -O -n #{default_tenant} #{excluded_tables} #{dbname}`
-
-        with_pg_env { `pg_dump -s -x -O -n #{default_tenant} #{dbname}` }
+        exclude_table =
+          if Apartment.pg_exclude_clone_tables
+            excluded_tables.map! { |t| "-T #{t}" }.join(' ')
+          else
+            ''
+          end
+        with_pg_env { `pg_dump -s -x -O -n #{default_tenant} #{dbname} #{exclude_table}` }
       end
 
       #   Dump data from schema_migrations table
@@ -254,6 +248,8 @@ module Apartment
         sql.gsub(/#{default_tenant}\.\w*/) do |match|
           if Apartment.pg_excluded_names.any? { |name| match.include? name }
             match
+          elsif Apartment.pg_exclude_clone_tables && excluded_tables.any?(match)
+            match
           else
             match.gsub("#{default_tenant}.", %("#{current}".))
           end
@@ -266,10 +262,10 @@ module Apartment
         regexps.select { |c| input.match c }
       end
 
-      #   Collect table names from AR Models
+      # Convenience method for excluded table names
       #
-      def collect_table_names(models)
-        models.map do |m|
+      def excluded_tables
+        Apartment.excluded_models.map do |m|
           m.constantize.table_name
         end
       end
