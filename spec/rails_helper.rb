@@ -11,16 +11,16 @@ require_relative 'dummy/config/environment' # Load the Dummy app
 require 'rspec/rails' # Load RSpec-Rails
 
 RSpec.configure do |config|
-  config.filter_run_excluding(database: lambda { |engine|
-    case ENV.fetch('DATABASE_ENGINE', nil)
-    when 'mysql'
-      %i[sqlite postgresql].include?(engine)
-    when 'sqlite'
-      %i[mysql postgresql].include?(engine)
-    when 'postgresql'
-      %i[mysql sqlite].include?(engine)
-    else
-      false
-    end
-  })
+  # config.filter_run_excluding(database: lambda { |engine|
+  #   case ENV.fetch('DATABASE_ENGINE', nil)
+  #   when 'mysql'
+  #     %i[sqlite postgresql].include?(engine)
+  #   when 'sqlite'
+  #     %i[mysql postgresql].include?(engine)
+  #   when 'postgresql'
+  #     %i[mysql sqlite].include?(engine)
+  #   else
+  #     false
+  #   end
+  # })
 end

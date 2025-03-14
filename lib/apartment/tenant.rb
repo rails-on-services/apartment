@@ -3,8 +3,6 @@
 # lib/apartment/tenant.rb
 
 require 'forwardable'
-require_relative 'current'
-require_relative 'adapters'
 
 module Apartment
   #   The main entry point to Apartment functions
@@ -13,33 +11,33 @@ module Apartment
     class << self
       extend Forwardable
 
-      def_delegators :adapter, :create, :drop, :switch, :switch!, :current, :each,
-                     :reset, :init, :set_callback, :seed, :default_tenant, :environmentify
+      def_delegators :config, :default_tenant, :connection_class
 
-      #   Fetch the proper multi-tenant adapter based on Rails config
-      #
-      #   @return {subclass of Apartment::AbstractAdapter}
-      #
-      def adapter
-        Apartment::Current.adapter ||= begin
-          adapter_method = "#{config[:adapter]}_adapter"
-
-          unless Apartment::Adapters.respond_to?(adapter_method)
-            raise(AdapterNotFound, "database configuration specifies nonexistent #{config[:adapter]} adapter")
-          end
-
-          send(adapter_method, config)
-        end
+      def current
+        # Return the current tenant
+        Current.tenant
       end
 
-      #   Reset config and adapter so they are regenerated
-      #
-      def reload!
-        Apartment::Current.reset_all
+      def switch(tenant = nil, &)
+        previous_tenant = current || default_tenant
+        Current.tenant = tenant || default_tenant
+        connection_class.with_connection(&)
+      ensure
+        Current.tenant = previous_tenant
       end
+
+      def switch!(tenant = nil)
+        Current.tenant = tenant || default_tenant
+      end
+
+      def reset
+        Current.tenant = default_tenant
+      end
+
+      private
 
       def config
-        Apartment.connection_config
+        Apartment.config
       end
     end
   end

@@ -5,7 +5,7 @@
 module Apartment
   # Postgres specific configuration options for Apartment.
   module Configs
-    class PostgresConfig
+    class PostgreSQLConfig
       # Use schemas for each tenant instead of discrete databases.
       # @!attribute [rw] use_schemas
       # @return [Boolean] true if schemas should be used for tenants, defaults to false
@@ -26,16 +26,12 @@ module Apartment
       # @return [Boolean] true if multi-server setup is enabled, defaults to false
       attr_accessor :with_multi_server_setup
 
-      # Specifies models that should always be accessed from the default tenant.
-      # @!attribute [rw] excluded_models
-      # @return [Array<String>] a list of models excluded from tenant scoping, defaults to an empty array
-      attr_accessor :excluded_models
-
+      # TODO: Figure out how to do this
       # Skip tables listed in `excluded_models` during `patch_search_path` replacements
       # and excluded them from the clone target to prevent SQL issues with pg_dump.
       # @!attribute [rw] exclude_tables_from_clone
       # @return [Boolean] true if tables in `excluded_models` should be excluded, defaults to false
-      attr_accessor :exclude_tables_from_clone
+      # attr_accessor :exclude_tables_from_clone
 
       # Specifies schemas that will always remain in the search_path when switching or resetting tenants.
       # @!attribute [rw] persistent_schemas
@@ -54,7 +50,6 @@ module Apartment
         @skip_create_schema = true
         @use_sql = false
         @with_multi_server_setup = false
-        @excluded_models = []
         @exclude_tables_from_clone = false
         @persistent_schemas = []
         @excluded_names = []

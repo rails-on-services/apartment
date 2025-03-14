@@ -25,6 +25,10 @@ Metrics/BlockLength:
   Exclude:
     - spec/**/*.rb
 
+Metrics/ModuleLength:
+  Exclude:
+    - lib/apartment/patches/**/*.rb
+
 Metrics/MethodLength:
   Max: 20
 

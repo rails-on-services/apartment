@@ -5,14 +5,19 @@
 module Apartment
   # Configuration options for Apartment.
   class Config
-    # Specifies a callable object responsible for providing the list of tenants.
+    extend Forwardable
+    # Specifies a callable object responsible for providing a list of tenants.
+    # Tenants can be represented as either strings or hashes.
+    # Return a hash only if using horizontal sharding; otherwise, return a string
+    # representing the tenant name.
     #
-    # Note: This method is called frequently, so ensure it is performant.
-    # For complex queries, consider caching the results to avoid repeated
-    # calculations or database hits.
+    # The hash should have the following structure:
+    #   { tenant: 'tenant_name', shard: 'shard_name' }
+    #
+    # Note: Every shard must be defined in the database configuration.
     #
     # @!attribute [rw] tenants_provider
-    # @return [Proc] a callable object that returns an array of tenant names
+    # @return [Proc] A callable object that returns an array of tenant names.
     attr_accessor :tenants_provider
 
     # Sets the default tenant. In Postgres, this is typically the public schema.
@@ -20,11 +25,6 @@ module Apartment
     # @!attribute [rw] default_tenant
     # @return [String, nil] the name of the default tenant schema
     attr_accessor :default_tenant
-
-    # Ensures the tenant exists before switching.
-    # @!attribute [rw] tenant_presence_check
-    # @return [Boolean] true if Apartment should verify tenant existence
-    attr_accessor :tenant_presence_check
 
     # Adds current database and schemas to ActiveRecord logs.
     # @!attribute [rw] active_record_log
@@ -52,10 +52,10 @@ module Apartment
     # @return [String, nil] the path to the seed data file, defaults to db/seeds.rb in Rails
     attr_accessor :seed_data_file
 
-    # Specifies the connection class to use for database connections.
-    # @!attribute [rw] connection_class
+    # Specifies the base connection class to use for database connections.
+    # @!attribute [r] connection_class
     # @return [Class] the connection class, defaults to ActiveRecord::Base
-    attr_accessor :connection_class
+    attr_reader :connection_class
 
     # Should Apartment should run db:migrate for each tenant
     # @!attribute [rw] db_migrate_tenants
@@ -84,10 +84,11 @@ module Apartment
     # @return [Apartment::Configs::MysqlConfig, nil]
     attr_reader :mysql_config
 
+    def_delegators :connection_class, :connection_db_config
+
     def initialize
       @tenants_provider = nil
       @default_tenant = nil
-      @tenant_presence_check = true
       @active_record_log = true
       @seed_after_create = false
       @environmentify = nil
@@ -104,10 +105,10 @@ module Apartment
     # Validates the configuration.
     # @raise [ConfigurationError] if the configuration is invalid
     def validate!
-      unless tenants_provider.is_a?(Proc)
-        raise(ConfigurationError,
-              'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
-      end
+      # unless tenants_provider.is_a?(Proc)
+      #   raise(ConfigurationError,
+      #         'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
+      # end
 
       if postgres_config && mysql_config
         raise(ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time')
@@ -141,16 +142,35 @@ module Apartment
       @db_migrate_tenant_missing_strategy = value
     end
 
+    # Sets the connection class to use for database connections.
+    # @!attribute [w] connection_class
+    # @param [Class] klass the connection class
+    # @return [Class] the connection class
+    def connection_class=(klass)
+      # Ensure the connection class is either ActiveRecord::Base or a subclass
+      unless klass <= ActiveRecord::Base
+        raise(ConfigurationError, 'Connection class must be ActiveRecord::Base or a subclass of it')
+      end
+
+      @connection_class = klass
+
+      @connection_class.default_connection_handler = Apartment::ConnectionAdapters::ConnectionHandler.new
+
+      connection_class
+    end
+
     def configure_postgres(&)
-      require_relative('configs/postgres_config')
-      @postgres_config = Configs::PostgresConfig.new
+      @postgres_config = Configs::PostgreSQLConfig.new
       yield(@postgres_config)
     end
 
     def configure_mysql(&)
-      require_relative('configs/mysql_config')
-      @mysql_config = Configs::MysqlConfig.new
+      @mysql_config = Configs::MySQLConfig.new
       yield(@mysql_config)
+    end
+
+    def schema_strategy
+      @schema_strategy ||= postgres_config&.use_schemas ? :schema : :database
     end
 
     private

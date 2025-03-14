@@ -7,23 +7,30 @@ require 'active_record'
 require 'forwardable'
 require 'monitor'
 
-require_relative 'apartment/config'
-require_relative 'apartment/tenant'
-require_relative 'apartment/deprecation'
-require_relative 'apartment/log_subscriber'
+require 'zeitwerk'
+loader = Zeitwerk::Loader.for_gem(warn_on_extra_files: false)
+loader.inflector.inflect(
+  'mysql_config' => 'MySQLConfig',
+  'postgresql_config' => 'PostgreSQLConfig',
+  'mysql' => 'MySQL',
+  'postgresql' => 'PostgreSQL',
+  'sqlite' => 'SQLite'
+)
+loader.collapse("#{__dir__}/apartment/concerns")
+loader.setup
 
 # Apartment module provides functionality for managing multi-tenancy in a Rails application.
 # It includes methods for configuring the Apartment gem, managing tenants, and handling database connections.
 module Apartment
+  extend MonitorMixin
   class << self
     extend Forwardable
-    include MonitorMixin
 
     # @!attribute [r] config
     # @return [Apartment::Config, nil] the current configuration
     attr_reader :config
 
-    def_delegator :config, :tenants_provider
+    def_delegators :config, :default_tenant, :connection_class
 
     # Configures the Apartment gem.
     #
@@ -42,12 +49,14 @@ module Apartment
       raise(ConfigurationError, 'Apartment configuration cannot be changed after initialization') if config&.frozen?
 
       synchronize do
+        Logger.debug('Initializing config')
         @config = Config.new
 
         yield(@config)
 
         @config.validate!
-        @config.freeze!
+        # @config.freeze!
+        Logger.debug('Config initialized and frozen')
       end
     end
 
@@ -56,37 +65,21 @@ module Apartment
     # using a mutex to prevent race conditions.
     def reset_config
       synchronize do
-        @config = nil
+        remove_instance_variable(:@config) if defined?(@config)
+        @tenant_configs = nil
+        Logger.debug('Config reset')
       end
     end
 
-    def tenant_names
-      tenants = tenants_provider.call
+    def tenant_configs
+      return @tenant_configs if @tenant_configs # rubocop:disable ThreadSafety/ClassInstanceVariable
 
-      return tenants.keys if tenants.is_a?(Hash)
-
-      tenants
-    end
-
-    def connection_config
-      connection_db_config.configuration_hash
-    end
-
-    def db_config_for(tenant)
-      tenants_config[tenant] || connection_config
-    end
-
-    def tenants_config
-      tenants = tenants_provider.call
-      return {} if tenants.blank?
-
-      normalize_tenant_configs(tenants).with_indifferent_access
-    end
-
-    private
-
-    def normalize_tenant_configs(names)
-      names.is_a?(Hash) ? names : Array(names).index_with { connection_config }
+      synchronize do
+        Logger.debug('Initializing tenant configs')
+        @tenant_configs = config.tenants_provider.call
+        @tenant_configs.freeze
+        Logger.debug('Tenant configs initialized and frozen')
+      end
     end
   end
 
@@ -98,12 +91,13 @@ module Apartment
   class ArgumentError < ::ArgumentError; end
   # Raised when a required file cannot be found
   class FileNotFound < ApartmentError; end
-  # Raised when apartment cannot find the adapter specified in <tt>config/database.yml</tt>
-  class AdapterNotFound < ApartmentError; end
   # Tenant specified is unknown
   class TenantNotFound < ApartmentError; end
   # The Tenant attempting to be created already exists
   class TenantAlreadyExists < ApartmentError; end
 end
 
-require 'apartment/railtie' if defined?(Rails)
+if defined?(Rails)
+  require 'apartment/railtie'
+  require 'apartment/patches/connection_handling'
+end

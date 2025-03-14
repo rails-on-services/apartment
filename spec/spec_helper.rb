@@ -12,16 +12,16 @@ if ENV['CI'].eql?('true') # ENV['CI'] defined as true by GitHub Actions
   SimpleCov.start do
     add_filter '/spec/'
 
-    add_group 'Adapter', 'lib/apartment/adapters'
-    add_group 'Elevators', 'lib/apartment/elevators'
-    add_group 'Core', 'lib/apartment'
+    # add_group 'Adapter', 'lib/apartment/adapters'
+    # add_group 'Elevators', 'lib/apartment/elevators'
+    # add_group 'Core', 'lib/apartment'
   end
 end
 
 require_relative '../lib/apartment' # Load the Apartment gem
 
 # Include any support files or helpers
-Dir["#{File.dirname(__FILE__)}/support/**/*.rb"].each { |f| require f }
+# Dir["#{File.dirname(__FILE__)}/support/**/*.rb"].each { |f| require f }
 
 RSpec.configure do |config|
   config.disable_monkey_patching!
@@ -29,4 +29,4 @@ RSpec.configure do |config|
 end
 
 # Load shared examples
-Dir["#{File.dirname(__FILE__)}/examples/**/*.rb"].each { |f| require f }
+# Dir["#{File.dirname(__FILE__)}/examples/**/*.rb"].each { |f| require f }

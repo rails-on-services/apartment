@@ -7,8 +7,8 @@ Gem::Specification.new do |s|
   s.version = Apartment::VERSION
 
   s.authors       = ['Ryan Brunner', 'Brad Robertson', 'Rui Baltazar', 'Mauricio Novelo']
-  s.summary       = 'A Ruby gem for managing database multitenancy. Apartment Gem drop in replacement'
-  s.description   = 'Apartment allows Rack applications to deal with database multitenancy through ActiveRecord'
+  s.summary       = 'A Ruby gem for managing database multi-tenancy. Apartment Gem drop in replacement'
+  s.description   = 'Apartment allows Rack applications to deal with database multi-tenancy through ActiveRecord'
   s.email         = ['ryan@influitive.com', 'brad@influitive.com', 'rui.p.baltazar@gmail.com', 'mauricio@campusesp.com']
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been
@@ -29,7 +29,9 @@ Gem::Specification.new do |s|
 
   s.add_dependency('activerecord', '>= 7.1.0')
   s.add_dependency('activesupport', '>= 7.1.0')
+  s.add_dependency('concurrent-ruby', '>= 1.3')
   s.add_dependency('parallel', '>= 1.26')
   s.add_dependency('public_suffix', '>= 6.0.1')
   s.add_dependency('rack', '>= 3.0.9')
+  s.add_dependency('zeitwerk', '>= 2.7.1')
 end
