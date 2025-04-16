@@ -7,7 +7,7 @@ module Apartment
     # Extends and replaces the ActiveRecord::ConnectionAdapters::ConnectionHandler class to
     # provide multi-tenancy support. A connection pool will be created for each owner
     # (typically AR model), role, shard, and tenant combination.
-    class ConnectionHandler < ActiveRecord::ConnectionAdapters::ConnectionHandler
+    class ConnectionHandler < ActiveRecord::ConnectionAdapters::ConnectionHandler # rubocop:disable Metrics/ClassLength
       # A wrapper class for AR model class, contextualizing the class with a specified tenant.
       # This class allows the ConnectionHandler to uniquely identify connection pools based on the
       # combination of the model class and a tenant.
@@ -43,18 +43,19 @@ module Apartment
       end
 
       # Override
+      # rubocop:disable Metrics/ParameterLists, Metrics/AbcSize, Metrics/MethodLength
       def establish_connection(config, owner_name: Base, role: Base.current_role, shard: Base.current_shard,
                                clobber: false, tenant: nil)
         owner_name = determine_owner_name(owner_name, config,
                                           tenant || Apartment::Tenant.current)
         tenant = owner_name.tenant
 
-        pool_config = resolve_pool_config(config, owner_name, role, shard)
+        pool_config = resolve_pool_config(config, owner_name, role, shard, tenant)
 
         # This db_config is now tenant-specific
         db_config = pool_config.db_config
 
-        pool_manager = set_pool_manager(pool_config.connection_class)
+        pool_manager = set_pool_manager(pool_config.connection_class, tenant:)
 
         # If there is an existing pool with the same values as the pool_config
         # don't remove the connection. Connections should only be removed if we are
@@ -89,6 +90,7 @@ module Apartment
           end
         end
       end
+      # rubocop:enable Metrics/ParameterLists, Metrics/AbcSize, Metrics/MethodLength
 
       # Locate the connection of the nearest super class. This can be an
       # active or defined connection: if it is the latter, it will be
@@ -130,6 +132,7 @@ module Apartment
       # When a connection is established or removed, we invalidate the cache.
       #
       # Override
+      # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
       def retrieve_connection_pool(connection_name, role: ActiveRecord::Base.current_role,
                                    shard: ActiveRecord::Base.current_shard, strict: false, tenant: nil)
         pool_manager = get_pool_manager(connection_name, tenant: tenant)
@@ -173,12 +176,13 @@ module Apartment
 
         pool
       end
+      # rubocop:enable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       private
 
       # Returns the pool manager for a connection name / identifier.
       def get_pool_manager(connection_name, tenant: nil)
-        if tenant.present? && !connection_name.end_with?("[#{tenant}]")
+        if tenant.present? && connection_name.present? && !connection_name.end_with?("[#{tenant}]")
           connection_name = "#{connection_name}[#{tenant}]"
         end
         connection_name_to_pool_manager[connection_name]
@@ -187,16 +191,13 @@ module Apartment
       # Get the existing pool manager or initialize and assign a new one.
       def set_pool_manager(connection_class, tenant: nil)
         connection_name = connection_class.name
-        if tenant.present? && !connection_name.end_with?("[#{tenant}]")
+        if tenant.present? && connection_name.present? && !connection_name.end_with?("[#{tenant}]")
           connection_name = "#{connection_name}[#{tenant}]"
         end
 
         existing_pool_manager = connection_name_to_pool_manager[connection_name]
         return existing_pool_manager if existing_pool_manager
 
-        puts "Creating new pool manager for #{connection_name}. Manager count: #{connection_name_to_pool_manager.size + 1}"
-        puts 'Connection Counter Map size:'
-        GLOBAL_CONNECTION_COUNTER_MAP.each_pair { |k, v| puts "#{k}: #{v.value}" }
         connection_name_to_pool_manager[connection_name] = ConnectionAdapters::PoolManager.new
       end
 
@@ -218,34 +219,20 @@ module Apartment
       #
       # Override
       def resolve_pool_config(config, connection_name, role, shard, tenant = nil)
-        base_db_config = ActiveRecord::Base.configurations.resolve(config)
-        config_hash = base_db_config.configuration_hash.dup
-        tenant ||= connection_name.tenant
+        db_config_details = Apartment::DatabaseConfigurations.resolve_for_tenant(
+          config,
+          role:,
+          shard:,
+          tenant: tenant || connection_name.tenant
+        )
 
-        update_config_hash_for_tenant!(config_hash, tenant)
-
-        db_config = build_db_config(base_db_config, config_hash)
+        db_config = db_config_details[:db_config]
+        role = db_config_details[:role]
+        shard = db_config_details[:shard]
 
         raise(AdapterNotSpecified, 'database configuration does not specify adapter') unless db_config.adapter
 
         ConnectionAdapters::PoolConfig.new(connection_name, db_config, role, shard)
-      end
-
-      def update_config_hash_for_tenant!(config_hash, tenant)
-        case Apartment.config&.schema_strategy
-        when :database
-          config_hash['database'] = tenant
-        when :schema
-          config_hash['schema_search_path'] = tenant
-        end
-      end
-
-      def build_db_config(base_db_config, config_hash)
-        ActiveRecord::DatabaseConfigurations::HashConfig.new(
-          base_db_config.env_name,
-          base_db_config.name,
-          config_hash
-        )
       end
 
       def determine_owner_name(owner_name, config, tenant = nil)

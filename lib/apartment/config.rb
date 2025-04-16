@@ -6,15 +6,28 @@ module Apartment
   # Configuration options for Apartment.
   class Config
     extend Forwardable
-    # Specifies a callable object responsible for providing a list of tenants.
+
+    # Specifies the strategy by which tenants are separated.
+    # @!attribute [r] tenant_strategy
+    attr_reader :tenant_strategy
+
+    # Specifies a callable object responsible for providing a list or hashes of tenants.
     # Tenants can be represented as either strings or hashes.
-    # Return a hash only if using horizontal sharding; otherwise, return a string
-    # representing the tenant name.
+    # Return a hash only if tenants are split between databases or shards
+    # in which case the hash should include the tenant name and the
+    # corresponding database name, database config, or shard name.
     #
-    # The hash should have the following structure:
-    #   { tenant: 'tenant_name', shard: 'shard_name' }
+    # For shards, the hash should include both the tenant name and the shard name:
+    #   [{ tenant: 'tenant1', shard: 'shard1' }, { tenant: 'tenant2', shard: 'shard2' }]
+    # Note: Every shard must be defined in the database configuration and tenant_strategy must be set to :shard
     #
-    # Note: Every shard must be defined in the database configuration.
+    # The same can be done for database names
+    #  [{ tenant: 'tenant1', database: 'database1' }, { tenant: 'tenant2', database: 'database2' }]
+    # Note: tenant_strategy must be set to :database_name. The same database config will be used for all tenants.
+    #
+    # Lastly, you can return a hash with the tenant name and the database configuration:
+    # [{ tenant: 'tenant1', database_config: { ... } }, { tenant: 'tenant2', database_config: { ... } }]
+    # Note: tenant_strategy must be set to :database_config. These configs don't need to be in the database.yml file.
     #
     # @!attribute [rw] tenants_provider
     # @return [Proc] A callable object that returns an array of tenant names.
@@ -31,48 +44,17 @@ module Apartment
     # @return [Boolean] true if logs should include database and schemas
     attr_accessor :active_record_log
 
-    # Seeds the database after creating a new tenant.
-    # @!attribute [rw] seed_after_create
-    # @return [Boolean] true if seeding should occur after tenant creation
-    attr_accessor :seed_after_create
-
     # Specifies how to namespace the tenant with the current environment.
+    # This is only used when the tenant strategy is not set to :database_config
     # @!attribute [r] environmentify
     # @return [Symbol, Proc, nil] :prepend, :append, or a callable object for transforming tenant names
     # @raise [ArgumentError] if an invalid value is set
-    attr_reader :environmentify
-
-    # Specifies the file to use for the database schema.
-    # @!attribute [rw] database_schema_file
-    # @return [String, nil] the path to the database schema file, defaults to db/schema.rb in Rails
-    attr_accessor :database_schema_file
-
-    # Specifies the file to use for seeding data.
-    # @!attribute [rw] seed_data_file
-    # @return [String, nil] the path to the seed data file, defaults to db/seeds.rb in Rails
-    attr_accessor :seed_data_file
+    attr_reader :environmentify_strategy
 
     # Specifies the base connection class to use for database connections.
     # @!attribute [r] connection_class
     # @return [Class] the connection class, defaults to ActiveRecord::Base
     attr_reader :connection_class
-
-    # Should Apartment should run db:migrate for each tenant
-    # @!attribute [rw] db_migrate_tenants
-    # @return [Boolean] true if migrations should be applied to tenants, defaults to true
-    attr_accessor :db_migrate_tenants
-
-    # Specifies how to handle a missing tenant during db:migrate
-    # @!attribute [r] db_migrate_tenant_missing_strategy
-    # @return [:rescue_exception, :raise_exception, :create_tenant] the strategy to use
-    #   for missing tenants, defaults to :rescue_exception
-    attr_reader :db_migrate_tenant_missing_strategy
-
-    # Specifies the number of threads to use for parallel tenant migrations.
-    # Behavior for 0 is defined by the parallel gem
-    # @!attribute [rw] parallel_migration_threads
-    # @return [Integer, nil] the number of threads, or nil for default behavior;
-    attr_accessor :parallel_migration_threads
 
     # Specifies the Postgres-specific configuration options, if any
     # @!attribute [r] postgres_config
@@ -90,14 +72,9 @@ module Apartment
       @tenants_provider = nil
       @default_tenant = nil
       @active_record_log = true
-      @seed_after_create = false
-      @environmentify = nil
+      @environmentify_strategy = nil
       @database_schema_file = default_database_schema_file
-      @seed_data_file = default_seed_data_file
       @connection_class = ActiveRecord::Base
-      @db_migrate_tenants = true
-      @db_migrate_tenant_missing_strategy = :rescue_exception
-      @parallel_migration_threads = nil
       @postgres_config = nil
       @mysql_config = nil
     end
@@ -105,10 +82,10 @@ module Apartment
     # Validates the configuration.
     # @raise [ConfigurationError] if the configuration is invalid
     def validate!
-      # unless tenants_provider.is_a?(Proc)
-      #   raise(ConfigurationError,
-      #         'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
-      # end
+      unless tenants_provider.is_a?(Proc)
+        raise(ConfigurationError,
+              'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
+      end
 
       if postgres_config && mysql_config
         raise(ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time')
@@ -118,28 +95,29 @@ module Apartment
       mysql_config&.validate!
     end
 
+    def apply!
+      postgres_config&.apply!
+      mysql_config&.apply!
+    end
+
+    TENANT_STRATEGIES = %i[schema shard database_name database_config].freeze
+    private_constant :TENANT_STRATEGIES
+
+    def tenant_strategy=(value)
+      validate_strategy!(value, TENANT_STRATEGIES, 'tenant_strategy')
+      @tenant_strategy = value
+    end
+
     ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
     private_constant :ENVIRONMENTIFY_STRATEGIES
 
     # Sets the strategy for transforming tenant names with the current environment.
-    # @!attribute [w] environmentify
+    # @!attribute [w] environmentify_strategy
     # @param [Symbol, Proc, nil] value: nil, :prepend, :append, or a callable object
     # @return [Symbol, Proc, nil] nil, :prepend, :append, or a callable object
-    def environmentify=(value)
-      validate_strategy!(value, ENVIRONMENTIFY_STRATEGIES, 'environmentify') unless value.respond_to?(:call)
-      @environmentify = value
-    end
-
-    MISSING_TENANT_STRATEGIES = %i[rescue_exception raise_exception create_tenant].freeze
-    private_constant :MISSING_TENANT_STRATEGIES
-
-    # Sets the strategy for handling a missing tenant during db:migrate.
-    # @!attribute [w] db_migrate_tenant_missing_strategy
-    # @param [:rescue_exception, :raise_exception, :create_tenant] value the strategy to use
-    # @return [:rescue_exception, :raise_exception, :create_tenant] the strategy to use
-    def db_migrate_tenant_missing_strategy=(value)
-      validate_strategy!(value, MISSING_TENANT_STRATEGIES, 'db_migrate_tenant_missing_strategy')
-      @db_migrate_tenant_missing_strategy = value
+    def environmentify_strategy=(value)
+      validate_strategy!(value, ENVIRONMENTIFY_STRATEGIES, 'environmentify_strategy') unless value.respond_to?(:call)
+      @environmentify_strategy = value
     end
 
     # Sets the connection class to use for database connections.
@@ -169,10 +147,6 @@ module Apartment
       yield(@mysql_config)
     end
 
-    def schema_strategy
-      @schema_strategy ||= postgres_config&.use_schemas ? :schema : :database
-    end
-
     private
 
     # Validates the strategy for a given key.
@@ -191,13 +165,6 @@ module Apartment
     # @return [String, nil] the path to the database schema file
     def default_database_schema_file
       defined?(Rails) && Rails.root ? Rails.root.join('db/schema.rb') : nil
-    end
-
-    # Returns the default seed data file.
-    # If Rails is defined, the default path is `db/seeds.rb`.
-    # @return [String, nil] the path to the seed data file
-    def default_seed_data_file
-      defined?(Rails) && Rails.root ? Rails.root.join('db/seeds.rb') : nil
     end
   end
 end

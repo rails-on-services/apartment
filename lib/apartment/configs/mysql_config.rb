@@ -13,6 +13,10 @@ module Apartment
       def validate!
         # Do nothing for now
       end
+
+      def apply!
+        # Do nothing for now
+      end
     end
   end
 end

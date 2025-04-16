@@ -18,5 +18,9 @@ module Dummy
     config.cache_classes = true
     config.active_support.deprecation = :log
     config.secret_key_base = 'test'
+
+    logger           = ActiveSupport::Logger.new($stdout)
+    logger.formatter = config.log_formatter
+    config.logger    = ActiveSupport::TaggedLogging.new(logger)
   end
 end

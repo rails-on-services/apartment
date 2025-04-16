@@ -39,9 +39,23 @@ module Apartment
 
         tenant = target_tenant
 
-        return base_connection_name if base_connection_name.end_with?("[#{tenant}]")
+        current_scoped_tenant = base_connection_name.match(/\[([a-zA-Z0-9_-]+)\]/).to_a.last
 
-        tenant.present? ? "#{base_connection_name}[#{tenant}]" : base_connection_name
+        # If both the current scoped tenant and the target tenant are the same (or nil),
+        # return the base connection name
+        return base_connection_name if current_scoped_tenant == tenant
+
+        # If only the tenant is nil, return the base connection name without a tenant
+        # because we want a tenant-less connection
+        return base_connection_name.gsub(/\[#{current_scoped_tenant}\]/i, '') if tenant.nil?
+
+        # If there is no current scoped tenant, return the base connection name with the new tenant
+        # because we want a tenant-scoped connection
+        return "#{base_connection_name}[#{tenant}]" if current_scoped_tenant.nil?
+
+        # If the connection name includes a different tenant, return
+        # the base connection name with the new tenant, replacing the old tenant
+        base_connection_name.gsub(/\[#{current_scoped_tenant}\]/i, "[#{tenant}]")
       end
 
       # Override
@@ -96,33 +110,14 @@ module Apartment
       end
 
       # Override
-      def resolve_config_for_connection(config_or_env) # rubocop:disable Metrics/AbcSize
+      def resolve_config_for_connection(config_or_env)
         raise('Anonymous class is not allowed.') unless name
 
         self.connection_specification_name = (primary_class? ? ActiveRecord::Base.name : name).gsub(/\[.*\]/, '')
 
-        base_db_config = ActiveRecord::Base.configurations.resolve(config_or_env)
-        tenant = target_tenant
-
-        return base_db_config if tenant.blank?
-
-        config_hash = base_db_config.configuration_hash.dup
-        apply_tenant_schema!(config_hash, tenant)
-
-        ActiveRecord::DatabaseConfigurations::HashConfig.new(
-          base_db_config.env_name,
-          base_db_config.name,
-          config_hash
-        )
-      end
-
-      def apply_tenant_schema!(config_hash, tenant)
-        case Apartment.config.schema_strategy
-        when :database
-          config_hash['database'] = tenant
-        when :schema
-          config_hash['schema_search_path'] = tenant
-        end
+        # Punt resolving the configuration to the ConnectionHandler
+        # Not sure why Rails doesn't do this by default
+        config_or_env
       end
 
       # Override

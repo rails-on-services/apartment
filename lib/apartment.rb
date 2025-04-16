@@ -30,6 +30,10 @@ module Apartment
     # @return [Apartment::Config, nil] the current configuration
     attr_reader :config
 
+    # @!attribute [r] tenant_configs
+    # @return [Apartment::Tenants::ConfigurationMap, nil] the current tenant configurations
+    attr_reader :tenant_configs
+
     def_delegators :config, :default_tenant, :connection_class
 
     # Configures the Apartment gem.
@@ -51,35 +55,39 @@ module Apartment
       synchronize do
         Logger.debug('Initializing config')
         @config = Config.new
+        @tenant_configs = Tenants::ConfigurationMap.new
 
         yield(@config)
 
         @config.validate!
+        @config.apply!
         # @config.freeze!
         Logger.debug('Config initialized and frozen')
+
+        gen_tenant_configs
+        Logger.debug('Tenant configs initialized')
       end
     end
 
-    # Resets the configuration to nil in a thread-safe manner.
-    # This method ensures that the reset operation is synchronized
-    # using a mutex to prevent race conditions.
-    def reset_config
+    # Sets the configuration to nil in a thread-safe manner.
+    def clear_config
       synchronize do
         remove_instance_variable(:@config) if defined?(@config)
+        remove_instance_variable(:@tenant_configs) if defined?(@tenant_configs)
         @tenant_configs = nil
         Logger.debug('Config reset')
       end
     end
 
-    def tenant_configs
-      return @tenant_configs if @tenant_configs # rubocop:disable ThreadSafety/ClassInstanceVariable
+    private
 
-      synchronize do
-        Logger.debug('Initializing tenant configs')
-        @tenant_configs = config.tenants_provider.call
-        @tenant_configs.freeze
-        Logger.debug('Tenant configs initialized and frozen')
+    def gen_tenant_configs
+      config.tenants_provider&.call&.each do |tenant_config|
+        tenant_configs.add_or_replace(tenant_config)
       end
+
+      # Ensure the default tenant is present
+      tenant_configs[config.default_tenant] if config.default_tenant
     end
   end
 

@@ -5,6 +5,7 @@ words:
   - checkin
   - dbname
   - environmentify
+  - instrumenter
   - pghost
   - pgpassword
   - pgport
@@ -12,5 +13,6 @@ words:
   - postgis
   - postgresqladapter
   - PSQL
+  - Railtie
   - rescuable
   - tenantify

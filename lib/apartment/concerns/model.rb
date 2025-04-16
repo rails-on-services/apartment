@@ -12,9 +12,10 @@ module Apartment
       attr_reader :pinned_tenant
 
       # rubocop:disable ThreadSafety/ClassInstanceVariable
-      def pinned_tenant(tenant)
+      def pin_tenant(tenant)
         raise(ConfigurationError, 'Cannot change pinned_tenant once set') if @pinned_tenant
 
+        puts "Setting pinned_tenant to #{tenant.inspect}"
         @pinned_tenant = tenant
       end
       # rubocop:enable ThreadSafety/ClassInstanceVariable
