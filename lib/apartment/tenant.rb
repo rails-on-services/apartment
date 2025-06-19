@@ -57,7 +57,10 @@ module Apartment
     #   Fetch the rails database configuration
     #
     def config
-      @config ||= Apartment.connection_config
+      # Use connection_db_config for modern Rails or connection_config for older versions
+      @config ||= Apartment::ConnectionHandling.modern_connection_handling? ? 
+        Apartment.connection_db_config.configuration_hash : 
+        Apartment.connection_config
     end
   end
 end

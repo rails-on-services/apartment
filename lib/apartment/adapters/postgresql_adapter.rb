@@ -41,12 +41,16 @@ module Apartment
       #
       def reset
         @current = default_tenant
-        Apartment.connection.schema_search_path = full_search_path
+        # Use lease_connection for schema operations
+        Apartment::ConnectionHandling.lease_apartment_connection.schema_search_path = full_search_path
+        # Explicitly release the connection after reset
+        Apartment::ConnectionHandling.release_apartment_connection
       end
 
       def init
         super
-        Apartment.connection.schema_search_path = full_search_path
+        # Use lease_connection for schema operations
+        Apartment::ConnectionHandling.lease_apartment_connection.schema_search_path = full_search_path
       end
 
       def current
@@ -75,7 +79,8 @@ module Apartment
         raise ActiveRecord::StatementInvalid, "Could not find schema #{tenant}" unless schema_exists?(tenant)
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
-        Apartment.connection.schema_search_path = full_search_path
+        # Use lease_connection for schema operations - this is a long-lived connection
+        Apartment::ConnectionHandling.lease_apartment_connection.schema_search_path = full_search_path
       rescue *rescuable_exceptions => e
         raise_schema_connect_to_new(tenant, e)
       end
@@ -85,7 +90,10 @@ module Apartment
       def tenant_exists?(tenant)
         return true unless Apartment.tenant_presence_check
 
-        Apartment.connection.schema_exists?(tenant)
+        # Use with_connection for quick tenant check
+        Apartment::ConnectionHandling.with_apartment_connection do |conn|
+          conn.schema_exists?(tenant)
+        end
       end
 
       def create_tenant_command(conn, tenant)
@@ -127,7 +135,10 @@ module Apartment
       def schema_exists?(schemas)
         return true unless Apartment.tenant_presence_check
 
-        Array(schemas).all? { |schema| Apartment.connection.schema_exists?(schema.to_s) }
+        # Use with_connection for quick schema existence check
+        Apartment::ConnectionHandling.with_apartment_connection do |conn|
+          Array(schemas).all? { |schema| conn.schema_exists?(schema.to_s) }
+        end
       end
 
       def raise_schema_connect_to_new(tenant, exception)
@@ -166,23 +177,27 @@ module Apartment
       # and it mut be reset
       #
       def preserving_search_path
-        search_path = Apartment.connection.execute('show search_path').first['search_path']
+        # Use lease_connection for long operations that modify schema
+        conn = Apartment::ConnectionHandling.lease_apartment_connection
+        search_path = conn.execute('show search_path').first['search_path']
         yield
-        Apartment.connection.execute("set search_path = #{search_path}")
+        conn.execute("set search_path = #{search_path}")
       end
 
       # Clone default schema into new schema named after current tenant
       #
       def clone_pg_schema
         pg_schema_sql = patch_search_path(pg_dump_schema)
-        Apartment.connection.execute(pg_schema_sql)
+        # Use lease_connection for schema operations
+        Apartment::ConnectionHandling.lease_apartment_connection.execute(pg_schema_sql)
       end
 
       # Copy data from schema_migrations into new schema
       #
       def copy_schema_migrations
         pg_migrations_data = patch_search_path(pg_dump_schema_migrations_data)
-        Apartment.connection.execute(pg_migrations_data)
+        # Use lease_connection for schema operations
+        Apartment::ConnectionHandling.lease_apartment_connection.execute(pg_migrations_data)
       end
 
       #   Dump postgres default schema
@@ -273,7 +288,8 @@ module Apartment
       # Convenience method for current database name
       #
       def dbname
-        Apartment.connection_config[:database]
+        # Use database name from config
+        Apartment.connection_db_config.configuration_hash[:database]
       end
     end
   end

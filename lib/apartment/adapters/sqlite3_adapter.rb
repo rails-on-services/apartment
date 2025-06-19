@@ -27,7 +27,9 @@ module Apartment
       end
 
       def current
-        File.basename(Apartment.connection.instance_variable_get(:@config)[:database], '.sqlite3')
+        # Use lease_connection for tenant operations
+        conn = Apartment::ConnectionHandling.lease_apartment_connection
+        File.basename(conn.instance_variable_get(:@config)[:database], '.sqlite3')
       end
 
       protected

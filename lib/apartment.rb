@@ -8,6 +8,7 @@ require 'apartment/tenant'
 require 'apartment/deprecation'
 
 require_relative 'apartment/log_subscriber'
+require_relative 'apartment/connection_handling'
 require_relative 'apartment/active_record/connection_handling'
 require_relative 'apartment/active_record/schema_migration'
 require_relative 'apartment/active_record/internal_metadata'
@@ -34,6 +35,28 @@ module Apartment
     attr_writer(*WRITER_METHODS)
 
     def_delegators :connection_class, :connection, :connection_db_config, :establish_connection
+
+    # Delegate methods based on Rails version for backward compatibility
+    if ActiveRecord.version.release >= Gem::Version.new('6.0')
+      def_delegators :connection_class, :with_connection, :lease_connection, :release_connection
+    else
+      # Rails 5.x compatibility - map new methods to connection
+      def with_connection(&block)
+        if block_given?
+          connection_class.connection_pool.with_connection(&block)
+        else
+          connection
+        end
+      end
+
+      def lease_connection
+        connection
+      end
+
+      def release_connection
+        connection_class.connection_pool.release_connection
+      end
+    end
 
     def connection_config
       connection_db_config.configuration_hash

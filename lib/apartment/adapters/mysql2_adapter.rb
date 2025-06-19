@@ -44,7 +44,10 @@ module Apartment
       def reset
         return unless default_tenant
 
-        Apartment.connection.execute "use `#{default_tenant}`"
+        # Use lease_connection for tenant operations
+        Apartment::ConnectionHandling.lease_apartment_connection.execute "use `#{default_tenant}`"
+        # Explicitly release the connection after reset
+        Apartment::ConnectionHandling.release_apartment_connection
       end
 
       protected
@@ -54,7 +57,8 @@ module Apartment
       def connect_to_new(tenant)
         return reset if tenant.nil?
 
-        Apartment.connection.execute "use `#{environmentify(tenant)}`"
+        # Use lease_connection when connecting to a tenant - this is a long-lived connection
+        Apartment::ConnectionHandling.lease_apartment_connection.execute "use `#{environmentify(tenant)}`"
       rescue ActiveRecord::StatementInvalid => e
         Apartment::Tenant.reset
         raise_connect_error!(tenant, e)

@@ -44,7 +44,8 @@ module Apartment
       #   Note alias_method here doesn't work with inheritence apparently ??
       #
       def current
-        Apartment.connection.current_database
+        # Use lease_connection for tenant operations as they persist across the tenant session
+        Apartment::ConnectionHandling.lease_apartment_connection.current_database
       end
 
       #   Return the original public tenant
@@ -74,7 +75,8 @@ module Apartment
       def switch!(tenant = nil)
         run_callbacks :switch do
           connect_to_new(tenant).tap do
-            Apartment.connection.clear_query_cache
+            # Use lease_connection for tenant switching to hold connection during tenant operations
+            Apartment::ConnectionHandling.lease_apartment_connection.clear_query_cache
           end
         end
       end
@@ -90,6 +92,8 @@ module Apartment
       ensure
         begin
           switch!(previous_tenant)
+          # Explicitly release the connection after switching back
+          Apartment::ConnectionHandling.release_apartment_connection
         rescue StandardError => _e
           reset
         end
@@ -117,6 +121,8 @@ module Apartment
       #
       def reset
         Apartment.establish_connection @config
+        # Release any previously leased connections
+        Apartment::ConnectionHandling.release_apartment_connection
       end
 
       #   Load the rails seed file into the db
@@ -181,9 +187,11 @@ module Apartment
         query_cache_enabled = ActiveRecord::Base.connection.query_cache_enabled
 
         Apartment.establish_connection multi_tenantify(tenant)
-        Apartment.connection.verify! # call active? to manually check if this connection is valid
-
-        Apartment.connection.enable_query_cache! if query_cache_enabled
+        # Use lease_connection when connecting to a tenant to hold the connection
+        conn = Apartment::ConnectionHandling.lease_apartment_connection
+        conn.verify! # call active? to manually check if this connection is valid
+        
+        conn.enable_query_cache! if query_cache_enabled
       rescue *rescuable_exceptions => e
         Apartment::Tenant.reset if reset_on_connection_exception?
         raise_connect_error!(tenant, e)
@@ -248,7 +256,10 @@ module Apartment
           yield(SeparateDbConnectionHandler.connection)
           SeparateDbConnectionHandler.connection.close
         else
-          yield(Apartment.connection)
+          # Use with_connection for short database operations to properly release connection
+          Apartment::ConnectionHandling.with_apartment_connection do |conn|
+            yield(conn)
+          end
         end
       end
 
