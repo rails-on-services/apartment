@@ -149,6 +149,7 @@ module Apartment
         /CREATE SCHEMA/i,
         /COMMENT ON SCHEMA/i,
         /SET transaction_timeout/i,                   # new in postgresql 17
+        /\\(un)?restrict/i,                           # new in postgresql 13.22, 14.19, 15.14, 16.10, 17.6
 
       ].freeze
 
