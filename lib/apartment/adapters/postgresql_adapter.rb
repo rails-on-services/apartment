@@ -175,14 +175,28 @@ module Apartment
       #
       def clone_pg_schema
         pg_schema_sql = patch_search_path(pg_dump_schema)
-        Apartment.connection.execute(pg_schema_sql)
+
+        # Create a temporary file to store the SQL
+        Tempfile.create do |temp_file|
+          temp_file.write(pg_schema_sql)
+          temp_file.close # Close the file so psql can read it
+
+          with_pg_env { `psql -d #{dbname} -f #{temp_file.path}` }
+        end
       end
 
       # Copy data from schema_migrations into new schema
       #
       def copy_schema_migrations
         pg_migrations_data = patch_search_path(pg_dump_schema_migrations_data)
-        Apartment.connection.execute(pg_migrations_data)
+
+        # Create a temporary file to store the SQL
+        Tempfile.create do |temp_file|
+          temp_file.write(pg_migrations_data)
+          temp_file.close # Close the file so psql can read it
+
+          with_pg_env { `psql -d #{dbname} -f #{temp_file.path}` }
+        end
       end
 
       #   Dump postgres default schema
