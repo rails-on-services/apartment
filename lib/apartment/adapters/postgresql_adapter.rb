@@ -181,7 +181,7 @@ module Apartment
           temp_file.write(pg_schema_sql)
           temp_file.close # Close the file so psql can read it
 
-          with_pg_env { `psql -d #{dbname} -f #{temp_file.path}` }
+          with_pg_env { system("psql", "-q", "-d", dbname, "-f", temp_file.path) }
         end
       end
 
@@ -195,7 +195,7 @@ module Apartment
           temp_file.write(pg_migrations_data)
           temp_file.close # Close the file so psql can read it
 
-          with_pg_env { `psql -d #{dbname} -f #{temp_file.path}` }
+          with_pg_env { system("psql", "-q", "-d", dbname, "-f", temp_file.path) }
         end
       end
 
