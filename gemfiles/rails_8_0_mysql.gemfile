@@ -2,8 +2,8 @@
 
 source "http://rubygems.org"
 
-gem "appraisal", ">= 2.3", require: false
-gem "rake", ">= 13.0"
+gem "appraisal", ">= 2.5", require: false
+gem "rake", ">= 13.2"
 gem "rails", "~> 8.0.0"
 gem "mysql2", "~> 0.5"
 gem "trilogy", "< 3.0"
@@ -11,15 +11,15 @@ gem "trilogy", "< 3.0"
 group :test do
   gem "database_cleaner-active_record"
   gem "faker"
-  gem "rspec", ">= 3.10"
-  gem "rspec_junit_formatter", ">= 0.4"
-  gem "rspec-rails"
-  gem "rubocop", ">= 1.12", require: false
-  gem "rubocop-performance", ">= 1.10", require: false
-  gem "rubocop-rails", ">= 2.10", require: false
-  gem "rubocop-rake", ">= 0.5", require: false
-  gem "rubocop-rspec", ">= 3.1", require: false
-  gem "rubocop-thread_safety", ">= 0.4", require: false
+  gem "rspec", ">= 3.13"
+  gem "rspec_junit_formatter", ">= 0.6"
+  gem "rspec-rails", ">= 7.0"
+  gem "rubocop", ">= 1.68", require: false
+  gem "rubocop-performance", ">= 1.22", require: false
+  gem "rubocop-rails", ">= 2.27", require: false
+  gem "rubocop-rake", ">= 0.6", require: false
+  gem "rubocop-rspec", ">= 3.2", require: false
+  gem "rubocop-thread_safety", ">= 0.6", require: false
   gem "simplecov", require: false
 end
 

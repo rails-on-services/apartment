@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
 require 'bundler/setup'
+
+# Load Rails and ActiveRecord explicitly before bundler require
+require 'rails'
+require 'active_record'
+
 Bundler.require(:default, :test)
 
 if ENV['CI'].eql?('true') # ENV['CI'] defined as true by GitHub Actions
