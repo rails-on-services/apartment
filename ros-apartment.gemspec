@@ -31,7 +31,7 @@ Gem::Specification.new do |s|
   s.add_dependency('activesupport', '>= 7.1.0', '< 8.1')
   s.add_dependency('concurrent-ruby', '>= 1.3.0')
   s.add_dependency('parallel', '>= 1.26.0')
-  s.add_dependency('public_suffix', '>= 6.0.1')
+  s.add_dependency('public_suffix', '>= 2.0.5', '< 7')
   s.add_dependency('rack', '>= 3.0.9', '< 4.0')
   s.add_dependency('zeitwerk', '>= 2.7.1')
 end
