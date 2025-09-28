@@ -1,0 +1,18 @@
+version: "0.2"
+language: en
+words:
+  - activerecord
+  - checkin
+  - dbname
+  - environmentify
+  - instrumenter
+  - pghost
+  - pgpassword
+  - pgport
+  - pguser
+  - postgis
+  - postgresqladapter
+  - PSQL
+  - Railtie
+  - rescuable
+  - tenantify

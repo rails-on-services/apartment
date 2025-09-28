@@ -290,27 +290,6 @@ Apartment::Tenant.drop('tenant_name')
 
 When method is called, the schema is dropped and all data from itself will be lost. Be careful with this method.
 
-### Custom Prompt
-
-#### Console methods
-
-`ros-apartment` console configures two helper methods:
-1. `tenant_list` - list available tenants while using the console
-2. `st(tenant_name:String)` - Switches the context to the tenant name passed, if
-it exists.
-
-#### Custom printed prompt
-
-`ros-apartment` also has a custom prompt that gives a bit more information about
-the context in which you're running. It shows the environment as well as the tenant
-that is currently switched to. In order for you to enable this, you need to require
-the custom console in your application.
-
-In `application.rb` add `require 'apartment/custom_console'`.
-Please note that we rely on `pry-rails` to edit the prompt, thus your project needs
-to install it as well. In order to do so, you need to add `gem 'pry-rails'` to your
-project's gemfile.
-
 ## Config
 
 The following config options should be set up in a Rails initializer such as:
@@ -331,7 +310,7 @@ This is configurable by setting: `tenant_presence_check`. It defaults to true
 in order to maintain the original gem behavior. This is only checked when using one of the PostgreSQL adapters.
 The original gem behavior, when running `switch` would look for the existence of the schema before switching. This adds an extra query on every context switch. While in the default simple scenarios this is a valid check, in high volume platforms this adds some unnecessary overhead which can be detected in some other ways on the application level.
 
-Setting this configuration value to `false` will disable the schema presence check before trying to switch the context.
+Setting this configuration value to `false` will disable the schema presence check before trying to switch the context. Doing so in production is highly recommended if you can ensure that the schema is always present prior to switching into it.
 
 ```ruby
 Apartment.configure do |config|
@@ -348,7 +327,7 @@ Please note that our custom logger inherits from `ActiveRecord::LogSubscriber` s
 
 **Example log output:**
 
-<img src="documentation/images/log_example.png">
+<img src="docs/images/log_example.png">
 
 ```ruby
 Apartment.configure do |config|
@@ -533,8 +512,13 @@ Note that you can disable the default migrating of all tenants with `db:migrate`
 
 Apartment supports parallelizing migrations into multiple threads when
 you have a large number of tenants. By default, parallel migrations is
-turned off. You can enable this by setting `parallel_migration_threads` to
-the number of threads you want to use in your initializer.
+turned off. You can enable this by setting `parallel_migration_threads` to the number of threads you want to use in your initializer.
+
+If using postgresql schemas, you **must** also turn off `advisory_locks` to use parallel migrations because
+the advisory locks are at the database level and not the schema level.
+
+[Overview of `advisory_lock` setting](https://blog.saeloun.com/2019/09/09/rails-6-disable-advisory-locks/)
+[Discussion on per-schema advisory locks](https://github.com/rails/rails/pull/43500)
 
 Keep in mind that because migrations are going to access the database,
 the number of threads indicated here should be less than the pool size

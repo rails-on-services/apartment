@@ -25,6 +25,13 @@ Metrics/BlockLength:
   Exclude:
     - spec/**/*.rb
 
+Metrics/ModuleLength:
+  Exclude:
+    - lib/apartment/patches/**/*.rb
+
+Metrics/MethodLength:
+  Max: 20
+
 Rails/RakeEnvironment:
   Enabled: false
 
@@ -77,3 +84,23 @@ Style/CollectionMethods:
     inject: 'reduce'
     detect: 'detect'
     find_all: 'select'
+
+ThreadSafety/NewThread:
+  Exclude:
+    - 'spec/shared_examples/*thread_safety_examples.rb'
+
+## Rspec
+
+RSpec/ExampleLength:
+  Max: 20
+
+RSpec/IndexedLet:
+  AllowedPatterns:
+    - 'schema'
+    - 'tenant'
+
+RSpec/MultipleExpectations:
+  Max: 5
+
+RSpec/MultipleMemoizedHelpers:
+  Max: 10

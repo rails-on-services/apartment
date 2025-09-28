@@ -13,7 +13,7 @@ jobs:
     name: runner / rubocop
     runs-on: ubuntu-latest
     env:
-      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_7_2_postgresql.gemfile
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_8_0_postgresql.gemfile
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
@@ -21,3 +21,7 @@ jobs:
           bundler-cache: true
       - name: Rubocop
         run: "bundle exec rubocop"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
