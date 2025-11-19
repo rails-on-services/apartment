@@ -57,7 +57,7 @@ describe Apartment::Tenant do
       end
 
       it 'raises exception with invalid adapter specified' do
-        subject.reload!(config.merge(adapter: 'unknown'))
+        subject.reload!((config || Apartment.connection_config).merge(adapter: 'unknown'))
 
         expect do
           Apartment::Tenant.adapter

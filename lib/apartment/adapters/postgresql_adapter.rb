@@ -152,6 +152,21 @@ module Apartment
 
       ].freeze
 
+      PSQL_META_COMMANDS = [
+        /^\\connect/i,
+        /^\\set/i,
+        /^\\unset/i,
+        /^\\copyright/i,
+        /^\\echo/i,
+        /^\\warn/i,
+        /^\\o/i,
+        /^\\t/i,
+        /^\\q/i,
+        /^\\./i, # end-of-copy delimiter
+      ].freeze
+
+      PSQL_DUMP_GLOBAL_BLACKLIST = (PSQL_DUMP_BLACKLISTED_STATEMENTS + PSQL_META_COMMANDS).freeze
+
       def import_database_schema
         preserving_search_path do
           clone_pg_schema
@@ -239,7 +254,7 @@ module Apartment
 
         swap_schema_qualifier(sql)
           .split("\n")
-          .select { |line| check_input_against_regexps(line, PSQL_DUMP_BLACKLISTED_STATEMENTS).empty? }
+          .grep_v(Regexp.union(PSQL_DUMP_GLOBAL_BLACKLIST))
           .prepend(search_path)
           .join("\n")
       end
