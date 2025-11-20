@@ -8,16 +8,18 @@ describe 'connection handling monkey patch' do
   before do
     Apartment.configure do |config|
       config.excluded_models = ['Company']
-      config.tenant_names = -> { Company.pluck(:database) }
       config.use_schemas = true
     end
+    Apartment::Tenant.create(db_name)
+    Company.create(database: db_name)
 
+    Apartment.configure do |config|
+      config.tenant_names = -> { Company.pluck(:database) }
+    end
     Apartment::Tenant.reload!(config)
 
-    Apartment::Tenant.create(db_name)
-    Company.create database: db_name
-    Apartment::Tenant.switch! db_name
-    User.create! name: db_name
+    Apartment::Tenant.switch!(db_name)
+    User.create!(name: db_name)
   end
 
   after do
@@ -43,7 +45,7 @@ describe 'connection handling monkey patch' do
       Apartment::Tenant.switch! db_name
       ActiveRecord::Base.connected_to(role: role) do
         expect(Apartment::Tenant.current).to eq db_name
-        expect(User.find_by(name: db_name).name).to eq(db_name)
+        expect(User.find_by!(name: db_name).name).to eq(db_name)
       end
     end
   end
