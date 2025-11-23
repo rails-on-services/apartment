@@ -37,33 +37,9 @@ lib/apartment/
 - `reset` - Return to default tenant
 - `each` - Iterate over all tenants
 
-**Adapter delegation**:
-```ruby
-module Apartment
-  module Tenant
-    extend Forwardable
+**Adapter delegation pattern**: Uses `Forwardable` to delegate all operations to thread-local adapter instance. See delegation setup in `tenant.rb`.
 
-    # All operations delegated to thread-local adapter
-    def_delegators :adapter, :create, :drop, :switch, :current, ...
-
-    # Adapter stored per-thread
-    def adapter
-      Thread.current[:apartment_adapter] ||= begin
-        # Auto-detect and instantiate appropriate adapter
-        send("#{config[:adapter]}_adapter", config)
-      end
-    end
-  end
-end
-```
-
-**Usage**:
-```ruby
-# All tenant operations go through this module
-Apartment::Tenant.switch('acme') do
-  User.all  # Queries acme tenant
-end
-```
+**Thread-local storage**: Each thread maintains its own adapter via `Thread.current[:apartment_adapter]`. See `Apartment::Tenant.adapter` method for auto-detection logic.
 
 ### railtie.rb - Rails Integration
 
@@ -76,30 +52,9 @@ end
 4. **Rake task loading**: Load Apartment rake tasks
 5. **ActiveRecord instrumentation**: Set up logging subscriber
 
-**Hook points**:
-```ruby
-module Apartment
-  class Railtie < Rails::Railtie
-    # After Rails initializers run
-    config.after_initialize do
-      Apartment::Tenant.init
-    end
+**Key integration points**: See Rails integration hooks in `railtie.rb` (`after_initialize`, `rake_tasks`, `console`).
 
-    # Load rake tasks
-    rake_tasks do
-      load 'apartment/tasks/enhancements.rake'
-    end
-
-    # Console helpers
-    console do
-      # Add apartment-specific commands
-    end
-  end
-end
-```
-
-**Excluded models initialization**:
-The railtie ensures excluded models establish separate connections after Rails boots but before the application serves requests.
+**Excluded models initialization**: The railtie ensures excluded models establish separate connections after Rails boots but before the application serves requests. See excluded model setup in `railtie.rb`.
 
 ### console.rb / custom_console.rb - Interactive Debugging
 
@@ -111,20 +66,7 @@ The railtie ensures excluded models establish separate connections after Rails b
 - Quick switching helpers
 - Tenant listing commands
 
-**Example usage**:
-```ruby
-# Rails console with Apartment
-rails console
-
-# Prompt shows current tenant
-[public]> Apartment::Tenant.switch('acme')
-[acme]> User.count
-=> 42
-
-[acme]> Apartment::Tenant.reset
-[public]> User.count
-=> 100
-```
+**Implementation**: See `console.rb` and `custom_console.rb` for prompt customization and helper methods.
 
 ### migrator.rb - Tenant Migration Runner
 
@@ -136,20 +78,9 @@ rails console
 - Handle migration failures gracefully
 - Support parallel migration execution
 
-**Integration with rake tasks**:
-```bash
-# Migrates all tenants
-rake apartment:migrate
+**Integration**: Used by `rake apartment:migrate` task. See migration coordination logic in `migrator.rb` and task definitions in `tasks/enhancements.rake`.
 
-# Uses migrator.rb to:
-# 1. Get list of tenants
-# 2. Switch to each tenant
-# 3. Run pending migrations
-# 4. Handle db_migrate_tenant_missing_strategy
-```
-
-**Parallel execution**:
-If `config.parallel_migration_threads > 0`, spawns threads to migrate multiple tenants concurrently.
+**Parallel execution**: If `config.parallel_migration_threads > 0`, spawns threads to migrate multiple tenants concurrently. See parallel execution logic in `migrator.rb`.
 
 ### model.rb - Excluded Model Behavior
 
@@ -160,20 +91,7 @@ If `config.parallel_migration_threads > 0`, spawns threads to migrate multiple t
 - Bypass tenant switching
 - Maintain global data across tenants
 
-**Usage pattern**:
-```ruby
-# In excluded model
-class Company < ApplicationRecord
-  # Automatically establishes connection to default DB
-  # when Apartment.excluded_models includes 'Company'
-end
-
-# These models query public/default schema always
-Apartment::Tenant.switch('acme') do
-  Company.all  # Still queries public.companies (excluded)
-  Order.all    # Queries acme.orders (tenant-specific)
-end
-```
+**Behavior**: When a model is in `Apartment.excluded_models`, it automatically establishes connection to default database and bypasses tenant switching. See connection handling in `model.rb` and `AbstractAdapter#process_excluded_models`.
 
 ### log_subscriber.rb - Instrumentation
 
@@ -185,50 +103,17 @@ end
 - Tenant deletion
 - Migration execution
 
-**Output**:
-```
-[Apartment] Switched to tenant 'acme'
-[Apartment] Creating tenant 'widgets'
-[Apartment] Migrating tenant 'acme' (5 pending migrations)
-```
-
-**Configuration**:
-```ruby
-# config/initializers/apartment.rb
-Apartment.configure do |config|
-  config.active_record_log = true  # Enable logging
-end
-```
+**Configuration**: Set `config.active_record_log = true` to enable. See event subscriptions in `log_subscriber.rb` and configuration options in `lib/apartment.rb`.
 
 ### version.rb - Version Management
 
-**Purpose**: Define gem version constant.
-
-```ruby
-module Apartment
-  VERSION = '3.2.0'
-end
-```
-
-Used by gemspec and for version checking.
+**Purpose**: Define gem version constant. Used by gemspec and for version checking. See `version.rb`.
 
 ### deprecation.rb - Deprecation Warnings
 
 **Purpose**: Configure ActiveSupport::Deprecation for Apartment.
 
-**Usage**:
-```ruby
-module Apartment
-  DEPRECATOR = ActiveSupport::Deprecation.new('4.0', 'Apartment')
-end
-
-# Emit deprecation warnings
-Apartment::DEPRECATOR.warn('This feature is deprecated')
-```
-
-**Common deprecations**:
-- `config.tld_length` (removed in v3)
-- `Apartment::Tenant.switch!` (prefer block-based `switch`)
+**Implementation**: Sets up deprecation warnings targeting v4.0. See `deprecation.rb` for DEPRECATOR constant.
 
 ## Subdirectories
 
@@ -275,69 +160,34 @@ Rake task utilities and enhancements.
 
 ### Tenant Creation Flow
 
-```
-1. User calls: Apartment::Tenant.create('acme')
-   ↓
-2. tenant.rb delegates to: adapter.create('acme')
-   ↓
-3. Adapter (e.g., PostgresqlAdapter):
-   a. Runs :before callbacks
-   b. Executes: CREATE SCHEMA "acme"
-   c. Switches to acme tenant
-   d. Loads db/schema.rb (migrator.rb)
-   e. Runs db/seeds.rb (if configured)
-   f. Executes user block (if provided)
-   g. Runs :after callbacks
-   h. Switches back to previous tenant
-   ↓
-4. Returns to user code
-```
+1. User calls `Apartment::Tenant.create('acme')`
+2. Delegates to adapter which executes callbacks, creates schema/database, imports schema, optionally runs seeds
+3. Returns to user code
+
+**See**: `Apartment::Tenant.create` and `AbstractAdapter#create` for orchestration.
 
 ### Tenant Switching Flow
 
-```
-1. User calls: Apartment::Tenant.switch('acme') { ... }
-   ↓
-2. tenant.rb delegates to: adapter.switch('acme') { ... }
-   ↓
-3. Adapter:
-   a. Stores current tenant: previous = current
-   b. Runs :before callbacks
-   c. Executes: connect_to_new('acme')
-      - PostgreSQL: SET search_path = "acme"
-      - MySQL: Establish connection to acme database
-   d. Runs :after callbacks
-   e. Clears query cache
-   f. Yields to block
-   g. **ensure** block: switch!(previous)
-   ↓
-4. Returns to user code (tenant automatically restored)
-```
+1. User calls `Apartment::Tenant.switch('acme') { ... }`
+2. Adapter stores current tenant, switches connection, yields to block, ensures rollback in ensure clause
+3. Returns to user code with tenant automatically restored
+
+**See**: `AbstractAdapter#switch` method for implementation.
 
 ### Request Processing Flow (with Elevator)
 
-```
 1. HTTP Request arrives
-   ↓
-2. Elevator middleware (elevators/):
-   a. Extract tenant from request (parse_tenant_name)
-   b. Call: Apartment::Tenant.switch(tenant) { @app.call(env) }
-   ↓
-3. Tenant switching (see above flow)
-   ↓
-4. Application processes request in tenant context
-   ↓
-5. Elevator ensures tenant reset after request
-```
+2. Elevator extracts tenant, calls `Apartment::Tenant.switch`
+3. Application processes in tenant context
+4. Elevator ensures tenant reset
+
+**See**: `elevators/generic.rb` for middleware pattern.
 
 ## Thread Safety
 
 ### Current Implementation (v3)
 
-**Thread-local adapter storage**:
-```ruby
-Thread.current[:apartment_adapter]
-```
+**Thread-local adapter storage**: Uses `Thread.current[:apartment_adapter]` for isolation.
 
 **Implications**:
 - ✅ Each thread has isolated tenant context
@@ -346,84 +196,40 @@ Thread.current[:apartment_adapter]
 - ❌ NOT fiber-safe (fibers share thread storage)
 - ❌ Global mutable state within thread
 
-**Usage in concurrent scenarios**:
-```ruby
-# Thread 1
-Thread.new do
-  Apartment::Tenant.switch('acme') do
-    # Isolated to this thread
-    User.all
-  end
-end
-
-# Thread 2
-Thread.new do
-  Apartment::Tenant.switch('widgets') do
-    # Isolated to this thread
-    User.all
-  end
-end
-```
+**See**: `Apartment::Tenant.adapter` method for thread-local implementation.
 
 ## Configuration Integration
 
 ### Loading Process
 
-```
 1. Rails boots
-2. config/initializers/apartment.rb loads
-3. Apartment.configure { |config| ... } executes
+2. `config/initializers/apartment.rb` loads
+3. `Apartment.configure` executes
 4. Configuration stored in module instance variables
-5. Railtie.after_initialize fires
-6. Apartment::Tenant.init called
+5. `Railtie.after_initialize` fires
+6. `Apartment::Tenant.init` called
 7. Excluded models processed
 8. Adapter initialized (lazy, on first use)
-```
+
+**See**: Configuration methods in `lib/apartment.rb` and initialization hooks in `railtie.rb`.
 
 ### Configuration Access
 
-From anywhere in the codebase:
-```ruby
-Apartment.tenant_names           # Get tenant list
-Apartment.excluded_models        # Get excluded model list
-Apartment.connection_class       # Get AR base class
-Apartment.db_migrate_tenants     # Check migration setting
-```
+Available configuration methods: `Apartment.tenant_names`, `Apartment.excluded_models`, `Apartment.connection_class`, `Apartment.db_migrate_tenants`. See `lib/apartment.rb` for all configuration options.
 
 ## Error Handling
 
-### Exception Flow
+### Exception Hierarchy
 
-```ruby
-begin
-  Apartment::Tenant.switch('nonexistent') do
-    User.all
-  end
-rescue Apartment::TenantNotFound => e
-  # Raised by adapter.connect_to_new
-  Rails.logger.error "Tenant not found: #{e.message}"
-rescue Apartment::ApartmentError => e
-  # Base exception for all Apartment errors
-  Rails.logger.error "Apartment error: #{e.message}"
-end
-```
+- `Apartment::ApartmentError` - Base exception for all Apartment errors
+- `Apartment::TenantNotFound` - Raised when switching to nonexistent tenant
+- `Apartment::TenantExists` - Raised when creating duplicate tenant
+
+**See**: Adapter `connect_to_new` methods raise `TenantNotFound`. See `AbstractAdapter#switch` for error handling.
 
 ### Automatic Cleanup
 
-The `switch` method guarantees cleanup:
-```ruby
-def switch(tenant = nil)
-  previous_tenant = current
-  switch!(tenant)
-  yield
-ensure
-  begin
-    switch!(previous_tenant)
-  rescue StandardError => _e
-    reset  # Fallback to default if switch back fails
-  end
-end
-```
+The `switch` method guarantees cleanup via ensure block, falling back to default tenant if rollback fails. See `AbstractAdapter#switch` for implementation.
 
 ## Extending Apartment
 
@@ -447,90 +253,35 @@ See `docs/elevators.md` for details.
 
 ### Adding Custom Callbacks
 
-```ruby
-# config/initializers/apartment.rb
-require 'apartment/adapters/abstract_adapter'
-
-module Apartment
-  module Adapters
-    class AbstractAdapter
-      set_callback :create, :after do |adapter|
-        tenant = Apartment::Tenant.current
-        # Custom logic after tenant creation
-        AdminMailer.tenant_created(tenant).deliver_later
-      end
-    end
-  end
-end
-```
+Use ActiveSupport::Callbacks to hook into `:create` and `:switch` events. See callback definitions in `AbstractAdapter` and README.md for configuration examples.
 
 ## Testing Considerations
 
 ### RSpec Integration
 
-```ruby
-# spec/support/apartment.rb
-RSpec.configure do |config|
-  config.before(:each) do
-    Apartment::Tenant.reset
-  end
-
-  config.after(:each) do
-    # Ensure we're back to default
-    Apartment::Tenant.reset
-  end
-end
-```
+Always reset tenant context in before/after hooks to prevent test isolation issues. See `spec/support/` for helper modules and `spec/spec_helper.rb` for configuration patterns.
 
 ### Creating Test Tenants
 
-```ruby
-# spec/support/apartment_helper.rb
-module ApartmentHelper
-  def create_test_tenant(name)
-    Apartment::Tenant.create(name) unless Apartment.tenant_names.include?(name)
-  end
-
-  def drop_test_tenant(name)
-    Apartment::Tenant.drop(name) if Apartment.tenant_names.include?(name)
-  end
-end
-```
+Create helpers for tenant lifecycle management to avoid duplication. See `spec/support/apartment_helper.rb` for patterns.
 
 ## Debugging Tips
 
 ### Enable Verbose Logging
 
-```ruby
-# config/initializers/apartment.rb
-Apartment.configure do |config|
-  config.active_record_log = true
-end
-```
+Set `config.active_record_log = true` in initializer. See logging configuration in `lib/apartment.rb`.
 
 ### Check Current Tenant
 
-```ruby
-# In controller, console, or anywhere
-puts "Current tenant: #{Apartment::Tenant.current}"
-```
+Use `Apartment::Tenant.current` to inspect current tenant context.
 
 ### Inspect Adapter
 
-```ruby
-adapter = Apartment::Tenant.adapter
-puts "Adapter class: #{adapter.class.name}"
-puts "Default tenant: #{adapter.default_tenant}"
-```
+Access `Apartment::Tenant.adapter` to inspect adapter class and configuration.
 
 ### Verify Excluded Models
 
-```ruby
-Apartment.excluded_models.each do |model|
-  klass = model.constantize
-  puts "#{model}: #{klass.connection_db_config.database}"
-end
-```
+Iterate `Apartment.excluded_models` and check each model's connection configuration.
 
 ## Common Pitfalls
 

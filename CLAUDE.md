@@ -55,7 +55,7 @@ This branch contains v3 (current stable release). A v4 refactor with different a
 
 **Trade-off**: Not fiber-safe, but works for 99% of Rails deployments.
 
-**See**: `lib/apartment/tenant.rb:22-45`, `docs/architecture.md`
+**See**: `Apartment::Tenant.adapter` method in `tenant.rb`, `docs/architecture.md`
 
 ### 2. Block-Based Tenant Switching
 
@@ -65,7 +65,7 @@ This branch contains v3 (current stable release). A v4 refactor with different a
 
 **Alternative rejected**: Manual switch/reset - too error-prone.
 
-**See**: `lib/apartment/adapters/abstract_adapter.rb:86-98`
+**See**: `AbstractAdapter#switch` method in `adapters/abstract_adapter.rb`
 
 ### 3. Excluded Models
 
@@ -75,7 +75,7 @@ This branch contains v3 (current stable release). A v4 refactor with different a
 
 **Limitation**: Can't use `has_and_belongs_to_many` - must use `has_many :through`.
 
-**See**: `lib/apartment/adapters/abstract_adapter.rb:108-114`
+**See**: `AbstractAdapter#process_excluded_models` method in `adapters/abstract_adapter.rb`
 
 ### 4. Adapter Pattern
 
@@ -93,7 +93,7 @@ This branch contains v3 (current stable release). A v4 refactor with different a
 
 **Implementation**: ActiveSupport::Callbacks on `:create` and `:switch`.
 
-**See**: `lib/apartment/adapters/abstract_adapter.rb:7-8`
+**See**: Callback definitions in `AbstractAdapter` class in `adapters/abstract_adapter.rb`
 
 ## File Organization
 
@@ -115,7 +115,7 @@ This branch contains v3 (current stable release). A v4 refactor with different a
 
 **Environment isolation**: Optional `prepend_environment`/`append_environment` to prevent cross-environment tenant name collisions.
 
-**See**: `lib/apartment.rb:126-143` for implementation
+**See**: `Apartment.extract_tenant_config` method in `lib/apartment.rb`
 
 ## Common Pitfalls
 

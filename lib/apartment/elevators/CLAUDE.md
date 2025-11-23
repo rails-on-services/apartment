@@ -26,41 +26,13 @@ elevators/
 
 ### Rack Middleware Pattern
 
-All elevators are Rack middleware:
-
-```ruby
-class ElevatorMiddleware
-  def initialize(app, options = {})
-    @app = app  # Next middleware or application
-  end
-
-  def call(env)
-    # 1. Extract tenant from request
-    # 2. Switch to tenant
-    # 3. Call next middleware
-    # 4. Ensure cleanup
-  end
-end
-```
+All elevators are Rack middleware that intercept requests, extract tenant identifier, switch context, invoke next middleware, and ensure cleanup. See `generic.rb` for base implementation.
 
 ### Request Lifecycle with Elevator
 
-```
-HTTP Request
-   ↓
-[Rack Middleware Stack]
-   ↓
-[Elevator Middleware] ← Intercepts here
-   ├─ Parse tenant from request
-   ├─ Apartment::Tenant.switch(tenant)
-   │     ↓
-   │  [Application Code]
-   │  (processes request in tenant context)
-   │     ↓
-   └─ Automatic cleanup (ensure block)
-   ↓
-HTTP Response
-```
+HTTP Request → Elevator extracts tenant → Switch to tenant → Application processes → Automatic cleanup (ensure block) → HTTP Response
+
+**See**: `Generic#call` method for middleware call pattern.
 
 ## Generic Elevator - Base Class
 
@@ -72,57 +44,15 @@ Provides base implementation and allows custom tenant resolution via Proc or sub
 
 ### Implementation
 
-```ruby
-module Apartment
-  module Elevators
-    class Generic
-      def initialize(app, processor = nil)
-        @app = app
-        @processor = processor  # Optional Proc for custom logic
-      end
-
-      def call(env)
-        request = Rack::Request.new(env)
-        tenant = parse_tenant_name(request)
-
-        Apartment::Tenant.switch(tenant) do
-          @app.call(env)
-        end
-      end
-
-      def parse_tenant_name(request)
-        if @processor.respond_to?(:call)
-          @processor.call(request)
-        else
-          raise "Implement parse_tenant_name in subclass"
-        end
-      end
-    end
-  end
-end
-```
+Accepts optional Proc in initializer or expects `parse_tenant_name(request)` override in subclass. See `Generic` class implementation in `generic.rb`.
 
 ### Usage Patterns
 
-**With Proc**:
-```ruby
-# config/application.rb
-config.middleware.use Apartment::Elevators::Generic, proc { |request|
-  request.headers['X-Tenant-ID']
-}
-```
+**With Proc**: Pass Proc to Generic that extracts tenant from Rack::Request.
 
-**Via Subclass**:
-```ruby
-class CustomElevator < Apartment::Elevators::Generic
-  def parse_tenant_name(request)
-    # Custom logic
-    request.subdomain.upcase
-  end
-end
+**Via Subclass**: Inherit from Generic and override `parse_tenant_name`.
 
-config.middleware.use CustomElevator
-```
+**See**: `generic.rb` and README.md for usage examples.
 
 ## Subdomain Elevator
 
@@ -134,45 +64,11 @@ Extract first subdomain from hostname.
 
 ### Implementation
 
-```ruby
-module Apartment
-  module Elevators
-    class Subdomain < Generic
-      class << self
-        attr_accessor :excluded_subdomains
-      end
-
-      self.excluded_subdomains = []
-
-      def parse_tenant_name(request)
-        subdomain = request.subdomain
-
-        # Return nil for excluded subdomains (uses default tenant)
-        return nil if excluded_subdomains.include?(subdomain)
-
-        subdomain
-      end
-
-      private
-
-      def excluded_subdomains
-        self.class.excluded_subdomains
-      end
-    end
-  end
-end
-```
+Uses `request.subdomain` and checks against `excluded_subdomains` class attribute. Returns nil for excluded subdomains. See `Subdomain#parse_tenant_name` in `subdomain.rb`.
 
 ### Configuration
 
-```ruby
-# config/application.rb
-require 'apartment/elevators/subdomain'
-config.middleware.use Apartment::Elevators::Subdomain
-
-# config/initializers/apartment.rb
-Apartment::Elevators::Subdomain.excluded_subdomains = ['www', 'admin', 'api']
-```
+Add to middleware stack in `application.rb` and configure `excluded_subdomains` class attribute. See README.md for examples.
 
 ### Behavior
 
@@ -184,21 +80,11 @@ Apartment::Elevators::Subdomain.excluded_subdomains = ['www', 'admin', 'api']
 | http://api.example.com       | api       | Yes       | (default)   |
 | http://example.com           | (empty)   | N/A       | (default)   |
 
-### How Subdomain Extraction Works
+### Why PublicSuffix Dependency?
 
-Rack's `request.subdomain` uses `ActionDispatch::Http::URL`:
+**Rationale**: International domains require proper TLD parsing. Without PublicSuffix, `example.co.uk` would incorrectly parse `.uk` as the TLD rather than `.co.uk`, causing subdomain extraction to fail.
 
-```ruby
-# For: http://acme.example.com
-request.host          # => "acme.example.com"
-request.subdomain     # => "acme"
-request.domain        # => "example.com"
-
-# For: http://api.v1.example.com
-request.host          # => "api.v1.example.com"
-request.subdomain     # => "api.v1" (entire subdomain chain)
-# Note: FirstSubdomain elevator handles this differently
-```
+**Trade-off**: Adds gem dependency, but necessary for international domain support.
 
 ## FirstSubdomain Elevator
 
@@ -210,36 +96,11 @@ Extract **first** subdomain from chain (for nested subdomains).
 
 ### Implementation
 
-Similar to `Subdomain` but handles nested subdomains:
-
-```ruby
-def parse_tenant_name(request)
-  # Split subdomain and take first part
-  subdomains = request.subdomain.split('.')
-  first_subdomain = subdomains.first
-
-  return nil if excluded_subdomains.include?(first_subdomain)
-
-  first_subdomain
-end
-```
-
-### Behavior
-
-| Request URL                      | Full Subdomain | First Subdomain | Tenant |
-|----------------------------------|----------------|-----------------|--------|
-| http://api.v1.example.com        | api.v1         | api             | api    |
-| http://owls.birds.animals.com    | owls.birds     | owls            | owls   |
-| http://www.api.example.com       | www.api        | www             | (default) if excluded |
+Splits subdomain on `.` and takes first part. See `FirstSubdomain#parse_tenant_name` in `first_subdomain.rb`.
 
 ### Configuration
 
-```ruby
-require 'apartment/elevators/first_subdomain'
-config.middleware.use Apartment::Elevators::FirstSubdomain
-
-Apartment::Elevators::FirstSubdomain.excluded_subdomains = ['www']
-```
+Add to middleware stack and configure excluded subdomains. See README.md for configuration.
 
 ### Use Case
 
@@ -262,41 +123,11 @@ Use domain name (excluding 'www' and top-level domain) as tenant.
 
 ### Implementation
 
-```ruby
-def parse_tenant_name(request)
-  # Get domain without TLD
-  # example.com → "example"
-  # www.example.com → "example"
-  # api.example.com → "api"
-
-  host = request.host
-  parts = host.split('.')
-
-  # Remove TLD (.com, .org, etc.)
-  parts.pop if parts.length > 1
-
-  # Remove 'www' if present
-  parts.shift if parts.first == 'www'
-
-  parts.first
-end
-```
-
-### Behavior
-
-| Request URL                       | Domain Parts     | Result   | Tenant   |
-|-----------------------------------|------------------|----------|----------|
-| http://example.com                | [example]        | example  | example  |
-| http://www.example.com            | [www, example]   | example  | example  |
-| http://api.example.com            | [api, example]   | api      | api      |
-| http://subdomain.api.example.com  | [subdomain, api] | subdomain| subdomain|
+Extracts domain name excluding TLD and 'www' prefix. See `Domain#parse_tenant_name` in `domain.rb`.
 
 ### Configuration
 
-```ruby
-require 'apartment/elevators/domain'
-config.middleware.use Apartment::Elevators::Domain
-```
+Add to middleware stack. See README.md.
 
 ### Use Case
 
@@ -314,54 +145,11 @@ Use **full hostname** as tenant, optionally ignoring specified first subdomains.
 
 ### Implementation
 
-```ruby
-class Host < Generic
-  class << self
-    attr_accessor :ignored_first_subdomains
-  end
-
-  self.ignored_first_subdomains = []
-
-  def parse_tenant_name(request)
-    host = request.host
-
-    # Remove ignored first subdomain if present
-    if ignored_first_subdomains.any?
-      parts = host.split('.')
-      if ignored_first_subdomains.include?(parts.first)
-        parts.shift
-        host = parts.join('.')
-      end
-    end
-
-    host
-  end
-
-  private
-
-  def ignored_first_subdomains
-    self.class.ignored_first_subdomains
-  end
-end
-```
+Uses full hostname as tenant, optionally ignoring specified first subdomains. See `Host#parse_tenant_name` in `host.rb`.
 
 ### Configuration
 
-```ruby
-require 'apartment/elevators/host'
-config.middleware.use Apartment::Elevators::Host
-
-Apartment::Elevators::Host.ignored_first_subdomains = ['www', 'app']
-```
-
-### Behavior
-
-| Request URL                  | Full Host           | Ignored? | Tenant              |
-|------------------------------|---------------------|----------|---------------------|
-| http://example.com           | example.com         | No       | example.com         |
-| http://www.example.com       | www.example.com     | www      | example.com         |
-| http://api.example.com       | api.example.com     | No       | api.example.com     |
-| http://app.api.example.com   | app.api.example.com | app      | api.example.com     |
+Add to middleware stack and configure `ignored_first_subdomains`. See README.md.
 
 ### Use Case
 
@@ -379,39 +167,11 @@ Direct **mapping** from hostname to tenant name via hash.
 
 ### Implementation
 
-```ruby
-class HostHash < Generic
-  def initialize(app, hash = {})
-    super(app)
-    @hash = hash
-  end
-
-  def parse_tenant_name(request)
-    @hash[request.host]
-  end
-end
-```
+Accepts hash mapping hostnames to tenant names. See `HostHash` implementation in `host_hash.rb`.
 
 ### Configuration
 
-```ruby
-require 'apartment/elevators/host_hash'
-
-config.middleware.use Apartment::Elevators::HostHash, {
-  'acme.customdomain.com'  => 'acme_corp',
-  'widgets.example.io'     => 'widgets_inc',
-  'startup.myapp.com'      => 'startup_tenant',
-  'client-site.com'        => 'client_x'
-}
-```
-
-### Behavior
-
-| Request URL                    | Hash Lookup              | Tenant         |
-|--------------------------------|--------------------------|----------------|
-| http://acme.customdomain.com   | 'acme_corp'              | acme_corp      |
-| http://widgets.example.io      | 'widgets_inc'            | widgets_inc    |
-| http://unknown.com             | nil                      | (default)      |
+Pass hash to HostHash initializer when adding to middleware stack. See README.md for examples.
 
 ### Use Cases
 
@@ -435,299 +195,67 @@ config.middleware.use Apartment::Elevators::HostHash, {
 
 ### Why Position Matters
 
-Elevators **must** be positioned before session and authentication middleware:
+**Critical constraint**: Elevators must run before session and authentication middleware.
 
-```ruby
-# WRONG ORDER
-use ActionDispatch::Session::CookieStore  # Session loaded first
-use Apartment::Elevators::Subdomain       # Tenant set second
-# Problem: Session data loaded in wrong tenant context
+**Why this matters**: Session middleware loads user data based on session ID. If session loads before tenant is established, you get the wrong tenant's session data. This creates security vulnerabilities where User A sees User B's data.
 
-# CORRECT ORDER
-use Apartment::Elevators::Subdomain       # Tenant set first
-use ActionDispatch::Session::CookieStore  # Session loaded second
-# Solution: Session loaded in correct tenant context
-```
+**Example failure**: Without proper positioning, `www.acme.com` might load session data from `widgets.com` tenant if session middleware runs first.
 
-### Positioning Methods
-
-**Insert before specific middleware**:
-```ruby
-config.middleware.insert_before ActionDispatch::Session::CookieStore,
-                                Apartment::Elevators::Subdomain
-```
-
-**Insert before authentication (Devise/Warden)**:
-```ruby
-config.middleware.insert_before Warden::Manager,
-                                Apartment::Elevators::Subdomain
-```
-
-**Insert at beginning**:
-```ruby
-config.middleware.insert_at 0, Apartment::Elevators::Subdomain
-```
-
-**Insert after specific middleware**:
-```ruby
-config.middleware.insert_after Rack::Runtime,
-                                Apartment::Elevators::Subdomain
-```
-
-### Verify Middleware Order
-
-```ruby
-# Rails console or initializer
-Rails.application.middleware.each_with_index do |middleware, index|
-  puts "#{index}: #{middleware.inspect}"
-end
-
-# Expected output:
-# 0: Rack::Sendfile
-# 1: ActionDispatch::Static
-# 2: Apartment::Elevators::Subdomain  # <-- Should be EARLY
-# 3: ActionDispatch::Session::CookieStore
-# 4: Warden::Manager
-# ...
-```
+**How to verify**: Run `Rails.application.middleware` and confirm elevator appears before `ActionDispatch::Session::CookieStore` and authentication middleware like `Warden::Manager`.
 
 ## Creating Custom Elevators
 
 ### Method 1: Using Proc with Generic
 
-```ruby
-# config/application.rb
-config.middleware.use Apartment::Elevators::Generic, proc { |request|
-  # Custom tenant detection logic
-  tenant = request.headers['X-Tenant-ID']
-  tenant ||= request.session[:current_tenant]
-  tenant ||= Company.find_by(subdomain: request.subdomain)&.database_name
-  tenant
-}
-```
+Pass Proc to Generic elevator for inline tenant detection logic. See `generic.rb` and README.md.
 
 ### Method 2: Subclassing Generic
 
-```ruby
-# app/middleware/custom_elevator.rb
-class CustomElevator < Apartment::Elevators::Generic
-  def parse_tenant_name(request)
-    # Try multiple strategies
-    detect_from_api_key(request) ||
-    detect_from_subdomain(request) ||
-    detect_from_session(request) ||
-    'default'
-  end
-
-  private
-
-  def detect_from_api_key(request)
-    api_key = request.headers['X-API-Key']
-    ApiKey.find_by(key: api_key)&.tenant_name if api_key
-  end
-
-  def detect_from_subdomain(request)
-    subdomain = request.subdomain
-    subdomain unless excluded_subdomains.include?(subdomain)
-  end
-
-  def detect_from_session(request)
-    request.session[:tenant_name]
-  end
-
-  def excluded_subdomains
-    %w[www admin api]
-  end
-end
-
-# config/application.rb
-config.middleware.use CustomElevator
-```
-
-### Advanced: Conditional Elevator
-
-```ruby
-class ConditionalElevator < Apartment::Elevators::Generic
-  def call(env)
-    request = Rack::Request.new(env)
-
-    # Skip elevator for certain paths
-    if skip_paths.any? { |path| request.path.start_with?(path) }
-      return @app.call(env)
-    end
-
-    # Normal elevator behavior
-    super
-  end
-
-  def skip_paths
-    ['/health', '/metrics', '/system', '/webhooks']
-  end
-
-  def parse_tenant_name(request)
-    request.subdomain
-  end
-end
-```
+Create custom class inheriting from Generic, override `parse_tenant_name(request)`. Supports multi-strategy fallback logic. See `generic.rb` for base class.
 
 ## Error Handling
 
 ### Handling Missing Tenants
 
-```ruby
-class SafeElevator < Apartment::Elevators::Subdomain
-  def call(env)
-    super
-  rescue Apartment::TenantNotFound => e
-    Rails.logger.error "[Apartment] Tenant not found: #{e.message}"
-
-    # Return 404 response
-    [404, {'Content-Type' => 'text/html'}, ['<h1>Account Not Found</h1>']]
-  end
-end
-```
+Custom elevators can rescue `Apartment::TenantNotFound` and return appropriate HTTP responses (404, redirect, etc.). See `generic.rb` for base call pattern.
 
 ### Custom Error Pages
 
-```ruby
-class ErrorHandlingElevator < Apartment::Elevators::Subdomain
-  def call(env)
-    super
-  rescue Apartment::TenantNotFound
-    redirect_to_not_found
-  rescue Apartment::ApartmentError => e
-    render_error(e)
-  end
-
-  private
-
-  def redirect_to_not_found
-    [302, {'Location' => '/account-not-found'}, []]
-  end
-
-  def render_error(error)
-    [500, {'Content-Type' => 'text/plain'}, ["Error: #{error.message}"]]
-  end
-end
-```
+Override `call(env)` method to wrap `super` in rescue block and handle errors. See existing elevator implementations for patterns.
 
 ## Testing Elevators
 
 ### Unit Testing
 
-```ruby
-# spec/middleware/custom_elevator_spec.rb
-RSpec.describe CustomElevator do
-  let(:app) { ->(env) { [200, {}, ['OK']] } }
-  let(:elevator) { described_class.new(app) }
-
-  def make_request(host:, headers: {})
-    env = Rack::MockRequest.env_for("http://#{host}/", headers)
-    elevator.call(env)
-  end
-
-  before do
-    allow(Apartment::Tenant).to receive(:switch).and_yield
-  end
-
-  it 'switches to tenant based on subdomain' do
-    expect(Apartment::Tenant).to receive(:switch).with('acme')
-    make_request(host: 'acme.example.com')
-  end
-
-  it 'uses default tenant for excluded subdomains' do
-    expect(Apartment::Tenant).to receive(:switch).with(nil)
-    make_request(host: 'www.example.com')
-  end
-
-  it 'uses API key header if present' do
-    allow(ApiKey).to receive(:find_by)
-      .with(key: 'secret')
-      .and_return(double(tenant_name: 'widgets'))
-
-    expect(Apartment::Tenant).to receive(:switch).with('widgets')
-    make_request(host: 'example.com', headers: {'X-API-Key' => 'secret'})
-  end
-end
-```
+Use `Rack::MockRequest` to create test requests and mock `Apartment::Tenant.switch`. See `spec/unit/elevators/` for test patterns.
 
 ### Integration Testing
 
-```ruby
-# spec/requests/tenant_routing_spec.rb
-RSpec.describe 'Tenant routing', type: :request do
-  before do
-    Apartment::Tenant.create('acme')
-    Apartment::Tenant.switch('acme') { User.create!(name: 'Acme User') }
-  end
-
-  after do
-    Apartment::Tenant.drop('acme')
-  end
-
-  it 'routes to correct tenant based on subdomain' do
-    get 'http://acme.example.com/users'
-
-    expect(response).to be_successful
-    # Verify tenant-specific data
-  end
-end
-```
+Create test tenants in before hooks, make requests to different subdomains/hosts, verify correct tenant context. See `spec/integration/` for examples.
 
 ## Performance Considerations
 
-### Caching Tenant Lookups
+### Why Caching Matters for Custom Elevators
 
-If elevator does database lookups, cache results:
+**Problem**: If your custom elevator queries the database to resolve tenant (e.g., looking up tenant by API key), you add database latency to **every request**.
 
-```ruby
-class CachedElevator < Apartment::Elevators::Generic
-  def parse_tenant_name(request)
-    subdomain = request.subdomain
+**Impact**: 10-50ms per request × thousands of requests = significant overhead.
 
-    Rails.cache.fetch("tenant:#{subdomain}", expires_in: 5.minutes) do
-      Company.find_by(subdomain: subdomain)&.database_name
-    end
-  end
-end
-```
+**Solution**: Cache tenant name lookups. Trade-off is stale cache if tenants are renamed, but this is rare.
 
-### Avoiding N+1 Queries
+### Why Preloaded Hash Maps Beat Database Queries
 
-```ruby
-# BAD: Queries on every request
-proc { |request|
-  Company.find_by(subdomain: request.subdomain)&.database_name
-}
+**Database query approach**: SELECT tenant_name FROM tenants WHERE subdomain = ? — runs on every request.
 
-# GOOD: Cached lookup
-proc { |request|
-  tenant_map = Rails.cache.fetch('tenant_map', expires_in: 10.minutes) do
-    Company.pluck(:subdomain, :database_name).to_h
-  end
-  tenant_map[request.subdomain]
-}
-```
+**Hash map approach**: Loaded once at boot, O(1) lookup with no I/O.
 
-### Monitoring Performance
+**Trade-off**: Hash maps don't update without restart, but for most applications tenant-to-subdomain mapping is stable.
 
-```ruby
-class MonitoredElevator < Apartment::Elevators::Subdomain
-  def call(env)
-    start = Time.current
-    super
-  ensure
-    duration = Time.current - start
+### Why Monitor Elevator Performance
 
-    if duration > 0.1
-      Rails.logger.warn "[Apartment] Slow switch: #{duration.round(3)}s"
-    end
+**Hidden cost**: Elevator runs on every request. 10ms overhead is 10% latency penalty on a 100ms request.
 
-    # Report to APM
-    NewRelic::Agent.record_metric('Custom/Apartment/ElevatorTime', duration)
-  end
-end
-```
+**Target**: Elevator should complete in <5ms. If >100ms, investigate and add logging.
 
 ## Common Issues
 
@@ -735,32 +263,17 @@ end
 
 **Symptoms**: Tenant always default
 
-**Causes**:
-1. Elevator not in middleware stack
-2. `parse_tenant_name` returning nil
-3. Middleware positioned incorrectly
+**Causes**: Elevator not in middleware stack, `parse_tenant_name` returning nil, or incorrect middleware positioning
 
-**Debug**:
-```ruby
-class DebugElevator < Apartment::Elevators::Subdomain
-  def call(env)
-    request = Rack::Request.new(env)
-    tenant = parse_tenant_name(request)
-    Rails.logger.debug "[Elevator] Host: #{request.host}, Tenant: #{tenant || 'nil'}"
-    super
-  end
-end
-```
+**Debug**: Add logging to `parse_tenant_name` to inspect extracted tenant values.
 
 ### Issue: TenantNotFound Errors
 
 **Symptoms**: 500 errors on some requests
 
-**Causes**:
-1. Tenant doesn't exist
-2. Subdomain not in tenant list
+**Causes**: Tenant doesn't exist or subdomain not in tenant list
 
-**Solution**: Add error handling or tenant validation
+**Solution**: Add error handling in custom elevator or validate tenant existence before switching.
 
 ## Best Practices
 

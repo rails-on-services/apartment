@@ -44,24 +44,7 @@ spec/
 - Excluded model behavior
 - Callbacks
 
-**Key patterns**:
-```ruby
-RSpec.describe Apartment::Adapters::PostgresqlAdapter do
-  subject { described_class.new(config) }
-
-  describe '#create' do
-    it 'creates a new schema' do
-      subject.create('test_tenant')
-      # Verify schema exists
-    end
-
-    it 'raises TenantExists if schema exists' do
-      subject.create('test_tenant')
-      expect { subject.create('test_tenant') }.to raise_error(Apartment::TenantExists)
-    end
-  end
-end
-```
+**See**: `spec/adapters/` for test implementations.
 
 ### Elevator Tests (spec/unit/elevators/)
 
@@ -81,25 +64,7 @@ end
 - Middleware integration
 - Error handling
 
-**Key patterns**:
-```ruby
-RSpec.describe Apartment::Elevators::Subdomain do
-  let(:app) { ->(env) { [200, {}, ['OK']] } }
-  let(:elevator) { described_class.new(app) }
-
-  def make_request(host)
-    env = Rack::MockRequest.env_for("http://#{host}/")
-    elevator.call(env)
-  end
-
-  before { allow(Apartment::Tenant).to receive(:switch).and_yield }
-
-  it 'switches based on subdomain' do
-    expect(Apartment::Tenant).to receive(:switch).with('acme')
-    make_request('acme.example.com')
-  end
-end
-```
+**See**: `spec/unit/elevators/` for test implementations.
 
 ### Integration Tests (spec/integration/)
 
@@ -112,25 +77,7 @@ end
 - Concurrent tenant access
 - Migration scenarios
 
-**Key patterns**:
-```ruby
-RSpec.describe 'Multi-tenant data isolation', type: :integration do
-  before do
-    Apartment::Tenant.create('tenant_a')
-    Apartment::Tenant.create('tenant_b')
-  end
-
-  it 'isolates data between tenants' do
-    Apartment::Tenant.switch('tenant_a') do
-      User.create!(name: 'Tenant A User')
-    end
-
-    Apartment::Tenant.switch('tenant_b') do
-      expect(User.count).to eq(0)
-    end
-  end
-end
-```
+**See**: `spec/integration/` for test implementations.
 
 ### Dummy App (spec/dummy/)
 
@@ -156,26 +103,7 @@ end
 - Shared helper loading
 - Apartment configuration for tests
 
-**Key setup**:
-```ruby
-RSpec.configure do |config|
-  # Database selection via env var
-  config.before(:suite) do
-    database = ENV['DB'] || 'postgresql'
-    # Load appropriate database config
-  end
-
-  # Reset tenant before each test
-  config.before(:each) do
-    Apartment::Tenant.reset
-  end
-
-  # Cleanup after tests
-  config.after(:each) do
-    # Drop test tenants
-  end
-end
-```
+**See**: `spec/spec_helper.rb` for complete configuration.
 
 ### Database Configuration (spec/config/)
 
@@ -188,301 +116,102 @@ end
 - MySQL
 - SQLite
 
-**Selection**: Via `DB` environment variable
-
-```bash
-# Run with PostgreSQL (default)
-bundle exec rspec
-
-# Run with MySQL
-DB=mysql bundle exec rspec
-
-# Run with SQLite
-DB=sqlite3 bundle exec rspec
-```
+**Selection**: Via `DB` environment variable (`DB=postgresql`, `DB=mysql`, `DB=sqlite3`)
 
 ## Shared Examples (spec/examples/)
 
-**Purpose**: Reusable test patterns for adapters
+**Why shared examples?**: Apartment promises a unified API regardless of database. Without shared examples, behavior could diverge between PostgreSQL and MySQL implementations.
+
+**How they enforce contracts**: Each adapter must pass identical tests. If PostgreSQL adapter can create/switch/drop tenants, MySQL adapter must too. Prevents "works on PostgreSQL but breaks on MySQL" scenarios.
 
 **Files**:
 - `adapter_examples.rb` - Common adapter behavior
 - `schema_examples.rb` - Schema import/export
 - `seed_examples.rb` - Seed data handling
 
-**Usage**:
-```ruby
-RSpec.describe Apartment::Adapters::PostgresqlAdapter do
-  it_behaves_like 'a generic apartment adapter'
-  it_behaves_like 'an adapter with schema support'
-end
-```
+**Trade-off**: More test code to maintain, but ensures cross-database compatibility.
 
-**Benefits**:
-- ✅ Consistent testing across adapters
-- ✅ Reduce duplication
-- ✅ Ensure all adapters meet contract
+**See**: `spec/examples/` for shared example implementations.
 
 ## Support Files (spec/support/)
 
-**helpers.rb**: Test utility methods
-**database_helpers.rb**: Database-specific test utilities
-**apartment_helpers.rb**: Tenant creation/cleanup helpers
+Test utility modules for tenant creation/cleanup, database-specific helpers, and common test patterns.
 
-**Example helpers**:
-```ruby
-module ApartmentHelpers
-  def create_test_tenant(name)
-    Apartment::Tenant.create(name) unless tenant_exists?(name)
-  end
+**See**: `spec/support/` for helper implementations.
 
-  def tenant_exists?(name)
-    Apartment.tenant_names.include?(name)
-  end
+## Test Architecture Decisions
 
-  def with_tenant(name)
-    Apartment::Tenant.switch(name) { yield }
-  end
-end
-```
+**Why database-specific test suites?**: Each adapter has fundamentally different isolation mechanisms (PostgreSQL schemas vs MySQL databases vs SQLite files). Testing all adapters against shared examples ensures consistent behavior across implementations.
 
-## Running Tests
+**Why `DB` environment variable?**: Allows testing same codebase against different databases without changing configuration. Critical for ensuring gem works across all supported databases.
 
-### All Tests
-
-```bash
-bundle exec rspec
-```
-
-### Specific Database
-
-```bash
-DB=postgresql bundle exec rspec
-DB=mysql bundle exec rspec
-DB=sqlite3 bundle exec rspec
-```
-
-### Specific Test File
-
-```bash
-bundle exec rspec spec/adapters/postgresql_adapter_spec.rb
-```
-
-### Specific Test
-
-```bash
-bundle exec rspec spec/tenant_spec.rb:42
-```
-
-### With Coverage
-
-```bash
-COVERAGE=true bundle exec rspec
-```
+**Commands**: See README.md for specific test execution commands.
 
 ## Common Test Patterns
 
 ### Testing Tenant Isolation
 
-```ruby
-it 'isolates tenant data' do
-  Apartment::Tenant.create('tenant_a')
-  Apartment::Tenant.create('tenant_b')
-
-  # Create data in tenant_a
-  Apartment::Tenant.switch('tenant_a') do
-    User.create!(name: 'User A')
-    expect(User.count).to eq(1)
-  end
-
-  # Verify isolation in tenant_b
-  Apartment::Tenant.switch('tenant_b') do
-    expect(User.count).to eq(0)
-  end
-end
-```
+Create multiple tenants, add data in one, verify it doesn't appear in others. See `spec/integration/` for isolation test examples.
 
 ### Testing Callbacks
 
-```ruby
-it 'fires callbacks on tenant creation' do
-  callback_fired = false
-
-  Apartment::Adapters::AbstractAdapter.set_callback :create, :after do
-    callback_fired = true
-  end
-
-  Apartment::Tenant.create('test_tenant')
-  expect(callback_fired).to be true
-end
-```
+Set callbacks on adapter, trigger tenant operations, verify callbacks execute. See `spec/adapters/abstract_adapter_spec.rb`.
 
 ### Testing Error Handling
 
-```ruby
-it 'raises TenantNotFound when switching to nonexistent tenant' do
-  expect {
-    Apartment::Tenant.switch('nonexistent') { }
-  }.to raise_error(Apartment::TenantNotFound)
-end
-```
+Use `expect { }.to raise_error(Apartment::TenantNotFound)` pattern for exception testing. See adapter specs for error handling examples.
 
 ### Testing Excluded Models
 
-```ruby
-it 'bypasses tenant switching for excluded models' do
-  Apartment.excluded_models = ['Company']
-
-  Apartment::Tenant.switch('tenant_a') do
-    Company.create!(name: 'Global Company')
-  end
-
-  Apartment::Tenant.switch('tenant_b') do
-    # Company data is global, not tenant-specific
-    expect(Company.count).to eq(1)
-  end
-end
-```
+Configure excluded models, create data in one tenant, verify global accessibility. See `spec/apartment/` for excluded model tests.
 
 ### Testing Thread Safety
 
-```ruby
-it 'maintains tenant isolation across threads' do
-  Apartment::Tenant.create('tenant_a')
-  Apartment::Tenant.create('tenant_b')
-
-  threads = []
-
-  threads << Thread.new do
-    Apartment::Tenant.switch('tenant_a') do
-      sleep 0.1
-      expect(Apartment::Tenant.current).to eq('tenant_a')
-    end
-  end
-
-  threads << Thread.new do
-    Apartment::Tenant.switch('tenant_b') do
-      sleep 0.1
-      expect(Apartment::Tenant.current).to eq('tenant_b')
-    end
-  end
-
-  threads.each(&:join)
-end
-```
+Spawn threads with different tenants, verify isolation maintained. See `spec/integration/` for thread safety patterns.
 
 ## Test Data Management
 
 ### Creating Test Tenants
 
-```ruby
-before do
-  @test_tenants = ['test_a', 'test_b', 'test_c']
-  @test_tenants.each { |t| Apartment::Tenant.create(t) }
-end
-
-after do
-  @test_tenants.each { |t| Apartment::Tenant.drop(t) }
-end
-```
+Use `before` hooks to create test tenants array and `after` hooks to clean up. See `spec/support/apartment_helpers.rb` for helper patterns.
 
 ### Using Factories
 
-```ruby
-# spec/support/factories.rb
-FactoryBot.define do
-  factory :user do
-    name { Faker::Name.name }
-    email { Faker::Internet.email }
-  end
-end
-
-# In spec
-Apartment::Tenant.switch('test_tenant') do
-  user = create(:user)
-  expect(user).to be_persisted
-end
-```
+Use FactoryBot within tenant switch blocks. Define factories in `spec/support/factories.rb`.
 
 ## Testing Anti-Patterns
 
 ### ❌ Not Cleaning Up Tenants
 
-```ruby
-# BAD: Leaves test tenants in database
-it 'creates a tenant' do
-  Apartment::Tenant.create('leaked_tenant')
-end
-```
+**Problem**: Leaves test tenants in database
 
-**Fix**: Always clean up in `after` hook
+**Fix**: Always clean up in `after` hook. See `spec_helper.rb` for cleanup patterns.
 
 ### ❌ Not Resetting Tenant Context
 
-```ruby
-# BAD: Test leaves tenant context changed
-it 'switches tenant' do
-  Apartment::Tenant.switch!('some_tenant')
-  # Test ends without resetting
-end
-```
+**Problem**: Test leaves tenant context changed
 
-**Fix**: Use `before { Apartment::Tenant.reset }` or block-based switching
+**Fix**: Use `before { Apartment::Tenant.reset }` or block-based switching. See `spec_helper.rb` for reset configuration.
 
 ### ❌ Database-Specific Tests Without Conditionals
 
-```ruby
-# BAD: PostgreSQL-only test runs on all databases
-it 'uses schemas' do
-  # This will fail on MySQL/SQLite
-  expect(Apartment::Tenant.adapter).to respond_to(:schemas)
-end
-```
+**Problem**: PostgreSQL-only tests run on all databases
 
-**Fix**: Use conditional tests
-
-```ruby
-it 'uses schemas', if: postgresql? do
-  expect(Apartment::Tenant.adapter).to respond_to(:schemas)
-end
-```
+**Fix**: Use conditional tests with `if: postgresql?` guards. See `spec/adapters/` for examples.
 
 ## Debugging Tests
 
 ### Enable Verbose Logging
 
-```ruby
-# In spec_helper.rb or specific spec
-Apartment.configure do |config|
-  config.active_record_log = true
-end
-
-ActiveRecord::Base.logger = Logger.new(STDOUT)
-```
+Set `config.active_record_log = true` and configure `ActiveRecord::Base.logger`. See `spec_helper.rb` for configuration patterns.
 
 ### Inspect Tenant State
 
-```ruby
-# Add to failing test
-puts "Current tenant: #{Apartment::Tenant.current}"
-puts "Available tenants: #{Apartment.tenant_names.inspect}"
-puts "Adapter class: #{Apartment::Tenant.adapter.class.name}"
-```
+Use `Apartment::Tenant.current`, `Apartment.tenant_names`, and `Apartment::Tenant.adapter.class` for debugging.
 
 ### Database Inspection
 
-```ruby
-# PostgreSQL: List schemas
-schemas = ActiveRecord::Base.connection.execute(
-  "SELECT schema_name FROM information_schema.schemata"
-).map { |r| r['schema_name'] }
-puts "Schemas: #{schemas.inspect}"
-
-# MySQL: List databases
-databases = ActiveRecord::Base.connection.execute("SHOW DATABASES")
-  .map { |r| r.first }
-puts "Databases: #{databases.inspect}"
-```
+Query `information_schema.schemata` (PostgreSQL) or `SHOW DATABASES` (MySQL) to inspect tenant state. See adapter specs for examples.
 
 ## Known Issues & Workarounds
 
@@ -492,18 +221,7 @@ puts "Databases: #{databases.inspect}"
 
 **Cause**: Inadequate cleanup in `after` hooks
 
-**Solution**:
-```ruby
-config.after(:each) do
-  # Force cleanup
-  Apartment::Tenant.reset
-
-  # Drop all test tenants
-  Apartment.tenant_names.each do |tenant|
-    Apartment::Tenant.drop(tenant) if tenant.start_with?('test_')
-  end
-end
-```
+**Solution**: Force cleanup in `after(:each)` hooks. Reset tenant and drop all test tenants by prefix. See `spec_helper.rb`.
 
 ### Issue: Database Connection Exhaustion
 
@@ -511,41 +229,15 @@ end
 
 **Cause**: Too many simultaneous tenant switches (MySQL)
 
-**Solution**: Reduce parallelization or increase connection pool
-
-```yaml
-# spec/config/database.yml
-test:
-  pool: 50  # Increase pool size
-```
+**Solution**: Reduce parallelization or increase connection pool size in `spec/config/database.yml`.
 
 ### Issue: Slow Test Suite
 
 **Symptom**: Tests take minutes to run
 
-**Causes**:
-- Creating/dropping tenants repeatedly
-- Not using transactions
-- Running full migrations
+**Causes**: Creating/dropping tenants repeatedly, not using transactions, running full migrations
 
-**Solutions**:
-```ruby
-# Use database cleaner with transactions
-config.use_transactional_fixtures = true
-
-# Cache test tenant creation
-config.before(:suite) do
-  # Create common test tenants once
-  Apartment::Tenant.create('common_test_tenant')
-end
-
-# Use shared tenant for read-only tests
-it 'reads data' do
-  Apartment::Tenant.switch('common_test_tenant') do
-    # Read-only operations
-  end
-end
-```
+**Solutions**: Use transactional fixtures, cache test tenant creation in `before(:suite)`, share tenants for read-only tests. See `spec_helper.rb` for patterns.
 
 ## Test Coverage
 

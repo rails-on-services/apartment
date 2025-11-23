@@ -57,89 +57,26 @@ AbstractAdapter
 
 ### Abstract Methods (Subclasses Must Implement)
 
-```ruby
-# Create the tenant (schema/database/file)
-def create_tenant(tenant)
-  raise NotImplementedError
-end
+- `create_tenant(tenant)` - Create the tenant (schema/database/file)
+- `connect_to_new(tenant)` - Switch to tenant (change connection or search_path)
+- `drop_command(conn, tenant)` - Drop the tenant
+- `current` - Get current tenant name
 
-# Switch to tenant (change connection or search_path)
-def connect_to_new(tenant = nil)
-  raise NotImplementedError
-end
-
-# Drop the tenant
-def drop_command(conn, tenant)
-  raise NotImplementedError
-end
-
-# Get current tenant name
-def current
-  raise NotImplementedError
-end
-```
+**See**: Abstract method definitions in `abstract_adapter.rb`.
 
 ### Common Logic Provided
 
-**Tenant creation with callbacks**:
-```ruby
-def create(tenant)
-  run_callbacks :create do
-    create_tenant(tenant)              # Subclass implements
-    switch(tenant) do
-      import_database_schema           # Loads db/schema.rb
-      seed_data if Apartment.seed_after_create  # Loads db/seeds.rb
-      yield if block_given?
-    end
-  end
-end
-```
+**Tenant creation**: Runs callbacks, creates tenant via subclass, switches context, imports schema, optionally seeds data. See `AbstractAdapter#create` method.
 
-**Tenant switching with automatic rollback**:
-```ruby
-def switch(tenant = nil)
-  previous_tenant = current
-  switch!(tenant)                      # Subclass implements
-  yield
-ensure
-  begin
-    switch!(previous_tenant)
-  rescue StandardError
-    reset                               # Fallback to default
-  end
-end
-```
+**Tenant switching**: Stores previous tenant, switches, yields to block, ensures rollback in ensure clause with fallback to default. See `AbstractAdapter#switch` method.
 
-**Schema import**:
-```ruby
-def import_database_schema
-  silence_warnings do
-    load_or_raise(Apartment.database_schema_file)
-  end
-end
-```
+**Schema import**: Loads `db/schema.rb` or custom schema file. See schema import logic in `abstract_adapter.rb`.
 
 ### Helper Methods
 
-**Environmentify**: Add Rails environment to tenant name
-```ruby
-# config.prepend_environment = true
-environmentify('acme')  # => 'development_acme' (in development)
-                        # => 'acme' (in production)
+**Environmentify**: Adds Rails environment prefix/suffix to tenant name based on configuration. See `AbstractAdapter#environmentify` method.
 
-# config.append_environment = true
-environmentify('acme')  # => 'acme_development' (in development)
-```
-
-**Excluded model processing**:
-```ruby
-def process_excluded_models
-  Apartment.excluded_models.each do |model_name|
-    model = model_name.constantize
-    model.establish_connection(@config)
-  end
-end
-```
+**Excluded model processing**: Establishes separate connections for excluded models. See `AbstractAdapter#process_excluded_models` method.
 
 ## PostgreSQL Adapter
 
@@ -151,102 +88,39 @@ Uses **PostgreSQL schemas** (namespaces) for tenant isolation.
 
 ### Key Implementation Details
 
-**Create tenant** (creates schema):
-```ruby
-def create_tenant(tenant)
-  Apartment.connection.execute(%(CREATE SCHEMA "#{tenant}"))
-rescue ActiveRecord::StatementInvalid => e
-  raise TenantExists, "Schema #{tenant} already exists"
-end
-```
+**Create tenant**: Executes `CREATE SCHEMA` SQL command. See `PostgresqlAdapter#create_tenant` method.
 
-**Switch tenant** (changes search_path):
-```ruby
-def connect_to_new(tenant = nil)
-  tenant ||= default_tenant
-  @current = tenant
+**Switch tenant**: Changes `search_path` to target schema. See `PostgresqlAdapter#connect_to_new` method.
 
-  # Build search path: tenant, persistent_schemas, public
-  path_parts = [tenant] + Array(Apartment.persistent_schemas)
-  path = path_parts.map { |s| %("#{s}") }.join(', ')
+**Drop tenant**: Executes `DROP SCHEMA CASCADE`. See `PostgresqlAdapter#drop_command` method.
 
-  # Set search path for all queries
-  Apartment.connection.schema_search_path = path
-  Apartment.connection.execute("SET search_path TO #{path}")
-rescue ActiveRecord::StatementInvalid
-  raise TenantNotFound, "Schema #{tenant} not found"
-end
-```
-
-**Drop tenant** (drops schema):
-```ruby
-def drop_command(conn, tenant)
-  conn.execute(%(DROP SCHEMA "#{tenant}" CASCADE))
-end
-```
-
-**Get current tenant**:
-```ruby
-def current
-  @current || default_tenant
-end
-```
+**Get current tenant**: Returns instance variable tracking current schema. See `PostgresqlAdapter#current` method.
 
 ### Search Path Mechanics
 
-When you execute a query, PostgreSQL searches schemas in order:
-
-```sql
--- Search path: "acme", "shared_extensions", "public"
-SELECT * FROM users;
-
--- PostgreSQL searches:
--- 1. acme.users (if exists) ← FOUND
--- 2. shared_extensions.users (if acme.users doesn't exist)
--- 3. public.users (if neither exists)
-```
+PostgreSQL searches schemas in order defined by `search_path`. Queries resolve to first matching table. Search path includes tenant schema, persistent schemas, then public. See search path construction in `PostgresqlAdapter#connect_to_new`.
 
 ### Persistent Schemas
 
-Configured via `config.persistent_schemas`:
-
-```ruby
-# config/initializers/apartment.rb
-config.persistent_schemas = ['shared_extensions', 'public']
-```
+Configured via `config.persistent_schemas` to specify schemas that remain in search path across all tenants.
 
 **Use cases**:
 - Shared PostgreSQL extensions (uuid-ossp, hstore, postgis)
 - Utility functions/views shared across tenants
 - Reference data tables
 
-**Example**:
-```sql
--- shared_extensions schema
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp" SCHEMA shared_extensions;
-
--- Available in all tenants
-Apartment::Tenant.switch('acme') do
-  # Can use extension even though in acme schema
-  User.create!(id: 'SELECT shared_extensions.uuid_generate_v4()')
-end
-```
+**See**: README.md for configuration examples.
 
 ### Excluded Names (pg_excluded_names)
 
-Configured via `config.pg_excluded_names`:
-
-```ruby
-# config/initializers/apartment.rb
-config.pg_excluded_names = /^(backup_|temp_|staging_)/
-
-# These tables won't be cloned to tenant schemas
-```
+Configured via `config.pg_excluded_names` to exclude tables/schemas from tenant cloning.
 
 **Use cases**:
 - Temporary tables
 - Backup tables
 - Staging/import tables
+
+**See**: README.md for configuration patterns.
 
 ### Performance Characteristics
 
@@ -265,28 +139,13 @@ Extends `PostgresqlAdapter` with PostGIS spatial extension support.
 
 ### Key Differences
 
-**Tenant creation with extension**:
-```ruby
-def create_tenant(tenant)
-  super  # Create schema
+**Tenant creation**: Extends base PostgresqlAdapter to automatically enable PostGIS extensions in new schemas. See `PostgisAdapter#create_tenant` method.
 
-  switch(tenant) do
-    # Enable PostGIS in new schema
-    Apartment.connection.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-    Apartment.connection.execute("CREATE EXTENSION IF NOT EXISTS postgis_topology")
-  end
-end
-```
-
-**Schema dumping**:
-Custom logic to handle spatial types and indexes correctly.
+**Schema dumping**: Custom logic to handle spatial types and indexes correctly. See `active_record/postgres/schema_dumper.rb`.
 
 ### Configuration
 
-```ruby
-# config/initializers/apartment.rb
-config.persistent_schemas = ['postgis', 'topology', 'public']
-```
+Typically includes PostGIS-related schemas in `persistent_schemas`. See README.md for configuration.
 
 ## MySQL Adapters
 
@@ -298,88 +157,21 @@ Uses **separate databases** for each tenant.
 
 ### Key Implementation Details
 
-**Create tenant** (creates database):
-```ruby
-def create_tenant(tenant)
-  Apartment.connection.execute(%(CREATE DATABASE `#{tenant}`))
-rescue ActiveRecord::StatementInvalid => e
-  raise TenantExists, "Database #{tenant} already exists"
-end
-```
+**Create tenant**: Executes `CREATE DATABASE` SQL command. See `Mysql2Adapter#create_tenant` method.
 
-**Switch tenant** (establishes new connection):
-```ruby
-def connect_to_new(tenant = nil)
-  tenant ||= default_tenant
+**Switch tenant**: Establishes new connection with different database name. See `Mysql2Adapter#connect_to_new` method.
 
-  # Clone base config and change database
-  config = Apartment.connection_config.dup
-  config[:database] = tenant
+**Drop tenant**: Executes `DROP DATABASE`. See `Mysql2Adapter#drop_command` method.
 
-  # Establish new connection
-  Apartment.establish_connection(config)
-
-  @current = tenant
-rescue ActiveRecord::NoDatabaseError
-  raise TenantNotFound, "Database #{tenant} not found"
-end
-```
-
-**Drop tenant** (drops database):
-```ruby
-def drop_command(conn, tenant)
-  conn.execute(%(DROP DATABASE `#{tenant}`))
-end
-```
-
-**Get current database**:
-```ruby
-def current
-  Apartment.connection.current_database
-end
-```
+**Get current database**: Queries current database name from connection. See `Mysql2Adapter#current` method.
 
 ### Connection Management
 
-Each tenant switch establishes a **new connection** to a different database:
-
-```ruby
-# Initial state
-Apartment.connection.current_database  # => "app_production"
-
-# Switch creates new connection
-Apartment::Tenant.switch('acme') do
-  Apartment.connection.current_database  # => "acme"
-  # New connection to `acme` database
-end
-
-# Switches back
-Apartment.connection.current_database  # => "app_production"
-```
+Each tenant switch establishes new connection to different database. This creates connection pool overhead compared to PostgreSQL schemas. See `Mysql2Adapter#connect_to_new` for connection establishment.
 
 ### Multi-Server Support
 
-MySQL adapters support **different database servers per tenant**:
-
-```ruby
-# config/initializers/apartment.rb
-config.tenant_names = {
-  'acme' => {
-    adapter: 'mysql2',
-    host: 'db-server-1.example.com',
-    database: 'acme',
-    username: 'user1',
-    password: 'secret1'
-  },
-  'widgets' => {
-    adapter: 'mysql2',
-    host: 'db-server-2.example.com',
-    database: 'widgets',
-    username: 'user2',
-    password: 'secret2'
-  }
-}
-```
+MySQL adapters support hash-based configuration mapping tenant names to full connection configs, enabling different tenants on different servers. See README.md for configuration examples.
 
 ### Performance Characteristics
 
@@ -406,48 +198,13 @@ Uses **separate database files** for each tenant.
 
 ### Key Implementation Details
 
-**Create tenant** (creates file):
-```ruby
-def create_tenant(tenant)
-  config = Apartment.connection_config.dup
-  config[:database] = database_file_for(tenant)  # e.g., "db/acme.sqlite3"
+**Create tenant**: Creates new SQLite file and establishes connection. See `Sqlite3Adapter#create_tenant` method.
 
-  # Establish connection (creates file)
-  ActiveRecord::Base.establish_connection(config)
-rescue ActiveRecord::StatementInvalid => e
-  raise TenantExists, "Database #{tenant} already exists"
-end
-```
+**Switch tenant**: Establishes connection to different database file. See `Sqlite3Adapter#connect_to_new` method.
 
-**Switch tenant** (connects to different file):
-```ruby
-def connect_to_new(tenant = nil)
-  tenant ||= default_tenant
+**Drop tenant**: Deletes database file. See `Sqlite3Adapter#drop_command` method.
 
-  config = Apartment.connection_config.dup
-  config[:database] = database_file_for(tenant)
-
-  Apartment.establish_connection(config)
-  @current = tenant
-rescue ActiveRecord::NoDatabaseError
-  raise TenantNotFound, "Database file for #{tenant} not found"
-end
-```
-
-**Drop tenant** (deletes file):
-```ruby
-def drop_command(conn, tenant)
-  file = database_file_for(tenant)
-  File.delete(file) if File.exist?(file)
-end
-```
-
-**Database file path**:
-```ruby
-def database_file_for(tenant)
-  "db/#{tenant}.sqlite3"
-end
-```
+**Database file path**: Constructs file path in db/ directory. See file path construction in `Sqlite3Adapter`.
 
 ### Use Cases
 
@@ -473,41 +230,11 @@ Support JRuby deployments using JDBC drivers.
 
 ### Implementation
 
-Inherit from standard adapters but use JDBC-specific connection handling:
-
-```ruby
-class JdbcPostgresqlAdapter < PostgresqlAdapter
-  # Uses JDBC connection methods
-  # Otherwise identical to PostgresqlAdapter
-end
-
-class JdbcMysqlAdapter < Mysql2Adapter
-  # Uses JDBC connection methods
-  # Otherwise identical to Mysql2Adapter
-end
-```
+Inherit from standard adapters but use JDBC-specific connection handling. See `jdbc_postgresql_adapter.rb` and `jdbc_mysql_adapter.rb`.
 
 ### Auto-Detection
 
-In `lib/apartment/tenant.rb`:
-
-```ruby
-def adapter
-  adapter_method = "#{config[:adapter]}_adapter"
-
-  # Detect JRuby and adjust
-  if defined?(JRUBY_VERSION)
-    case config[:adapter]
-    when /mysql/
-      adapter_method = 'jdbc_mysql_adapter'
-    when /postgresql/
-      adapter_method = 'jdbc_postgresql_adapter'
-    end
-  end
-
-  send(adapter_method, config)
-end
-```
+JRuby detection happens in `tenant.rb` - automatically selects JDBC adapters when running on JRuby. See adapter factory logic in `Apartment::Tenant.adapter_method`.
 
 ## Adapter Selection Matrix
 
@@ -523,123 +250,31 @@ end
 
 ## Creating Custom Adapters
 
-### Step 1: Create Adapter Class
+To support new databases: subclass `AbstractAdapter`, implement required methods (`create_tenant`, `connect_to_new`, `drop_command`, `current`), register factory method in `tenant.rb`, and configure in `database.yml`.
 
-```ruby
-# lib/apartment/adapters/custom_adapter.rb
-module Apartment
-  module Adapters
-    class CustomAdapter < AbstractAdapter
-      # Implement required methods
-      def create_tenant(tenant)
-        # Database-specific creation
-      end
-
-      def connect_to_new(tenant = nil)
-        # Database-specific switching
-      end
-
-      def drop_command(conn, tenant)
-        # Database-specific deletion
-      end
-
-      def current
-        # Return current tenant name
-      end
-    end
-  end
-end
-```
-
-### Step 2: Register Adapter
-
-```ruby
-# lib/apartment/tenant.rb (add method)
-module Apartment
-  module Tenant
-    def custom_adapter(config)
-      Adapters::CustomAdapter.new(config)
-    end
-  end
-end
-```
-
-### Step 3: Configure
-
-```ruby
-# config/database.yml
-production:
-  adapter: custom  # Matches method name
-  # ... other config
-```
+**See**: Existing adapters for patterns (`postgresql_adapter.rb` is most complex, `sqlite3_adapter.rb` is simplest), and `docs/adapters.md` for design rationale.
 
 ## Testing Adapters
 
 ### Adapter-Specific Tests
 
-```ruby
-# spec/apartment/adapters/postgresql_adapter_spec.rb
-RSpec.describe Apartment::Adapters::PostgresqlAdapter do
-  let(:config) { Apartment.connection_config }
-  let(:adapter) { described_class.new(config) }
-
-  describe '#create_tenant' do
-    it 'creates a schema' do
-      adapter.create('test_tenant')
-
-      schemas = ActiveRecord::Base.connection.execute(
-        "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'test_tenant'"
-      )
-      expect(schemas.count).to eq(1)
-    end
-  end
-
-  describe '#switch' do
-    it 'changes search_path' do
-      adapter.create('test_tenant')
-      adapter.switch!('test_tenant')
-
-      path = ActiveRecord::Base.connection.execute("SHOW search_path").first['search_path']
-      expect(path).to include('test_tenant')
-    end
-  end
-end
-```
+Each adapter has comprehensive specs covering tenant creation, switching, deletion, error handling, and callbacks. See `spec/adapters/` for test patterns.
 
 ## Debugging Adapters
 
 ### Check Current Adapter
 
-```ruby
-adapter = Apartment::Tenant.adapter
-puts "Adapter class: #{adapter.class.name}"
-# => "Apartment::Adapters::PostgresqlAdapter"
-```
+Use `Apartment::Tenant.adapter.class.name` to inspect adapter type.
 
 ### Inspect Configuration
 
-```ruby
-puts "Config: #{adapter.instance_variable_get(:@config).inspect}"
-puts "Default tenant: #{adapter.default_tenant}"
-```
+Access `adapter.instance_variable_get(:@config)` for configuration and `adapter.default_tenant` for default.
 
 ### Database-Specific Debugging
 
-**PostgreSQL - Check search path**:
-```ruby
-Apartment::Tenant.switch('acme') do
-  path = ActiveRecord::Base.connection.execute("SHOW search_path").first['search_path']
-  puts "Search path: #{path}"
-end
-```
+**PostgreSQL**: Execute `SHOW search_path` to verify current schema search path.
 
-**MySQL - Check current database**:
-```ruby
-Apartment::Tenant.switch('acme') do
-  db = ActiveRecord::Base.connection.execute("SELECT DATABASE()").first.first
-  puts "Current DB: #{db}"
-end
-```
+**MySQL**: Execute `SELECT DATABASE()` to verify current database name.
 
 ## Common Issues
 
@@ -647,29 +282,13 @@ end
 
 **Cause**: Permissions, invalid names, or database errors
 
-**Debug**:
-```ruby
-begin
-  Apartment::Tenant.create('test')
-rescue => e
-  puts "Error: #{e.class} - #{e.message}"
-  puts e.backtrace.first(5)
-end
-```
+**Debug**: Wrap `Apartment::Tenant.create` in rescue block and inspect exception class and message.
 
 ### Issue: Switching Fails
 
 **Cause**: Tenant doesn't exist or connection issues
 
-**Debug**:
-```ruby
-# Verify tenant exists
-puts Apartment.tenant_names.inspect
-
-# Check adapter state
-adapter = Apartment::Tenant.adapter
-puts "Current: #{adapter.current rescue 'ERROR'}"
-```
+**Debug**: Verify tenant in `Apartment.tenant_names` and check `adapter.current` state.
 
 ### Issue: Wrong Data After Switch
 
@@ -681,32 +300,11 @@ puts "Current: #{adapter.current rescue 'ERROR'}"
 
 ### PostgreSQL: Connection Pooling
 
-PostgreSQL adapters use a **shared connection pool**, so scaling is excellent:
-
-```yaml
-# config/database.yml
-production:
-  pool: 25  # Shared across all tenants
-```
+PostgreSQL adapters use shared connection pool across all tenants. Configure pool size in `database.yml`. See Rails connection pooling guides.
 
 ### MySQL: Connection Pool Caching
 
-Implement LRU cache for connection pools (not in v3, but possible):
-
-```ruby
-# Pseudo-code for optimization
-class CachedMysql2Adapter < Mysql2Adapter
-  def connect_to_new(tenant)
-    @pool_cache ||= LRUCache.new(max_size: 20)
-
-    pool = @pool_cache.fetch(tenant) do
-      establish_pool_for(tenant)
-    end
-
-    switch_to_pool(pool)
-  end
-end
-```
+Consider implementing LRU cache for connection pools to limit memory usage with many tenants. Not implemented in v3 but possible via custom adapter.
 
 ## References
 

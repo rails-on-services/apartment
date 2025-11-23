@@ -154,6 +154,9 @@ module Apartment
 
       ].freeze
 
+      # PostgreSQL meta-commands (backslash commands) that appear in pg_dump output
+      # but are not valid SQL when passed to ActiveRecord's execute().
+      # These must be filtered out to prevent syntax errors during schema import.
       PSQL_META_COMMANDS = [
         /^\\connect/i,
         /^\\set/i,
@@ -167,6 +170,7 @@ module Apartment
         /^\\./i, # end-of-copy delimiter
       ].freeze
 
+      # Combined blacklist: SQL statements and psql meta-commands to filter from pg_dump output
       PSQL_DUMP_GLOBAL_BLACKLIST = (PSQL_DUMP_BLACKLISTED_STATEMENTS + PSQL_META_COMMANDS).freeze
 
       def import_database_schema

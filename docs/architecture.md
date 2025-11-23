@@ -47,7 +47,7 @@ Apartment v3 uses **thread-local state** for tenant tracking. Each thread mainta
 
 **Alternative considered**: Global state with mutex locking. Rejected due to contention and complexity.
 
-**See**: `lib/apartment/tenant.rb:22-45` - adapter method
+**See**: `Apartment::Tenant.adapter` method in `tenant.rb`
 
 ### 4. Callback Pattern
 
@@ -57,7 +57,7 @@ Apartment v3 uses **thread-local state** for tenant tracking. Each thread mainta
 
 **Use cases**: Logging, notifications, analytics, APM integration.
 
-**See**: `lib/apartment/adapters/abstract_adapter.rb:7-8`
+**See**: Callback definitions in `AbstractAdapter` class
 
 ### 5. Strategy Pattern (Elevators)
 
@@ -95,7 +95,7 @@ Apartment v3 uses **thread-local state** for tenant tracking. Each thread mainta
 
 3. **Transaction handling**: Detect existing transactions (RSpec). Why? Avoid nested transactions that PostgreSQL rejects.
 
-**See**: `lib/apartment/adapters/abstract_adapter.rb:23-36` - create method
+**See**: `AbstractAdapter#create` method
 
 ### Configuration Resolution
 
@@ -105,7 +105,7 @@ Apartment v3 uses **thread-local state** for tenant tracking. Each thread mainta
 
 **Critical handling**: Rescue `ActiveRecord::StatementInvalid` during boot. Why? Table might not exist yet (migrations pending). Return empty array to allow app to start.
 
-**See**: `lib/apartment.rb:126-143` - extract_tenant_config
+**See**: `Apartment.extract_tenant_config` method
 
 ## Data Flow Differences by Database
 
@@ -195,7 +195,7 @@ Apartment v3 uses **thread-local state** for tenant tracking. Each thread mainta
 
 **Limitation**: `has_and_belongs_to_many` doesn't work with excluded models. Must use `has_many :through` instead.
 
-**See**: `lib/apartment/adapters/abstract_adapter.rb:108-114` - process_excluded_models
+**See**: `AbstractAdapter#process_excluded_models` method
 
 ## Configuration Design
 
@@ -215,7 +215,7 @@ Apartment v3 uses **thread-local state** for tenant tracking. Each thread mainta
 
 **Benefit**: Enables horizontal scaling and geographic distribution.
 
-**See**: README.md examples, `lib/apartment.rb:59-61` - db_config_for
+**See**: README.md examples and `Apartment.db_config_for` method
 
 ## Performance Design Decisions
 
