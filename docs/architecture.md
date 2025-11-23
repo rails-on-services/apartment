@@ -1,605 +1,274 @@
-# Apartment v3 Architecture
+# Apartment v3 Architecture - Design Decisions
 
-This document provides a deep dive into the architectural patterns and design decisions in Apartment v3.
+**Core files**: `lib/apartment.rb`, `lib/apartment/tenant.rb`
 
-## High-Level Architecture
+## Architectural Philosophy
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Rails Application                         │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 Apartment Middleware (Elevators)             │
-│  ┌──────────────┬──────────────┬──────────────┬──────────┐  │
-│  │  Subdomain   │    Domain    │     Host     │  Custom  │  │
-│  └──────────────┴──────────────┴──────────────┴──────────┘  │
-└──────────────────┬──────────────────────────────────────────┘
-                   │ Determines tenant from request
-                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Apartment::Tenant (Public API)                  │
-│  • switch(tenant)     • create(tenant)     • drop(tenant)    │
-│  • current            • reset              • each            │
-└──────────────────┬──────────────────────────────────────────┘
-                   │ Delegates to appropriate adapter
-                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Adapter Layer                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │            AbstractAdapter (Base Logic)                │  │
-│  └─────┬─────────────┬─────────────┬─────────────┬───────┘  │
-│        ▼             ▼             ▼             ▼           │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌─────────────┐    │
-│  │PostgreSQL│ │  MySQL2  │ │  SQLite3 │ │  JDBC/etc   │    │
-│  └──────────┘ └──────────┘ └──────────┘ └─────────────┘    │
-└──────────────────┬──────────────────────────────────────────┘
-                   │ Database-specific operations
-                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Database Layer                            │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  PostgreSQL Schemas  │  MySQL Databases  │  SQLite   │  │
-│  │  ┌───────────────┐   │  ┌─────────────┐  │  Files    │  │
-│  │  │ public        │   │  │ acme_corp   │  │  ┌─────┐ │  │
-│  │  │ acme_corp     │   │  │ widgets_inc │  │  │acme │ │  │
-│  │  │ widgets_inc   │   │  │ startup_co  │  │  └─────┘ │  │
-│  │  └───────────────┘   │  └─────────────┘  │          │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
+Apartment v3 uses **thread-local state** for tenant tracking. Each thread maintains its own adapter instance, enabling concurrent request handling without cross-contamination.
+
+**Critical design constraint**: This architecture is **not fiber-safe**. The v4 refactor addresses this limitation.
 
 ## Core Design Patterns
 
 ### 1. Adapter Pattern
 
-**Problem**: Different databases have different mechanisms for multi-tenancy.
+**Why**: Different databases require fundamentally different isolation strategies (PostgreSQL schemas vs MySQL databases vs SQLite files).
 
-**Solution**: Abstract common tenant operations behind a unified interface, with database-specific implementations.
+**Implementation**: `AbstractAdapter` defines lifecycle, database-specific subclasses implement mechanics.
 
-```ruby
-# Unified interface (AbstractAdapter)
-class AbstractAdapter
-  def create(tenant)
-    # Common logic: callbacks, schema import, seeding
-  end
+**Trade-off**: Adds abstraction layer but enables multi-database support.
 
-  def switch!(tenant)
-    # Database-specific implementation in subclass
-  end
+**See**: `lib/apartment/adapters/`
 
-  def drop(tenant)
-    # Database-specific implementation in subclass
-  end
-end
+### 2. Delegation Pattern
 
-# PostgreSQL implementation
-class PostgresqlAdapter < AbstractAdapter
-  def switch!(tenant)
-    # SET search_path = "tenant_name", public
-  end
-end
+**Why**: Simplify public API while maintaining internal flexibility.
 
-# MySQL implementation
-class Mysql2Adapter < AbstractAdapter
-  def switch!(tenant)
-    # Establish new connection to different database
-  end
-end
-```
+**Implementation**: `Apartment::Tenant` delegates all operations to the thread-local adapter instance.
 
-**Benefits**:
-- Single public API (`Apartment::Tenant`)
-- Database-specific optimizations
-- Easy to add new database support
+**Benefit**: Swap adapter implementations without changing user-facing code.
 
-### 2. Thread-Local Storage Pattern
+**See**: `lib/apartment/tenant.rb` - uses `def_delegators`
 
-**Problem**: Multiple concurrent requests need isolated tenant contexts.
+### 3. Thread-Local Storage Pattern
 
-**Solution**: Store adapter instance in `Thread.current`.
+**Why**: Concurrent requests need isolated tenant contexts.
 
-```ruby
-module Apartment
-  module Tenant
-    def adapter
-      Thread.current[:apartment_adapter] ||= begin
-        # Create adapter based on database config
-        adapter_method = "#{config[:adapter]}_adapter"
-        send(adapter_method, config)
-      end
-    end
-  end
-end
-```
+**Implementation**: Adapter stored in `Thread.current[:apartment_adapter]`.
 
-**Key characteristics**:
-- Each thread gets its own adapter instance
-- Tenant switching is isolated per-thread
-- Safe for multi-threaded servers (Puma, Falcon)
-- Safe for background jobs (Sidekiq)
+**Safe for**:
+- Multi-threaded web servers (Puma, Falcon)
+- Background job processors (Sidekiq with threading)
+- Concurrent requests to different tenants
 
-**Limitations**:
-- NOT fiber-safe (fibers share thread-local storage)
-- Global mutable state within thread
+**Unsafe for**:
+- Fiber-based async frameworks (fibers share thread storage)
+- Manual thread management with shared state
 
-### 3. Delegation Pattern
+**Alternative considered**: Global state with mutex locking. Rejected due to contention and complexity.
 
-**Problem**: Simplify public API while maintaining flexibility.
-
-**Solution**: `Apartment::Tenant` delegates to the current adapter.
-
-```ruby
-module Apartment
-  module Tenant
-    extend Forwardable
-
-    # Delegate all operations to adapter
-    def_delegators :adapter,
-      :create, :drop, :switch, :switch!,
-      :current, :each, :reset, :seed
-  end
-end
-
-# Usage
-Apartment::Tenant.switch('acme')  # Calls adapter.switch('acme')
-```
-
-**Benefits**:
-- Simple, consistent API
-- Adapter swapping is transparent
-- Easy to test (can mock adapter)
+**See**: `lib/apartment/tenant.rb:22-45` - adapter method
 
 ### 4. Callback Pattern
 
-**Problem**: Users need to execute custom logic during tenant operations.
+**Why**: Users need extension points without modifying gem code.
 
-**Solution**: `ActiveSupport::Callbacks` for lifecycle hooks.
+**Implementation**: ActiveSupport::Callbacks on `:create` and `:switch` events.
 
-```ruby
-class AbstractAdapter
-  include ActiveSupport::Callbacks
-  define_callbacks :create, :switch
+**Use cases**: Logging, notifications, analytics, APM integration.
 
-  def create(tenant)
-    run_callbacks :create do
-      # Actual creation logic
-    end
-  end
-
-  def switch!(tenant)
-    run_callbacks :switch do
-      # Actual switching logic
-    end
-  end
-end
-
-# User adds custom callbacks
-AbstractAdapter.set_callback :create, :after do
-  Rails.logger.info "Created tenant: #{Apartment::Tenant.current}"
-end
-```
-
-**Use cases**:
-- Logging tenant operations
-- Sending notifications
-- Analytics tracking
-- APM integration
+**See**: `lib/apartment/adapters/abstract_adapter.rb:7-8`
 
 ### 5. Strategy Pattern (Elevators)
 
-**Problem**: Different applications need different tenant resolution strategies.
+**Why**: Different applications need different tenant resolution mechanisms (subdomain, domain, header, session).
 
-**Solution**: Pluggable elevator implementations.
+**Implementation**: Pluggable Rack middleware with customizable `parse_tenant_name`.
 
-```ruby
-# Base strategy
-class Generic
-  def call(env)
-    tenant = parse_tenant_name(Rack::Request.new(env))
-    Apartment::Tenant.switch(tenant) do
-      @app.call(env)
-    end
-  end
+**Benefit**: Easy to add custom strategies without changing core.
 
-  def parse_tenant_name(request)
-    # Override in subclasses
-  end
-end
+**See**: `lib/apartment/elevators/`
 
-# Specific strategies
-class Subdomain < Generic
-  def parse_tenant_name(request)
-    request.subdomain
-  end
-end
+## Component Interaction
 
-class Domain < Generic
-  def parse_tenant_name(request)
-    request.domain
-  end
-end
-```
+### Request Processing Flow
 
-**Benefits**:
-- Easy to add custom strategies
-- Composable (can use multiple elevators)
-- Testable in isolation
+**Path**: Rack request → Elevator → Adapter → Database
 
-## Component Interaction Flow
+**Key decision points**:
+1. **Elevator positioning**: Must be before session/auth middleware. Why? Tenant context must be established before session data loads, otherwise wrong tenant's sessions leak.
 
-### Request Processing
+2. **Automatic cleanup**: `ensure` blocks in `switch()` guarantee tenant rollback even on exceptions. Why? Prevents connection staying in wrong tenant after errors.
 
-```
-1. Request arrives → http://acme.example.com/orders
+3. **Query cache management**: Explicitly preserve across switches. Why? Rails disables during connection establishment; must manually restore to maintain performance.
 
-2. Elevator middleware intercepts
-   ├─ Extract subdomain: "acme"
-   ├─ Check exclusions (not in excluded_subdomains)
-   └─ Call Apartment::Tenant.switch('acme')
+**See**: `lib/apartment/elevators/generic.rb` - base middleware pattern
 
-3. Apartment::Tenant.switch
-   ├─ Get current adapter (thread-local)
-   ├─ Store previous tenant
-   ├─ Call adapter.switch!('acme')
-   │  ├─ [PostgreSQL] SET search_path = "acme", public
-   │  └─ [MySQL] Establish connection to acme database
-   └─ Execute application code in block
+### Tenant Creation Flow
 
-4. Application processes request
-   ├─ All ActiveRecord queries use tenant context
-   ├─ User.all → SELECT FROM acme.users (PostgreSQL)
-   ├─          → SELECT FROM users (in acme database, MySQL)
-   └─ Excluded models use separate connections
+**Path**: User code → Adapter → Database → Schema import → Seeding
 
-5. Elevator ensures cleanup
-   └─ Apartment::Tenant.switch back to previous tenant
-```
+**Key decisions**:
+1. **Callback execution**: Wraps entire creation in callbacks. Why? Logging and notifications must capture the complete operation.
 
-### Tenant Creation
+2. **Switch during creation**: Import and seed run in tenant context. Why? Schema loading must target new tenant, not default.
 
-```
-1. Apartment::Tenant.create('new_tenant')
+3. **Transaction handling**: Detect existing transactions (RSpec). Why? Avoid nested transactions that PostgreSQL rejects.
 
-2. Adapter.create
-   ├─ Run :before callbacks
-   ├─ Create schema/database
-   │  ├─ [PostgreSQL] CREATE SCHEMA "new_tenant"
-   │  └─ [MySQL] CREATE DATABASE `new_tenant`
-   ├─ Switch to new tenant
-   ├─ Import schema (db/schema.rb)
-   │  ├─ Load schema file
-   │  └─ Execute CREATE TABLE statements
-   ├─ Seed data (if configured)
-   │  └─ Execute db/seeds.rb in tenant context
-   ├─ Execute block (if provided)
-   └─ Run :after callbacks
+**See**: `lib/apartment/adapters/abstract_adapter.rb:23-36` - create method
 
-3. Switch back to previous tenant
-```
+### Configuration Resolution
 
-## Data Flow
+**Why dynamic tenant lists?**: Tenants change at runtime (new signups, deletions). Static lists become stale.
+
+**Implementation**: `tenant_names` can be callable (proc/lambda) that queries database.
+
+**Critical handling**: Rescue `ActiveRecord::StatementInvalid` during boot. Why? Table might not exist yet (migrations pending). Return empty array to allow app to start.
+
+**See**: `lib/apartment.rb:126-143` - extract_tenant_config
+
+## Data Flow Differences by Database
 
 ### PostgreSQL Schema Strategy
 
-```
-Connection Pool (shared across tenants)
-  ↓
-Connection #1 → SET search_path = "acme"
-  ↓
-  Query: SELECT * FROM users
-  ↓
-  Resolved: SELECT * FROM acme.users
-  ↓
-  Result: acme tenant data
+**Mechanism**: Single connection pool, `SET search_path` per query.
 
-Connection #2 → SET search_path = "widgets"
-  ↓
-  Query: SELECT * FROM orders
-  ↓
-  Resolved: SELECT * FROM widgets.orders
-  ↓
-  Result: widgets tenant data
-```
+**Why this works**: PostgreSQL schemas are namespaces. Queries resolve to first matching table in search path.
 
-**Key insight**: Same connection pool, different schema path per query.
+**Memory efficiency**: Connection pool shared across all tenants. Only schema metadata grows with tenant count.
+
+**Performance**: Sub-millisecond switching (simple SQL command).
+
+**Limitation**: All tenants in same database. Backup/restore is database-wide.
 
 ### MySQL Database Strategy
 
-```
-Connection Pool (per database)
-  ↓
-Pool for 'acme'     Pool for 'widgets'
-  ↓                     ↓
-Connection to acme   Connection to widgets
-  ↓                     ↓
-Query: SELECT *      Query: SELECT *
-FROM users           FROM orders
-  ↓                     ↓
-acme.users           widgets.orders
-```
+**Mechanism**: Separate connection pool per tenant.
 
-**Key insight**: Separate connection pools per tenant.
+**Why different from PostgreSQL**: MySQL lacks robust schema support. Database is natural isolation unit.
 
-## Thread Safety
+**Memory cost**: Each active tenant requires connection pool (~20MB).
 
-### Current Implementation (v3)
+**Performance**: Slower switching (connection establishment overhead).
 
-```ruby
-# Thread-local adapter storage
-Thread.current[:apartment_adapter] = PostgresqlAdapter.new
+**Benefit**: Complete isolation. Can backup/restore individual tenants.
 
-# Each thread has isolated tenant context
-Thread 1: Apartment::Tenant.current → "acme"
-Thread 2: Apartment::Tenant.current → "widgets"
-```
+### SQLite File Strategy
 
-**Safe scenarios**:
-- ✅ Multi-threaded web servers (Puma, Falcon)
-- ✅ Background job workers (Sidekiq with threading)
-- ✅ Concurrent requests to different tenants
+**Mechanism**: Separate database file per tenant.
 
-**Unsafe scenarios**:
-- ❌ Fibers (share thread-local storage)
-- ❌ Async frameworks relying on fiber switching
-- ❌ Manual thread management with shared state
+**Why file-based**: SQLite is single-file by design.
 
-### Future v4 Implementation
-
-```ruby
-# Fiber-safe via CurrentAttributes
-class Apartment::Current < ActiveSupport::CurrentAttributes
-  attribute :tenant
-end
-
-# Automatically resets per request/job
-# Safe for async frameworks
-```
+**Use case**: Testing and development only. Concurrent writes cause locking issues.
 
 ## Memory Management
 
 ### PostgreSQL (Shared Pool)
-
-```
-Memory usage = Base connection pool + Schema metadata
-
-Tenants: 100
-Connection pool: 5 connections
-Memory: ~50MB (relatively constant)
-```
-
-**Scaling characteristics**:
-- Memory grows slowly with tenant count
-- Primarily schema metadata (table definitions)
-- Connection pool size independent of tenant count
+- Constant base: ~50MB for connection pool
+- Growth: Only schema metadata (minimal)
+- Scales to: 100+ tenants easily
 
 ### MySQL (Pool Per Tenant)
+- Base per tenant: ~20MB connection pool
+- Growth: Linear with active tenant count
+- Consider: LRU cache for connection pools (not implemented in v3)
 
-```
-Memory usage = (Connection pool size) × (Number of active tenants)
+## Thread Safety Analysis
 
-Tenants: 100
-Connection pool per tenant: 5
-Active tenants (cached): 20
-Memory: 20 × 5 × ~10MB = ~1GB
-```
+### What's Safe
 
-**Scaling characteristics**:
-- Memory grows with concurrent active tenants
-- Can implement LRU cache for connection pools
-- Must monitor connection limits
+**Multi-threaded request handling**: Each thread gets isolated adapter instance via `Thread.current`.
 
-## Excluded Models Architecture
+**Concurrent tenant access**: Thread 1 can be in tenant_a while Thread 2 is in tenant_b without interference.
 
-### Connection Isolation
+**Background jobs**: Sidekiq workers are threads, get their own adapters.
 
-```
-Default Connection Class (Apartment.connection_class)
-├─ Normal models (tenant-specific)
-│  ├─ User (excluded)
-│  ├─ Company (excluded)
-│  └─ Role (excluded)
-│
-└─ All other models
-   ├─ Order (tenant-scoped)
-   ├─ Product (tenant-scoped)
-   └─ Invoice (tenant-scoped)
+### What's Unsafe
 
-Excluded models establish separate connections:
-User.establish_connection(default_config)
-```
+**Fiber switching**: Fibers within a thread share `Thread.current`. Fiber-based async (EventMachine, async gem) will have cross-contamination.
 
-**Flow**:
-```
-1. Apartment initializes
-2. For each excluded model:
-   ├─ Model.constantize
-   └─ Model.establish_connection(default_config)
-3. Excluded models now bypass tenant switching
-```
+**Manual thread pooling with shared state**: Don't share adapter instances across threads.
 
-**Query behavior**:
-```ruby
-Apartment::Tenant.switch('acme') do
-  Order.all    # → SELECT FROM acme.orders (tenant-specific)
-  User.all     # → SELECT FROM public.users (excluded)
-end
-```
+**Solution**: v4 refactor uses `ActiveSupport::CurrentAttributes` which is fiber-safe.
 
-## Configuration Deep Dive
+## Error Handling Philosophy
 
-### tenant_names Resolution
+### Fail Fast vs Graceful Degradation
 
-```ruby
-# Static array
-config.tenant_names = ['acme', 'widgets']
-# → Returns: ['acme', 'widgets']
+**Tenant not found**: Raise exception. Why? Better to show error than serve wrong data.
 
-# Callable (lambda/proc)
-config.tenant_names = -> { Company.pluck(:subdomain) }
-# → Executes lambda, returns: ['acme', 'widgets', 'startup']
+**Tenant creation collision**: Raise exception. Why? Concurrent creation attempts indicate application bug.
 
-# Hash (tenant → config mapping)
-config.tenant_names = {
-  'acme' => { host: 'db1.example.com' },
-  'widgets' => { host: 'db2.example.com' }
-}
-# → Multi-database support
-```
+**Rollback failure**: Fall back to default tenant. Why? Better to serve default data than crash entire request.
 
-### Schema Import Process
+**Configuration errors**: Raise on boot. Why? Invalid config should prevent startup, not cause runtime failures.
 
-```
-1. Determine schema source
-   ├─ config.database_schema_file (default: db/schema.rb)
-   └─ Verify file exists
+## Excluded Models - Design Rationale
 
-2. Switch to tenant context
+**Problem**: Some models (User, Company) exist globally, not per-tenant.
 
-3. Silence ActiveRecord logging (optional)
+**Solution**: Establish separate connections that bypass tenant switching.
 
-4. Load schema file
-   ├─ Executes Ruby code (schema.rb)
-   └─ Creates tables, indexes, constraints
+**Implementation**: PostgreSQL explicitly qualifies table names (`public.users`). MySQL uses separate connection.
 
-5. Seed data (if configured)
-   ├─ Executes db/seeds.rb
-   └─ Within tenant context
+**Why not conditional logic?**: Separate connections are cleaner than "if excluded, do X else do Y" throughout codebase.
 
-6. Switch back to previous tenant
-```
+**Limitation**: `has_and_belongs_to_many` doesn't work with excluded models. Must use `has_many :through` instead.
+
+**See**: `lib/apartment/adapters/abstract_adapter.rb:108-114` - process_excluded_models
+
+## Configuration Design
+
+### Why Callable tenant_names?
+
+**Problem**: Static arrays become stale as tenants are created/deleted.
+
+**Solution**: Accept proc/lambda that queries database dynamically.
+
+**Trade-off**: Extra query on each access. Consider caching.
+
+### Why Hash Format for Multi-Server?
+
+**Problem**: Different tenants might live on different database servers.
+
+**Solution**: Hash maps tenant name to full connection config.
+
+**Benefit**: Enables horizontal scaling and geographic distribution.
+
+**See**: README.md examples, `lib/apartment.rb:59-61` - db_config_for
+
+## Performance Design Decisions
+
+### Why Query Cache Preservation?
+
+**Impact**: 10-30% performance improvement on cache-heavy workloads.
+
+**Cost**: Extra bookkeeping on every switch.
+
+**Decision**: Worth it. Query cache is critical for Rails performance.
+
+### Why Connection Verification?
+
+**call to verify!**: Ensures connection is live after establishment.
+
+**Why needed**: Stale connections from pool can cause mysterious failures.
+
+**Cost**: Extra network round-trip, but prevents worse failures.
 
 ## Extension Points
 
-### Custom Adapter
+### For Users
 
-```ruby
-# lib/apartment/adapters/custom_adapter.rb
-module Apartment
-  module Adapters
-    class CustomAdapter < AbstractAdapter
-      def create_tenant(tenant)
-        # Custom creation logic
-      end
+1. **Custom elevators**: Subclass `Generic`, override `parse_tenant_name`
+2. **Callbacks**: Hook into `:create` and `:switch` events
+3. **Custom adapters**: Subclass `AbstractAdapter` for new databases
 
-      def connect_to_new(tenant)
-        # Custom switching logic
-      end
+### Design Principle
 
-      def drop_command(conn, tenant)
-        # Custom drop logic
-      end
-    end
-  end
-end
+**Open for extension, closed for modification**: Users can add behavior without changing gem code.
 
-# Register adapter
-module Apartment
-  module Tenant
-    def custom_adapter(config)
-      Adapters::CustomAdapter.new(config)
-    end
-  end
-end
-```
+## Limitations & Known Issues
 
-### Custom Elevator
+### v3 Constraints
 
-```ruby
-# app/middleware/api_key_elevator.rb
-class ApiKeyElevator < Apartment::Elevators::Generic
-  def parse_tenant_name(request)
-    api_key = request.headers['X-API-Key']
-    return nil unless api_key
+1. **Thread-local only**: Not fiber-safe
+2. **Single adapter type**: Can't mix PostgreSQL schemas and MySQL databases in one app
+3. **No horizontal sharding**: Each adapter connects to single database cluster
+4. **Global excluded models**: Can't have different exclusions per tenant
 
-    # Lookup tenant from API key
-    ApiKey.find_by(key: api_key)&.tenant_name
-  end
-end
+### Why These Exist
 
-# config/application.rb
-config.middleware.use ApiKeyElevator
-```
+Historical decisions made before newer Rails features (sharding, CurrentAttributes) existed.
 
-## Performance Characteristics
+### v4 Improvements
 
-### PostgreSQL Schema Switching
-
-**Latency**: < 1ms (SQL command execution)
-**Throughput**: Limited by connection pool size
-**Scalability**: 100+ tenants with no performance degradation
-
-### MySQL Database Switching
-
-**Latency**: ~10-50ms (connection establishment)
-**Throughput**: Limited by connection pool count × tenants
-**Scalability**: 10-20 active tenants before connection limits
-
-### SQLite File Switching
-
-**Latency**: ~5-20ms (file I/O + connection establishment)
-**Throughput**: Limited by disk I/O
-**Scalability**: Not recommended for production multi-user
-
-## Error Handling Strategy
-
-### Exception Hierarchy Design
-
-```
-ApartmentError (StandardError)
-  ├─ AdapterNotFound
-  │  └─ Raised when database adapter not supported
-  ├─ FileNotFound
-  │  └─ Raised when schema/seed file missing
-  ├─ TenantNotFound
-  │  └─ Raised when switching to non-existent tenant
-  └─ TenantExists
-     └─ Raised when creating duplicate tenant
-```
-
-### Recovery Patterns
-
-```ruby
-# Graceful degradation
-def switch!(tenant)
-  previous = current
-  connect_to_new(tenant)
-rescue TenantNotFound
-  # Attempt to fall back
-  connect_to_new(default_tenant)
-ensure
-  # Always ensure valid connection
-end
-```
-
-## Limitations & Trade-offs
-
-### Current Architecture
-
-**Limitations**:
-- Thread-local storage (not fiber-safe)
-- Global mutable state within threads
-- Switching overhead (especially MySQL)
-- Connection pool management complexity
-
-**Trade-offs**:
-- **Flexibility** ↔ **Complexity**: Supporting multiple databases adds complexity
-- **Performance** ↔ **Isolation**: PostgreSQL is faster but less isolated than MySQL
-- **Simplicity** ↔ **Features**: Rich feature set increases maintenance burden
-
-### v4 Direction
-
-Addressing limitations through:
-- **Connection pool per tenant** (eliminates switching)
-- **`CurrentAttributes`** (fiber-safe, cleaner state management)
-- **Immutable connection descriptors** (thread-safe by design)
-- **Simplified public API** (reduce surface area)
+The `man/spec-restart` branch refactor addresses most limitations via connection-pool-per-tenant architecture.
 
 ## References
 
-- **Thread-local storage**: Ruby's `Thread.current` hash
-- **ActiveSupport::Callbacks**: Rails callback framework
-- **Adapter pattern**: Gang of Four design patterns
-- **Connection pooling**: ActiveRecord connection management
-- **Middleware pattern**: Rack middleware specification
+- Main module: `lib/apartment.rb`
+- Public API: `lib/apartment/tenant.rb`
+- Adapters: `lib/apartment/adapters/*.rb`
+- Elevators: `lib/apartment/elevators/*.rb`
+- Thread storage: Ruby documentation on `Thread.current`
+- Rails connection pooling: Rails guides
