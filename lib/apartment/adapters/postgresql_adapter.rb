@@ -57,7 +57,8 @@ module Apartment
 
       def process_excluded_model(excluded_model)
         excluded_model.constantize.tap do |klass|
-          # Ensure that if a schema *was* set, we override
+          # Strip any existing schema qualifier (handles "schema.table" → "table")
+          # Then explicitly set to default schema to prevent tenant-based queries
           table_name = klass.table_name.split('.', 2).last
 
           klass.table_name = "#{default_tenant}.#{table_name}"
@@ -89,7 +90,8 @@ module Apartment
       end
 
       def create_tenant_command(conn, tenant)
-        # NOTE: This was causing some tests to fail because of the database strategy for rspec
+        # Avoid nested transactions: if already in transaction (e.g., RSpec tests),
+        # execute directly. Otherwise, wrap in explicit transaction for atomicity.
         if ActiveRecord::Base.connection.open_transactions.positive?
           conn.execute(%(CREATE SCHEMA "#{tenant}"))
         else
@@ -176,9 +178,9 @@ module Apartment
 
       private
 
-      # Re-set search path after the schema is imported.
-      # Postgres now sets search path to empty before dumping the schema
-      # and it mut be reset
+      # PostgreSQL's pg_dump clears search_path in the dump output, which would
+      # leave us with an empty path after import. Capture current path, execute
+      # import, then restore it to maintain tenant context.
       #
       def preserving_search_path
         search_path = Apartment.connection.execute('show search_path').first['search_path']
@@ -224,8 +226,9 @@ module Apartment
       end
       # rubocop:enable Layout/LineLength
 
-      # Temporary set Postgresql related environment variables if there are in @config
-      #
+      # Temporarily set PostgreSQL environment variables for pg_dump shell commands.
+      # Must preserve and restore existing ENV values to avoid polluting global state.
+      # pg_dump reads these instead of passing connection params as CLI args.
       def with_pg_env
         pghost = ENV['PGHOST']
         pgport = ENV['PGPORT']
@@ -239,6 +242,7 @@ module Apartment
 
         yield
       ensure
+        # Always restore original ENV state (might be nil)
         ENV['PGHOST'] = pghost
         ENV['PGPORT'] = pgport
         ENV['PGUSER'] = pguser

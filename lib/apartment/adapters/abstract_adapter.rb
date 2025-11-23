@@ -88,9 +88,11 @@ module Apartment
         switch!(tenant)
         yield
       ensure
+        # Always attempt rollback to previous tenant, even if block raised
         begin
           switch!(previous_tenant)
         rescue StandardError => _e
+          # If rollback fails (tenant was dropped, connection lost), fall back to default
           reset
         end
       end
@@ -178,11 +180,14 @@ module Apartment
       def connect_to_new(tenant)
         return reset if tenant.nil?
 
+        # Preserve query cache state across tenant switches
+        # Rails disables it during connection establishment
         query_cache_enabled = ActiveRecord::Base.connection.query_cache_enabled
 
         Apartment.establish_connection multi_tenantify(tenant)
-        Apartment.connection.verify! # call active? to manually check if this connection is valid
+        Apartment.connection.verify! # Explicitly validate connection is live
 
+        # Restore query cache if it was previously enabled
         Apartment.connection.enable_query_cache! if query_cache_enabled
       rescue *rescuable_exceptions => e
         Apartment::Tenant.reset if reset_on_connection_exception?
@@ -241,13 +246,14 @@ module Apartment
 
       def with_neutral_connection(tenant, &_block)
         if Apartment.with_multi_server_setup
-          # neutral connection is necessary whenever you need to create/remove a database from a server.
-          # example: when you use postgresql, you need to connect to the default postgresql database before you create
-          # your own.
+          # Multi-server setup requires separate connection handler to avoid polluting
+          # the main connection pool. For example: connecting to postgres 'template1'
+          # database to CREATE/DROP tenant databases without affecting app connections.
           SeparateDbConnectionHandler.establish_connection(multi_tenantify(tenant, false))
           yield(SeparateDbConnectionHandler.connection)
           SeparateDbConnectionHandler.connection.close
         else
+          # Single-server: reuse existing connection (safe for most operations)
           yield(Apartment.connection)
         end
       end
@@ -268,6 +274,8 @@ module Apartment
         raise TenantNotFound, "Error while connecting to tenant #{environmentify(tenant)}: #{exception.message}"
       end
 
+      # Dedicated AR connection class for neutral connections (admin operations like CREATE/DROP DATABASE).
+      # Prevents admin commands from polluting the main application connection pool.
       class SeparateDbConnectionHandler < ::ActiveRecord::Base
       end
     end

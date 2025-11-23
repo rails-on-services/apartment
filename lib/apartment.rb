@@ -68,9 +68,10 @@ module Apartment
       @db_migrate_tenants = true
     end
 
-    # How to handle tenant missing on db:migrate
-    # defaults to :rescue_exception
-    # available options: rescue_exception, raise_exception, create_tenant
+    # How to handle missing tenants during db:migrate
+    # :rescue_exception (default) - Log error, continue with other tenants
+    # :raise_exception - Stop migration immediately
+    # :create_tenant - Automatically create missing tenant and migrate
     def db_migrate_tenant_missing_strategy
       valid = %i[rescue_exception raise_exception create_tenant]
       value = @db_migrate_tenant_missing_strategy || :rescue_exception
@@ -126,7 +127,10 @@ module Apartment
     def extract_tenant_config
       return {} unless @tenant_names
 
+      # Execute callable (proc/lambda) to get dynamic tenant list from database
       values = @tenant_names.respond_to?(:call) ? @tenant_names.call : @tenant_names
+
+      # Normalize arrays to hash format (tenant_name => connection_config)
       unless values.is_a? Hash
         values = values.each_with_object({}) do |tenant, hash|
           hash[tenant] = connection_config
@@ -134,6 +138,8 @@ module Apartment
       end
       values.with_indifferent_access
     rescue ActiveRecord::StatementInvalid
+      # Database query failed (table doesn't exist yet, connection issue)
+      # Return empty hash to allow app to boot without tenants
       {}
     end
   end

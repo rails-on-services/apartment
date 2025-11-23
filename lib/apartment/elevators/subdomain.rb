@@ -22,8 +22,9 @@ module Apartment
       def parse_tenant_name(request)
         request_subdomain = subdomain(request.host)
 
-        # If the domain acquired is set to be excluded, set the tenant to whatever is currently
-        # next in line in the schema search path.
+        # Excluded subdomains (www, api, admin) return nil → uses default tenant.
+        # Returning nil instead of default_tenant name allows Apartment to decide
+        # the fallback behavior.
         tenant = if self.class.excluded_subdomains.include?(request_subdomain)
                    nil
                  else
@@ -35,11 +36,11 @@ module Apartment
 
       protected
 
-      # *Almost* a direct ripoff of ActionDispatch::Request subdomain methods
+      # Subdomain extraction using PublicSuffix to handle international TLDs correctly.
+      # Examples: api.example.com → "api", www.example.co.uk → "www"
 
-      # Only care about the first subdomain for the database name
       def subdomain(host)
-        subdomains(host).first
+        subdomains(host).first  # Only first subdomain matters for tenant resolution
       end
 
       def subdomains(host)
@@ -50,6 +51,7 @@ module Apartment
         !ip_host?(host) && domain_valid?(host)
       end
 
+      # Reject IP addresses (127.0.0.1, 192.168.1.1) - no subdomain concept
       def ip_host?(host)
         !/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/.match(host).nil?
       end
@@ -58,6 +60,8 @@ module Apartment
         PublicSuffix.valid?(host, ignore_private: true)
       end
 
+      # PublicSuffix.parse handles TLDs correctly: example.co.uk has TLD "co.uk"
+      # .trd (third-level domain) returns subdomain parts, excluding TLD
       def parse_host(host)
         (PublicSuffix.parse(host, ignore_private: true).trd || '').split('.')
       end
