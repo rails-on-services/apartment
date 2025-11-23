@@ -14,7 +14,7 @@
 
 ActiveRecord::Schema.define(version: 20_180_415_260_934) do
   # These are extensions that must be enabled in order to support this database
-  enable_extension 'plpgsql'
+  enable_extension 'plpgsql' if ActiveRecord::Base.connection.adapter_name == 'PostgreSQL'
 
   create_table 'books', force: :cascade do |t|
     t.string('name')

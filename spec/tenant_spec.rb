@@ -4,7 +4,10 @@ require 'spec_helper'
 
 describe Apartment::Tenant do
   context 'using mysql', database: :mysql do
-    before { subject.reload!(config) }
+    before do
+      Apartment.use_schemas = false
+      subject.reload!(config)
+    end
 
     describe '#adapter' do
       it 'loads mysql adapter' do
