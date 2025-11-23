@@ -18,22 +18,22 @@ shared_examples_for 'a generic apartment adapter callbacks' do
 
   describe '#switch!' do
     before do
-      Apartment::Adapters::AbstractAdapter.set_callback :switch, :before do
+      Apartment::Adapters::AbstractAdapter.set_callback(:switch, :before) do
         MyProc.call(Apartment::Tenant.current)
       end
 
-      Apartment::Adapters::AbstractAdapter.set_callback :switch, :after do
+      Apartment::Adapters::AbstractAdapter.set_callback(:switch, :after) do
         MyProc.call(Apartment::Tenant.current)
       end
 
-      allow(MyProc).to receive(:call)
+      allow(MyProc).to(receive(:call))
     end
 
     # NOTE: Part of the test setup creates and switches tenants, so we need
     # to reset the callbacks to ensure that each test run has the correct
     # counts
     after do
-      Apartment::Adapters::AbstractAdapter.reset_callbacks :switch
+      Apartment::Adapters::AbstractAdapter.reset_callbacks(:switch)
     end
 
     context 'when tenant is nil' do
@@ -42,7 +42,7 @@ shared_examples_for 'a generic apartment adapter callbacks' do
       end
 
       it 'runs both before and after callbacks' do
-        expect(MyProc).to have_received(:call).twice
+        expect(MyProc).to(have_received(:call).twice)
       end
     end
 
@@ -52,7 +52,7 @@ shared_examples_for 'a generic apartment adapter callbacks' do
       end
 
       it 'runs both before and after callbacks' do
-        expect(MyProc).to have_received(:call).twice
+        expect(MyProc).to(have_received(:call).twice)
       end
     end
   end

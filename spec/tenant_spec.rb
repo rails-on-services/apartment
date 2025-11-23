@@ -7,11 +7,11 @@ describe Apartment::Tenant do
     before { subject.reload!(config) }
 
     describe '#adapter' do
-      it 'should load mysql adapter' do
+      it 'loads mysql adapter' do
         if defined?(JRUBY_VERSION)
-          expect(subject.adapter).to be_a(Apartment::Adapters::JDBCMysqlAdapter)
+          expect(subject.adapter).to(be_a(Apartment::Adapters::JDBCMysqlAdapter))
         else
-          expect(subject.adapter).to be_a(Apartment::Adapters::Mysql2Adapter)
+          expect(subject.adapter).to(be_a(Apartment::Adapters::Mysql2Adapter))
         end
       end
     end
@@ -29,13 +29,13 @@ describe Apartment::Tenant do
         end
 
         after do
-          subject.drop 'db_with_prefix'
+          subject.drop('db_with_prefix')
         rescue StandardError => _e
           nil
         end
 
-        it 'should create a new database' do
-          subject.create 'db_with_prefix'
+        it 'creates a new database' do
+          subject.create('db_with_prefix')
         end
       end
     end
@@ -48,11 +48,11 @@ describe Apartment::Tenant do
     end
 
     describe '#adapter' do
-      it 'should load postgresql adapter' do
+      it 'loads postgresql adapter' do
         if defined?(JRUBY_VERSION)
-          expect(subject.adapter).to be_a(Apartment::Adapters::JDBCPostgresqlSchemaAdapter)
+          expect(subject.adapter).to(be_a(Apartment::Adapters::JDBCPostgresqlSchemaAdapter))
         else
-          expect(subject.adapter).to be_a(Apartment::Adapters::PostgresqlSchemaAdapter)
+          expect(subject.adapter).to(be_a(Apartment::Adapters::PostgresqlSchemaAdapter))
         end
       end
 
@@ -60,20 +60,20 @@ describe Apartment::Tenant do
         subject.reload!((config || Apartment.connection_config).merge(adapter: 'unknown'))
 
         expect do
-          Apartment::Tenant.adapter
-        end.to raise_error(RuntimeError)
+          described_class.adapter
+        end.to(raise_error(RuntimeError))
       end
 
       context 'threadsafety' do
-        before { subject.create db1 }
+        before { subject.create(db1) }
 
-        after  { subject.drop   db1 }
+        after  { subject.drop(db1) }
 
         it 'has a threadsafe adapter' do
           subject.switch!(db1)
-          thread = Thread.new { expect(subject.current).to eq(subject.adapter.default_tenant) }
+          thread = Thread.new { expect(subject.current).to(eq(subject.adapter.default_tenant)) }
           thread.join
-          expect(subject.current).to eq(db1)
+          expect(subject.current).to(eq(db1))
         end
       end
     end
@@ -86,15 +86,15 @@ describe Apartment::Tenant do
           config.use_schemas = true
           config.seed_after_create = true
         end
-        subject.create db1
+        subject.create(db1)
       end
 
-      after { subject.drop db1 }
+      after { subject.drop(db1) }
 
       describe '#create' do
-        it 'should seed data' do
-          subject.switch! db1
-          expect(User.count).to be > 0
+        it 'seeds data' do
+          subject.switch!(db1)
+          expect(User.count).to(be > 0)
         end
       end
 
@@ -102,22 +102,22 @@ describe Apartment::Tenant do
         let(:x) { rand(3) }
 
         context 'creating models' do
-          before { subject.create db2 }
+          before { subject.create(db2) }
 
-          after { subject.drop db2 }
+          after { subject.drop(db2) }
 
-          it 'should create a model instance in the current schema' do
-            subject.switch! db2
+          it 'creates a model instance in the current schema' do
+            subject.switch!(db2)
             db2_count = User.count + x.times { User.create }
 
-            subject.switch! db1
+            subject.switch!(db1)
             db_count = User.count + x.times { User.create }
 
-            subject.switch! db2
-            expect(User.count).to eq(db2_count)
+            subject.switch!(db2)
+            expect(User.count).to(eq(db2_count))
 
-            subject.switch! db1
-            expect(User.count).to eq(db_count)
+            subject.switch!(db1)
+            expect(User.count).to(eq(db_count))
           end
         end
 
@@ -137,15 +137,15 @@ describe Apartment::Tenant do
             end
           end
 
-          it 'should create excluded models in public schema' do
+          it 'creates excluded models in public schema' do
             subject.reset # ensure we're on public schema
             count = Company.count + x.times { Company.create }
 
-            subject.switch! db1
+            subject.switch!(db1)
             x.times { Company.create }
-            expect(Company.count).to eq(count + x)
+            expect(Company.count).to(eq(count + x))
             subject.reset
-            expect(Company.count).to eq(count + x)
+            expect(Company.count).to(eq(count + x))
           end
         end
       end
@@ -160,23 +160,23 @@ describe Apartment::Tenant do
         end
       end
 
-      after { subject.drop db1 }
+      after { subject.drop(db1) }
 
-      it 'should seed from default path' do
-        subject.create db1
-        subject.switch! db1
-        expect(User.count).to eq(3)
-        expect(User.first.name).to eq('Some User 0')
+      it 'seeds from default path' do
+        subject.create(db1)
+        subject.switch!(db1)
+        expect(User.count).to(eq(3))
+        expect(User.first.name).to(eq('Some User 0'))
       end
 
-      it 'should seed from custom path' do
+      it 'seeds from custom path' do
         Apartment.configure do |config|
           config.seed_data_file = Rails.root.join('db/seeds/import.rb')
         end
-        subject.create db1
-        subject.switch! db1
-        expect(User.count).to eq(6)
-        expect(User.first.name).to eq('Different User 0')
+        subject.create(db1)
+        subject.switch!(db1)
+        expect(User.count).to(eq(6))
+        expect(User.first.name).to(eq('Different User 0'))
       end
     end
   end

@@ -5,7 +5,7 @@ require 'apartment/adapters/abstract_jdbc_adapter'
 module Apartment
   module Tenant
     def self.jdbc_mysql_adapter(config)
-      Adapters::JDBCMysqlAdapter.new config
+      Adapters::JDBCMysqlAdapter.new(config)
     end
   end
 

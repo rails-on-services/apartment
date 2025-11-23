@@ -19,8 +19,8 @@ module Apartment
 
       def drop(tenant)
         unless File.exist?(database_file(tenant))
-          raise TenantNotFound,
-                "The tenant #{environmentify(tenant)} cannot be found."
+          raise(TenantNotFound,
+                "The tenant #{environmentify(tenant)} cannot be found.")
         end
 
         File.delete(database_file(tenant))
@@ -36,17 +36,17 @@ module Apartment
         return reset if tenant.nil?
 
         unless File.exist?(database_file(tenant))
-          raise TenantNotFound,
-                "The tenant #{environmentify(tenant)} cannot be found."
+          raise(TenantNotFound,
+                "The tenant #{environmentify(tenant)} cannot be found.")
         end
 
-        super database_file(tenant)
+        super(database_file(tenant))
       end
 
       def create_tenant(tenant)
         if File.exist?(database_file(tenant))
-          raise TenantExists,
-                "The tenant #{environmentify(tenant)} already exists."
+          raise(TenantExists,
+                "The tenant #{environmentify(tenant)} already exists.")
         end
 
         begin

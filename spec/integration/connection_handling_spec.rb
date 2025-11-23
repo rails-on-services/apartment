@@ -38,14 +38,14 @@ describe 'connection handling monkey patch' do
     end
 
     it 'is monkey patched' do
-      expect(ActiveRecord::ConnectionHandling.instance_methods).to include(:connected_to_with_tenant)
+      expect(ActiveRecord::ConnectionHandling.instance_methods).to(include(:connected_to_with_tenant))
     end
 
     it 'switches to the previous set tenant' do
-      Apartment::Tenant.switch! db_name
+      Apartment::Tenant.switch!(db_name)
       ActiveRecord::Base.connected_to(role: role) do
-        expect(Apartment::Tenant.current).to eq db_name
-        expect(User.find_by!(name: db_name).name).to eq(db_name)
+        expect(Apartment::Tenant.current).to(eq(db_name))
+        expect(User.find_by!(name: db_name).name).to(eq(db_name))
       end
     end
   end

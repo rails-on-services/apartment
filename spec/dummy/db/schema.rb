@@ -17,39 +17,39 @@ ActiveRecord::Schema.define(version: 20_180_415_260_934) do
   enable_extension 'plpgsql'
 
   create_table 'books', force: :cascade do |t|
-    t.string 'name'
-    t.integer 'pages'
-    t.datetime 'published'
+    t.string('name')
+    t.integer('pages')
+    t.datetime('published')
   end
 
   create_table 'companies', force: :cascade do |t|
-    t.boolean 'dummy'
-    t.string 'database'
+    t.boolean('dummy')
+    t.string('database')
   end
 
   create_table 'delayed_jobs', force: :cascade do |t|
-    t.integer 'priority', default: 0
-    t.integer 'attempts', default: 0
-    t.text 'handler'
-    t.text 'last_error'
-    t.datetime 'run_at'
-    t.datetime 'locked_at'
-    t.datetime 'failed_at'
-    t.string 'locked_by'
-    t.datetime 'created_at'
-    t.datetime 'updated_at'
-    t.string 'queue'
-    t.index %w[priority run_at], name: 'delayed_jobs_priority'
+    t.integer('priority', default: 0)
+    t.integer('attempts', default: 0)
+    t.text('handler')
+    t.text('last_error')
+    t.datetime('run_at')
+    t.datetime('locked_at')
+    t.datetime('failed_at')
+    t.string('locked_by')
+    t.datetime('created_at')
+    t.datetime('updated_at')
+    t.string('queue')
+    t.index(%w[priority run_at], name: 'delayed_jobs_priority')
   end
 
   create_table 'public_tokens', id: :serial, force: :cascade do |t|
-    t.string 'token'
-    t.integer 'user_id'
+    t.string('token')
+    t.integer('user_id')
   end
 
   create_table 'users', force: :cascade do |t|
-    t.string 'name'
-    t.datetime 'birthdate'
-    t.string 'sex'
+    t.string('name')
+    t.datetime('birthdate')
+    t.string('sex')
   end
 end

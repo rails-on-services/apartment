@@ -40,7 +40,7 @@ module Apartment
       # Examples: api.example.com → "api", www.example.co.uk → "www"
 
       def subdomain(host)
-        subdomains(host).first  # Only first subdomain matters for tenant resolution
+        subdomains(host).first # Only first subdomain matters for tenant resolution
       end
 
       def subdomains(host)

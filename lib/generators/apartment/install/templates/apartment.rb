@@ -50,7 +50,7 @@ Apartment.configure do |config|
   #   end
   # end
   #
-  config.tenant_names = -> { ToDo_Tenant_Or_User_Model.pluck :database }
+  config.tenant_names = -> { ToDo_Tenant_Or_User_Model.pluck(:database) }
 
   # PostgreSQL:
   #   Specifies whether to use PostgreSQL schemas or create a new database per Tenant.
@@ -111,6 +111,6 @@ end
 # }
 
 # Rails.application.config.middleware.use Apartment::Elevators::Domain
-Rails.application.config.middleware.use Apartment::Elevators::Subdomain
+Rails.application.config.middleware.use(Apartment::Elevators::Subdomain)
 # Rails.application.config.middleware.use Apartment::Elevators::FirstSubdomain
 # Rails.application.config.middleware.use Apartment::Elevators::Host

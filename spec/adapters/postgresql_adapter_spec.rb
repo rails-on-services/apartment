@@ -15,7 +15,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
 
       # Not sure why, but somehow using let(:tenant_names) memoizes for the whole example group, not just each test
       def tenant_names
-        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').collect { |row| row['nspname'] }
+        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').pluck('nspname')
       end
 
       let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.schema_search_path.delete('"') } }
@@ -31,12 +31,12 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
       end
 
       after do
-        Apartment::Tenant.drop('has-dashes') if Apartment.connection.schema_exists? 'has-dashes'
+        Apartment::Tenant.drop('has-dashes') if Apartment.connection.schema_exists?('has-dashes')
       end
 
       # Not sure why, but somehow using let(:tenant_names) memoizes for the whole example group, not just each test
       def tenant_names
-        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').collect { |row| row['nspname'] }
+        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').pluck('nspname')
       end
 
       let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.schema_search_path.delete('"') } }
@@ -45,7 +45,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
       it_behaves_like 'a schema based apartment adapter'
 
       it 'allows for dashes in the schema name' do
-        expect { Apartment::Tenant.create('has-dashes') }.not_to raise_error
+        expect { Apartment::Tenant.create('has-dashes') }.not_to(raise_error)
       end
     end
 
@@ -54,7 +54,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
 
       # Not sure why, but somehow using let(:tenant_names) memoizes for the whole example group, not just each test
       def tenant_names
-        connection.execute('select datname from pg_database;').collect { |row| row['datname'] }
+        connection.execute('select datname from pg_database;').pluck('datname')
       end
 
       let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.current_database } }
@@ -70,7 +70,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
         Apartment.use_schemas = true
         Apartment.use_sql = true
         Apartment.pg_exclude_clone_tables = true
-        ActiveRecord::Base.connection.execute <<-PROCEDURE
+        ActiveRecord::Base.connection.execute(<<-PROCEDURE)
           CREATE OR REPLACE FUNCTION test_function() RETURNS INTEGER AS $function$
           DECLARE
             r1 INTEGER;
@@ -85,7 +85,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
       end
 
       after do
-        Apartment::Tenant.drop('has-procedure') if Apartment.connection.schema_exists? 'has-procedure'
+        Apartment::Tenant.drop('has-procedure') if Apartment.connection.schema_exists?('has-procedure')
         ActiveRecord::Base.connection.execute('DROP FUNCTION IF EXISTS test_function();')
         # Apartment::Tenant.init creates per model connection.
         # Remove the connection after testing not to unintentionally keep the connection across tests.
@@ -96,7 +96,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
 
       # Not sure why, but somehow using let(:tenant_names) memoizes for the whole example group, not just each test
       def tenant_names
-        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').collect { |row| row['nspname'] }
+        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').pluck('nspname')
       end
 
       let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.schema_search_path.delete('"') } }

@@ -17,7 +17,7 @@ describe 'query caching' do
 
       db_names.each do |db_name|
         Apartment::Tenant.create(db_name)
-        Company.create database: db_name
+        Company.create(database: db_name)
       end
     end
 
@@ -29,17 +29,17 @@ describe 'query caching' do
 
     it 'clears the ActiveRecord::QueryCache after switching databases' do
       db_names.each do |db_name|
-        Apartment::Tenant.switch! db_name
-        User.create! name: db_name
+        Apartment::Tenant.switch!(db_name)
+        User.create!(name: db_name)
       end
 
       ActiveRecord::Base.connection.enable_query_cache!
 
-      Apartment::Tenant.switch! db_names.first
-      expect(User.find_by(name: db_names.first).name).to eq(db_names.first)
+      Apartment::Tenant.switch!(db_names.first)
+      expect(User.find_by(name: db_names.first).name).to(eq(db_names.first))
 
-      Apartment::Tenant.switch! db_names.last
-      expect(User.find_by(name: db_names.first)).to be_nil
+      Apartment::Tenant.switch!(db_names.last)
+      expect(User.find_by(name: db_names.first)).to(be_nil)
     end
   end
 
@@ -56,7 +56,7 @@ describe 'query caching' do
       Apartment::Tenant.reload!(config)
 
       Apartment::Tenant.create(db_name)
-      Company.create database: db_name
+      Company.create(database: db_name)
     end
 
     after do
@@ -69,13 +69,13 @@ describe 'query caching' do
     it 'configuration value is kept after switching databases' do
       ActiveRecord::Base.connection.enable_query_cache!
 
-      Apartment::Tenant.switch! db_name
-      expect(Apartment.connection.query_cache_enabled).to be true
+      Apartment::Tenant.switch!(db_name)
+      expect(Apartment.connection.query_cache_enabled).to(be(true))
 
       ActiveRecord::Base.connection.disable_query_cache!
 
-      Apartment::Tenant.switch! db_name
-      expect(Apartment.connection.query_cache_enabled).to be false
+      Apartment::Tenant.switch!(db_name)
+      expect(Apartment.connection.query_cache_enabled).to(be(false))
     end
   end
 end

@@ -41,7 +41,7 @@ module Apartment
 
     # configure apartment with available options
     def configure
-      yield self if block_given?
+      yield(self) if block_given?
     end
 
     def tenant_names
@@ -57,7 +57,7 @@ module Apartment
     end
 
     def db_config_for(tenant)
-      (tenants_with_config[tenant] || connection_config)
+      tenants_with_config[tenant] || connection_config
     end
 
     # Whether or not db:migrate should also migrate tenants
@@ -81,7 +81,7 @@ module Apartment
       key_name  = 'config.db_migrate_tenant_missing_strategy'
       opt_names = valid.join(', ')
 
-      raise ApartmentError, "Option #{value} not valid for `#{key_name}`. Use one of #{opt_names}"
+      raise(ApartmentError, "Option #{value} not valid for `#{key_name}`. Use one of #{opt_names}")
     end
 
     # Default to empty array
@@ -131,9 +131,9 @@ module Apartment
       values = @tenant_names.respond_to?(:call) ? @tenant_names.call : @tenant_names
 
       # Normalize arrays to hash format (tenant_name => connection_config)
-      unless values.is_a? Hash
-        values = values.each_with_object({}) do |tenant, hash|
-          hash[tenant] = connection_config
+      unless values.is_a?(Hash)
+        values = values.index_with do |_tenant|
+          connection_config
         end
       end
       values.with_indifferent_access

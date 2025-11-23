@@ -35,16 +35,16 @@ describe 'apartment rake tasks' do
     let(:tenant_count) { tenant_names.length }
 
     before do
-      allow(Apartment).to receive(:tenant_names).and_return tenant_names
+      allow(Apartment).to(receive(:tenant_names).and_return(tenant_names))
     end
 
     describe 'apartment:migrate' do
       before do
-        allow(ActiveRecord::Migrator).to receive(:migrate) # don't care about this
+        allow(ActiveRecord::Migrator).to(receive(:migrate)) # don't care about this
       end
 
-      it 'should migrate public and all multi-tenant dbs' do
-        expect(Apartment::Migrator).to receive(:migrate).exactly(tenant_count).times
+      it 'migrates public and all multi-tenant dbs' do
+        expect(Apartment::Migrator).to(receive(:migrate).exactly(tenant_count).times)
         @rake['apartment:migrate'].invoke
       end
     end
@@ -58,7 +58,7 @@ describe 'apartment rake tasks' do
         it 'requires a version to migrate to' do
           expect do
             @rake['apartment:migrate:up'].invoke
-          end.to raise_error('VERSION is required')
+          end.to(raise_error('VERSION is required'))
         end
       end
 
@@ -68,7 +68,7 @@ describe 'apartment rake tasks' do
         end
 
         it 'migrates up to a specific version' do
-          expect(Apartment::Migrator).to receive(:run).with(:up, anything, version.to_i).exactly(tenant_count).times
+          expect(Apartment::Migrator).to(receive(:run).with(:up, anything, version.to_i).exactly(tenant_count).times)
           @rake['apartment:migrate:up'].invoke
         end
       end
@@ -83,7 +83,7 @@ describe 'apartment rake tasks' do
         it 'requires a version to migrate to' do
           expect do
             @rake['apartment:migrate:down'].invoke
-          end.to raise_error('VERSION is required')
+          end.to(raise_error('VERSION is required'))
         end
       end
 
@@ -93,7 +93,7 @@ describe 'apartment rake tasks' do
         end
 
         it 'migrates up to a specific version' do
-          expect(Apartment::Migrator).to receive(:run).with(:down, anything, version.to_i).exactly(tenant_count).times
+          expect(Apartment::Migrator).to(receive(:run).with(:down, anything, version.to_i).exactly(tenant_count).times)
           @rake['apartment:migrate:down'].invoke
         end
       end
@@ -102,21 +102,21 @@ describe 'apartment rake tasks' do
     describe 'apartment:rollback' do
       let(:step) { '3' }
 
-      it 'should rollback dbs' do
-        expect(Apartment::Migrator).to receive(:rollback).exactly(tenant_count).times
+      it 'rollbacks dbs' do
+        expect(Apartment::Migrator).to(receive(:rollback).exactly(tenant_count).times)
         @rake['apartment:rollback'].invoke
       end
 
-      it 'should rollback dbs STEP amt' do
-        expect(Apartment::Migrator).to receive(:rollback).with(anything, step.to_i).exactly(tenant_count).times
+      it 'rollbacks dbs STEP amt' do
+        expect(Apartment::Migrator).to(receive(:rollback).with(anything, step.to_i).exactly(tenant_count).times)
         ENV['STEP'] = step
         @rake['apartment:rollback'].invoke
       end
     end
 
     describe 'apartment:drop' do
-      it 'should migrate public and all multi-tenant dbs' do
-        expect(Apartment::Tenant).to receive(:drop).exactly(tenant_count).times
+      it 'migrates public and all multi-tenant dbs' do
+        expect(Apartment::Tenant).to(receive(:drop).exactly(tenant_count).times)
         @rake['apartment:drop'].invoke
       end
     end

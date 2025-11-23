@@ -5,6 +5,7 @@ module Apartment
     # Abstract adapter from which all the Apartment DB related adapters will inherit the base logic
     class AbstractAdapter
       include ActiveSupport::Callbacks
+
       define_callbacks :create, :switch
 
       attr_writer :default_tenant
@@ -21,7 +22,7 @@ module Apartment
       #   @param {String} tenant Tenant name
       #
       def create(tenant)
-        run_callbacks :create do
+        run_callbacks(:create) do
           create_tenant(tenant)
 
           switch(tenant) do
@@ -72,7 +73,7 @@ module Apartment
       #   @param {String} tenant name
       #
       def switch!(tenant = nil)
-        run_callbacks :switch do
+        run_callbacks(:switch) do
           connect_to_new(tenant).tap do
             Apartment.connection.clear_query_cache
           end
@@ -101,7 +102,7 @@ module Apartment
       #
       def each(tenants = Apartment.tenant_names)
         tenants.each do |tenant|
-          switch(tenant) { yield tenant }
+          switch(tenant) { yield(tenant) }
         end
       end
 
@@ -118,7 +119,7 @@ module Apartment
       #   Reset the tenant connection to the default
       #
       def reset
-        Apartment.establish_connection @config
+        Apartment.establish_connection(@config)
       end
 
       #   Load the rails seed file into the db
@@ -149,7 +150,7 @@ module Apartment
       protected
 
       def process_excluded_model(excluded_model)
-        excluded_model.constantize.establish_connection @config
+        excluded_model.constantize.establish_connection(@config)
       end
 
       def drop_command(conn, tenant)
@@ -184,7 +185,7 @@ module Apartment
         # Rails disables it during connection establishment
         query_cache_enabled = ActiveRecord::Base.connection.query_cache_enabled
 
-        Apartment.establish_connection multi_tenantify(tenant)
+        Apartment.establish_connection(multi_tenantify(tenant))
         Apartment.connection.verify! # Explicitly validate connection is live
 
         # Restore query cache if it was previously enabled
@@ -221,7 +222,7 @@ module Apartment
       #   Load a file or raise error if it doesn't exists
       #
       def load_or_raise(file)
-        raise FileNotFound, "#{file} doesn't exist yet" unless File.exist?(file)
+        raise(FileNotFound, "#{file} doesn't exist yet") unless File.exist?(file)
 
         load(file)
       end
@@ -244,7 +245,7 @@ module Apartment
         Apartment.db_config_for(tenant).dup
       end
 
-      def with_neutral_connection(tenant, &_block)
+      def with_neutral_connection(tenant, &)
         if Apartment.with_multi_server_setup
           # Multi-server setup requires separate connection handler to avoid polluting
           # the main connection pool. For example: connecting to postgres 'template1'
@@ -263,15 +264,15 @@ module Apartment
       end
 
       def raise_drop_tenant_error!(tenant, exception)
-        raise TenantNotFound, "Error while dropping tenant #{environmentify(tenant)}: #{exception.message}"
+        raise(TenantNotFound, "Error while dropping tenant #{environmentify(tenant)}: #{exception.message}")
       end
 
       def raise_create_tenant_error!(tenant, exception)
-        raise TenantExists, "Error while creating tenant #{environmentify(tenant)}: #{exception.message}"
+        raise(TenantExists, "Error while creating tenant #{environmentify(tenant)}: #{exception.message}")
       end
 
       def raise_connect_error!(tenant, exception)
-        raise TenantNotFound, "Error while connecting to tenant #{environmentify(tenant)}: #{exception.message}"
+        raise(TenantNotFound, "Error while connecting to tenant #{environmentify(tenant)}: #{exception.message}")
       end
 
       # Dedicated AR connection class for neutral connections (admin operations like CREATE/DROP DATABASE).

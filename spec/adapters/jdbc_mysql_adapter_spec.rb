@@ -9,9 +9,7 @@ if defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
     subject(:adapter) { Apartment::Tenant.adapter }
 
     def tenant_names
-      ActiveRecord::Base.connection.execute('SELECT SCHEMA_NAME FROM information_schema.schemata').collect do |row|
-        row['SCHEMA_NAME']
-      end
+      ActiveRecord::Base.connection.execute('SELECT SCHEMA_NAME FROM information_schema.schemata').pluck('SCHEMA_NAME')
     end
 
     let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.current_database } }

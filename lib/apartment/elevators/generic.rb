@@ -26,7 +26,7 @@ module Apartment
       end
 
       def parse_tenant_name(_request)
-        raise 'Override'
+        raise('Override')
       end
     end
   end
