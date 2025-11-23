@@ -106,7 +106,6 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
       it_behaves_like 'a generic apartment adapter'
       it_behaves_like 'a schema based apartment adapter'
 
-      # rubocop:disable RSpec/ExampleLength
       it 'not change excluded_models in the procedure code' do
         Apartment::Tenant.init
         Apartment::Tenant.create('has-procedure')

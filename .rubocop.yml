@@ -22,6 +22,26 @@ Layout/MultilineMethodCallIndentation:
   EnforcedStyle: indented
 
 Metrics/BlockLength:
+  Max: 30
+  Exclude:
+    - spec/**/*.rb
+    - lib/tasks/**/*.rake
+    - Rakefile
+
+Metrics/MethodLength:
+  Max: 15
+  Exclude:
+    - spec/**/*.rb
+    - lib/apartment/tenant.rb
+
+Metrics/AbcSize:
+  Max: 20
+  Exclude:
+    - spec/**/*.rb
+    - lib/apartment/adapters/postgresql_adapter.rb
+
+Metrics/ClassLength:
+  Max: 155
   Exclude:
     - spec/**/*.rb
 
@@ -77,3 +97,74 @@ Style/CollectionMethods:
     inject: 'reduce'
     detect: 'detect'
     find_all: 'select'
+
+# RSpec style preferences - disable for mature test suite
+RSpec/NamedSubject:
+  Enabled: false
+
+RSpec/MultipleExpectations:
+  Enabled: false
+
+RSpec/MessageSpies:
+  Enabled: false
+
+RSpec/NestedGroups:
+  Enabled: false
+
+RSpec/ContextWording:
+  Enabled: false
+
+RSpec/ExampleLength:
+  Enabled: false
+
+RSpec/InstanceVariable:
+  Enabled: false
+
+RSpec/SpecFilePathFormat:
+  Enabled: false
+
+RSpec/DescribeClass:
+  Enabled: false
+
+RSpec/IndexedLet:
+  Enabled: false
+
+RSpec/AnyInstance:
+  Enabled: false
+
+RSpec/BeforeAfterAll:
+  Enabled: false
+
+RSpec/LeakyConstantDeclaration:
+  Enabled: false
+
+RSpec/VerifiedDoubles:
+  Enabled: false
+
+RSpec/NoExpectationExample:
+  Enabled: false
+
+# ThreadSafety - intentional design for configuration
+ThreadSafety/ClassInstanceVariable:
+  Exclude:
+    - lib/apartment.rb
+    - lib/apartment/model.rb
+    - lib/apartment/elevators/*.rb
+    - spec/support/config.rb
+
+ThreadSafety/ClassAndModuleAttributes:
+  Exclude:
+    - lib/apartment.rb
+    - lib/apartment/active_record/postgresql_adapter.rb
+
+ThreadSafety/DirChdir:
+  Exclude:
+    - ros-apartment.gemspec
+
+ThreadSafety/NewThread:
+  Exclude:
+    - spec/tenant_spec.rb
+
+# Rake cops
+Rake/DuplicateTask:
+  Enabled: false
