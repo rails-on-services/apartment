@@ -128,3 +128,18 @@ appraise 'rails-8-0-sqlite3' do
   gem 'rails', '~> 8.0.0'
   gem 'sqlite3', '~> 2.1'
 end
+
+appraise 'rails-8-1-postgresql' do
+  gem 'rails', '~> 8.1.0'
+  gem 'pg', '~> 1.6.0'
+end
+
+appraise 'rails-8-1-mysql' do
+  gem 'rails', '~> 8.1.0'
+  gem 'mysql2', '~> 0.5'
+end
+
+appraise 'rails-8-1-sqlite3' do
+  gem 'rails', '~> 8.1.0'
+  gem 'sqlite3', '~> 2.8'
+end
