@@ -47,5 +47,9 @@ module Dummy
 
     # Configure sensitive parameters which will be filtered from the log file.
     config.filter_parameters += [:password]
+
+    # Use new connection handling for Rails 7.0+
+    # This silences the deprecation warning about legacy_connection_handling
+    config.active_record.legacy_connection_handling = false if ActiveRecord.version >= Gem::Version.new('7.0.0')
   end
 end
