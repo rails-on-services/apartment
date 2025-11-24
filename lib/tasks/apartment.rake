@@ -6,7 +6,7 @@ require 'parallel'
 
 apartment_namespace = namespace(:apartment) do
   desc('Create all tenants')
-  task(:create) do
+  task create: :environment do
     Apartment::TaskHelper.warn_if_tenants_empty
 
     Apartment::TaskHelper.tenants.each do |tenant|
@@ -15,7 +15,7 @@ apartment_namespace = namespace(:apartment) do
   end
 
   desc('Drop all tenants')
-  task(:drop) do
+  task drop: :environment do
     Apartment::TaskHelper.tenants.each do |tenant|
       puts("Dropping #{tenant} tenant")
       Apartment::Tenant.drop(tenant)
@@ -25,7 +25,7 @@ apartment_namespace = namespace(:apartment) do
   end
 
   desc('Migrate all tenants')
-  task(:migrate) do
+  task migrate: :environment do
     Apartment::TaskHelper.warn_if_tenants_empty
     Apartment::TaskHelper.each_tenant do |tenant|
       Apartment::TaskHelper.migrate_tenant(tenant)
@@ -33,7 +33,7 @@ apartment_namespace = namespace(:apartment) do
   end
 
   desc('Seed all tenants')
-  task(:seed) do
+  task seed: :environment do
     Apartment::TaskHelper.warn_if_tenants_empty
 
     Apartment::TaskHelper.each_tenant do |tenant|
@@ -48,7 +48,7 @@ apartment_namespace = namespace(:apartment) do
   end
 
   desc('Rolls the migration back to the previous version (specify steps w/ STEP=n) across all tenants.')
-  task(:rollback) do
+  task rollback: :environment do
     Apartment::TaskHelper.warn_if_tenants_empty
 
     step = ENV['STEP'] ? ENV['STEP'].to_i : 1
@@ -63,7 +63,7 @@ apartment_namespace = namespace(:apartment) do
 
   namespace(:migrate) do
     desc('Runs the "up" for a given migration VERSION across all tenants.')
-    task(:up) do
+    task up: :environment do
       Apartment::TaskHelper.warn_if_tenants_empty
 
       version = ENV['VERSION']&.to_i
@@ -78,7 +78,7 @@ apartment_namespace = namespace(:apartment) do
     end
 
     desc('Runs the "down" for a given migration VERSION across all tenants.')
-    task(:down) do
+    task down: :environment do
       Apartment::TaskHelper.warn_if_tenants_empty
 
       version = ENV['VERSION']&.to_i
