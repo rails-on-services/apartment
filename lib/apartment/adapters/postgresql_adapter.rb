@@ -168,7 +168,7 @@ module Apartment
         /^\\t/i,
         /^\\q/i,
         /^\\./i, # Catch-all for any backslash command (e.g., \. for COPY delimiter,
-                 # \restrict/\unrestrict in PostgreSQL 17.6+, and future meta-commands)
+        # \restrict/\unrestrict in PostgreSQL 17.6+, and future meta-commands)
       ].freeze
 
       # Combined blacklist: SQL statements and psql meta-commands to filter from pg_dump output
