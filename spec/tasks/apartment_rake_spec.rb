@@ -11,6 +11,7 @@ describe 'apartment rake tasks' do
     Rake.application = @rake
     load 'tasks/apartment.rake'
     # stub out rails tasks
+    Rake::Task.define_task('environment')
     Rake::Task.define_task('db:migrate')
     Rake::Task.define_task('db:seed')
     Rake::Task.define_task('db:rollback')
