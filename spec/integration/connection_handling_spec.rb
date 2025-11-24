@@ -2,28 +2,37 @@
 
 require 'spec_helper'
 
-describe 'connection handling monkey patch' do
+describe 'connection handling monkey patch', database: :postgresql do
   let(:db_name) { db1 }
 
   before do
     Apartment.configure do |config|
       config.excluded_models = ['Company']
-      config.tenant_names = -> { Company.pluck(:database) }
       config.use_schemas = true
     end
+    Apartment::Tenant.init
+    Apartment::Tenant.create(db_name)
+    Company.create(database: db_name)
 
+    Apartment.configure do |config|
+      config.tenant_names = -> { Company.pluck(:database) }
+    end
     Apartment::Tenant.reload!(config)
 
-    Apartment::Tenant.create(db_name)
-    Company.create database: db_name
-    Apartment::Tenant.switch! db_name
-    User.create! name: db_name
+    Apartment::Tenant.switch!(db_name)
+    User.create!(name: db_name)
   end
 
   after do
     Apartment::Tenant.drop(db_name)
     Apartment::Tenant.reset
     Company.delete_all
+
+    # Apartment::Tenant.init creates per model connection.
+    # Remove the connection after testing not to unintentionally keep the connection across tests.
+    Apartment.excluded_models.each do |excluded_model|
+      excluded_model.constantize.remove_connection
+    end
   end
 
   context 'when ActiveRecord >= 6.0', if: ActiveRecord::VERSION::MAJOR >= 6 do
@@ -36,14 +45,14 @@ describe 'connection handling monkey patch' do
     end
 
     it 'is monkey patched' do
-      expect(ActiveRecord::ConnectionHandling.instance_methods).to include(:connected_to_with_tenant)
+      expect(ActiveRecord::ConnectionHandling.instance_methods).to(include(:connected_to_with_tenant))
     end
 
     it 'switches to the previous set tenant' do
-      Apartment::Tenant.switch! db_name
+      Apartment::Tenant.switch!(db_name)
       ActiveRecord::Base.connected_to(role: role) do
-        expect(Apartment::Tenant.current).to eq db_name
-        expect(User.find_by(name: db_name).name).to eq(db_name)
+        expect(Apartment::Tenant.current).to(eq(db_name))
+        expect(User.find_by!(name: db_name).name).to(eq(db_name))
       end
     end
   end

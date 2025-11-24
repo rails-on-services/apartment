@@ -4,7 +4,7 @@ def st(schema_name = nil)
   if schema_name.nil?
     tenant_list.each { |t| puts t }
 
-  elsif tenant_list.include? schema_name
+  elsif tenant_list.include?(schema_name)
     Apartment::Tenant.switch!(schema_name)
   else
     puts "Tenant #{schema_name} is not part of the tenant list"

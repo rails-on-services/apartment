@@ -1,31 +1,24 @@
 name: Publish to RubyGems
+
 on:
   push:
     branches: [ 'main' ]
-    paths:
-      - 'lib/apartment/version.rb'
-  pull_request:
-    branches: [ 'main' ]
-    types: [ 'closed' ]
-    paths:
-      - 'lib/apartment/version.rb'
 
 jobs:
-  build:
-    if: github.event.pull_request.merged == true
+  release:
     name: Build + Publish
     runs-on: ubuntu-latest
     environment: production
     permissions:
-      id-token: write
-      contents: write
+      id-token: write    # Required for trusted publishing to RubyGems.org
+      contents: write    # Required for rake release to push the release tag
 
     steps:
     - uses: actions/checkout@v4
-    - uses: ruby/setup-ruby@v1
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
       with:
         bundler-cache: true
-        rubygems: latest
-        bundler: latest
+        ruby-version: .ruby-version
     - name: Publish to RubyGems
       uses: rubygems/release-gem@v1

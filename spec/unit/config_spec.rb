@@ -8,15 +8,15 @@ describe Apartment do
     let(:seed_data_file_path) { Rails.root.join('db/seeds/import.rb') }
 
     def tenant_names_from_array(names)
-      names.each_with_object({}) do |tenant, hash|
-        hash[tenant] = Apartment.connection_config
+      names.index_with do |_tenant|
+        Apartment.connection_config
       end.with_indifferent_access
     end
 
     it 'yields the Apartment object' do
       described_class.configure do |config|
         config.excluded_models = []
-        expect(config).to eq(described_class)
+        expect(config).to(eq(described_class))
       end
     end
 
@@ -24,7 +24,7 @@ describe Apartment do
       described_class.configure do |config|
         config.excluded_models = excluded_models
       end
-      expect(described_class.excluded_models).to eq(excluded_models)
+      expect(described_class.excluded_models).to(eq(excluded_models))
     end
 
     it 'sets use_schemas' do
@@ -32,14 +32,14 @@ describe Apartment do
         config.excluded_models = []
         config.use_schemas = false
       end
-      expect(described_class.use_schemas).to be false
+      expect(described_class.use_schemas).to(be(false))
     end
 
     it 'sets seed_data_file' do
       described_class.configure do |config|
         config.seed_data_file = seed_data_file_path
       end
-      expect(described_class.seed_data_file).to eq(seed_data_file_path)
+      expect(described_class.seed_data_file).to(eq(seed_data_file_path))
     end
 
     it 'sets seed_after_create' do
@@ -47,21 +47,21 @@ describe Apartment do
         config.excluded_models = []
         config.seed_after_create = true
       end
-      expect(described_class.seed_after_create).to be true
+      expect(described_class.seed_after_create).to(be(true))
     end
 
     it 'sets tenant_presence_check' do
       described_class.configure do |config|
         config.tenant_presence_check = true
       end
-      expect(described_class.tenant_presence_check).to be true
+      expect(described_class.tenant_presence_check).to(be(true))
     end
 
     it 'sets active_record_log' do
       described_class.configure do |config|
         config.active_record_log = true
       end
-      expect(described_class.active_record_log).to be true
+      expect(described_class.active_record_log).to(be(true))
     end
 
     context 'when databases' do
@@ -77,11 +77,11 @@ describe Apartment do
         let(:tenant_names) { %w[users companies] }
 
         it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to eq(tenant_names_from_array(tenant_names).keys)
+          expect(described_class.tenant_names).to(eq(tenant_names_from_array(tenant_names).keys))
         end
 
         it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to eq(tenant_names_from_array(tenant_names))
+          expect(described_class.tenants_with_config).to(eq(tenant_names_from_array(tenant_names)))
         end
       end
 
@@ -89,11 +89,11 @@ describe Apartment do
         let(:tenant_names) { -> { %w[users companies] } }
 
         it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to eq(tenant_names_from_array(tenant_names.call).keys)
+          expect(described_class.tenant_names).to(eq(tenant_names_from_array(tenant_names.call).keys))
         end
 
         it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to eq(tenant_names_from_array(tenant_names.call))
+          expect(described_class.tenants_with_config).to(eq(tenant_names_from_array(tenant_names.call)))
         end
       end
 
@@ -101,11 +101,11 @@ describe Apartment do
         let(:tenant_names) { { users: users_conf_hash }.with_indifferent_access }
 
         it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to eq(tenant_names.keys)
+          expect(described_class.tenant_names).to(eq(tenant_names.keys))
         end
 
         it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to eq(tenant_names)
+          expect(described_class.tenants_with_config).to(eq(tenant_names))
         end
       end
 
@@ -113,11 +113,11 @@ describe Apartment do
         let(:tenant_names) { -> { { users: users_conf_hash }.with_indifferent_access } }
 
         it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to eq(tenant_names.call.keys)
+          expect(described_class.tenant_names).to(eq(tenant_names.call.keys))
         end
 
         it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to eq(tenant_names.call)
+          expect(described_class.tenants_with_config).to(eq(tenant_names.call))
         end
       end
     end

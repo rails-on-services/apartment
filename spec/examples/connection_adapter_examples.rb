@@ -16,29 +16,29 @@ shared_examples_for 'a connection based apartment adapter' do
       end
     end
 
-    it 'should process model exclusions' do
+    it 'processes model exclusions' do
       Apartment.configure do |config|
         config.excluded_models = ['Company']
       end
       Apartment::Tenant.init
 
-      expect(Company.connection.object_id).not_to eq(ActiveRecord::Base.connection.object_id)
+      expect(Company.connection.object_id).not_to(eq(ActiveRecord::Base.connection.object_id))
     end
   end
 
   describe '#drop' do
-    it 'should raise an error for unknown database' do
+    it 'raises an error for unknown database' do
       expect do
-        subject.drop 'unknown_database'
-      end.to raise_error(Apartment::TenantNotFound)
+        subject.drop('unknown_database')
+      end.to(raise_error(Apartment::TenantNotFound))
     end
   end
 
   describe '#switch!' do
-    it 'should raise an error if database is invalid' do
+    it 'raises an error if database is invalid' do
       expect do
-        subject.switch! 'unknown_database'
-      end.to raise_error(Apartment::TenantNotFound)
+        subject.switch!('unknown_database')
+      end.to(raise_error(Apartment::TenantNotFound))
     end
   end
 end

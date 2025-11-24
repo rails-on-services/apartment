@@ -23,12 +23,18 @@ describe 'apartment rake tasks', database: :postgresql do
       config.tenant_names = -> { Company.pluck(:database) }
     end
     Apartment::Tenant.reload!(config)
-
-    # fix up table name of shared/excluded models
-    Company.table_name = 'public.companies'
+    Apartment::Tenant.init
   end
 
-  after { Rake.application = nil }
+  after do
+    Rake.application = nil
+
+    # Apartment::Tenant.init creates per model connection.
+    # Remove the connection after testing not to unintentionally keep the connection across tests.
+    Apartment.excluded_models.each do |excluded_model|
+      excluded_model.constantize.remove_connection
+    end
+  end
 
   context 'with x number of databases' do
     let(:x) { rand(1..5) } # random number of dbs to create
@@ -38,7 +44,7 @@ describe 'apartment rake tasks', database: :postgresql do
     before do
       db_names.collect do |db_name|
         Apartment::Tenant.create(db_name)
-        Company.create database: db_name
+        Company.create(database: db_name)
       end
     end
 
@@ -51,26 +57,26 @@ describe 'apartment rake tasks', database: :postgresql do
       let(:migration_context_double) { double(:migration_context) }
 
       describe '#migrate' do
-        it 'should migrate all databases' do
+        it 'migrates all databases' do
           if ActiveRecord.version >= Gem::Version.new('7.2.0')
             allow(ActiveRecord::Base.connection_pool)
           else
             allow(ActiveRecord::Base.connection)
-          end.to receive(:migration_context) { migration_context_double }
-          expect(migration_context_double).to receive(:migrate).exactly(company_count).times
+          end.to(receive(:migration_context) { migration_context_double })
+          expect(migration_context_double).to(receive(:migrate).exactly(company_count).times)
 
           @rake['apartment:migrate'].invoke
         end
       end
 
       describe '#rollback' do
-        it 'should rollback all dbs' do
+        it 'rollbacks all dbs' do
           if ActiveRecord.version >= Gem::Version.new('7.2.0')
             allow(ActiveRecord::Base.connection_pool)
           else
             allow(ActiveRecord::Base.connection)
-          end.to receive(:migration_context) { migration_context_double }
-          expect(migration_context_double).to receive(:rollback).exactly(company_count).times
+          end.to(receive(:migration_context) { migration_context_double })
+          expect(migration_context_double).to(receive(:rollback).exactly(company_count).times)
 
           @rake['apartment:rollback'].invoke
         end
@@ -78,8 +84,8 @@ describe 'apartment rake tasks', database: :postgresql do
     end
 
     describe 'apartment:seed' do
-      it 'should seed all databases' do
-        expect(Apartment::Tenant).to receive(:seed).exactly(company_count).times
+      it 'seeds all databases' do
+        expect(Apartment::Tenant).to(receive(:seed).exactly(company_count).times)
 
         @rake['apartment:seed'].invoke
       end

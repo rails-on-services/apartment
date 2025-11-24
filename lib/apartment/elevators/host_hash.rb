@@ -9,14 +9,14 @@ module Apartment
     #
     class HostHash < Generic
       def initialize(app, hash = {}, processor = nil)
-        super app, processor
+        super(app, processor)
         @hash = hash
       end
 
       def parse_tenant_name(request)
         unless @hash.key?(request.host)
-          raise TenantNotFound,
-                "Cannot find tenant for host #{request.host}"
+          raise(TenantNotFound,
+                "Cannot find tenant for host #{request.host}")
         end
 
         @hash[request.host]

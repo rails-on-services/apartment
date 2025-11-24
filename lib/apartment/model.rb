@@ -14,7 +14,7 @@ module Apartment
         # Modifying the cache key to have a reference to the current tenant,
         # so the cached statement is referring only to the tenant in which we've
         # executed this
-        cache_key = if key.is_a? String
+        cache_key = if key.is_a?(String)
                       "#{Apartment::Tenant.current}_#{key}"
                     else
                       # NOTE: In Rails 6.0.4 we start receiving an ActiveRecord::Reflection::BelongsToReflection

@@ -23,20 +23,16 @@ jobs:
           - 3.4
           # - jruby # We don't support jruby for sqlite yet
         rails_version:
-          - 6_1
           - 7_0
           - 7_1
           - 7_2
           - 8_0
+          - 8_1
         exclude:
           - ruby_version: 3.1
             rails_version: 8_0
-        #   - ruby_version: jruby
-        #     rails_version: 7_1
-        #   - ruby_version: jruby
-        #     rails_version: 7_2
-        #   - ruby_version: jruby
-        #     rails_version: 8_0
+          - ruby_version: 3.1
+            rails_version: 8_1
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}${{ matrix.ruby_version == 'jruby' && '_jdbc' || '' }}_sqlite3.gemfile
       CI: true

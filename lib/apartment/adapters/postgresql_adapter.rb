@@ -57,7 +57,8 @@ module Apartment
 
       def process_excluded_model(excluded_model)
         excluded_model.constantize.tap do |klass|
-          # Ensure that if a schema *was* set, we override
+          # Strip any existing schema qualifier (handles "schema.table" → "table")
+          # Then explicitly set to default schema to prevent tenant-based queries
           table_name = klass.table_name.split('.', 2).last
 
           klass.table_name = "#{default_tenant}.#{table_name}"
@@ -72,7 +73,7 @@ module Apartment
       #
       def connect_to_new(tenant = nil)
         return reset if tenant.nil?
-        raise ActiveRecord::StatementInvalid, "Could not find schema #{tenant}" unless schema_exists?(tenant)
+        raise(ActiveRecord::StatementInvalid, "Could not find schema #{tenant}") unless schema_exists?(tenant)
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
         Apartment.connection.schema_search_path = full_search_path
@@ -89,7 +90,8 @@ module Apartment
       end
 
       def create_tenant_command(conn, tenant)
-        # NOTE: This was causing some tests to fail because of the database strategy for rspec
+        # Avoid nested transactions: if already in transaction (e.g., RSpec tests),
+        # execute directly. Otherwise, wrap in explicit transaction for atomicity.
         if ActiveRecord::Base.connection.open_transactions.positive?
           conn.execute(%(CREATE SCHEMA "#{tenant}"))
         else
@@ -101,7 +103,7 @@ module Apartment
         end
       rescue *rescuable_exceptions => e
         rollback_transaction(conn)
-        raise e
+        raise(e)
       end
 
       def rollback_transaction(conn)
@@ -131,7 +133,7 @@ module Apartment
       end
 
       def raise_schema_connect_to_new(tenant, exception)
-        raise TenantNotFound, <<~EXCEPTION_MESSAGE
+        raise(TenantNotFound, <<~EXCEPTION_MESSAGE)
           Could not set search path to schemas, they may be invalid: "#{tenant}" #{full_search_path}.
           Original error: #{exception.class}: #{exception}
         EXCEPTION_MESSAGE
@@ -152,6 +154,26 @@ module Apartment
 
       ].freeze
 
+      # PostgreSQL meta-commands (backslash commands) that appear in pg_dump output
+      # but are not valid SQL when passed to ActiveRecord's execute().
+      # These must be filtered out to prevent syntax errors during schema import.
+      PSQL_META_COMMANDS = [
+        /^\\connect/i,
+        /^\\set/i,
+        /^\\unset/i,
+        /^\\copyright/i,
+        /^\\echo/i,
+        /^\\warn/i,
+        /^\\o/i,
+        /^\\t/i,
+        /^\\q/i,
+        /^\\./i, # Catch-all for any backslash command (e.g., \. for COPY delimiter,
+        # \restrict/\unrestrict in PostgreSQL 17.6+, and future meta-commands)
+      ].freeze
+
+      # Combined blacklist: SQL statements and psql meta-commands to filter from pg_dump output
+      PSQL_DUMP_GLOBAL_BLACKLIST = (PSQL_DUMP_BLACKLISTED_STATEMENTS + PSQL_META_COMMANDS).freeze
+
       def import_database_schema
         preserving_search_path do
           clone_pg_schema
@@ -161,9 +183,9 @@ module Apartment
 
       private
 
-      # Re-set search path after the schema is imported.
-      # Postgres now sets search path to empty before dumping the schema
-      # and it mut be reset
+      # PostgreSQL's pg_dump clears search_path in the dump output, which would
+      # leave us with an empty path after import. Capture current path, execute
+      # import, then restore it to maintain tenant context.
       #
       def preserving_search_path
         search_path = Apartment.connection.execute('show search_path').first['search_path']
@@ -209,13 +231,14 @@ module Apartment
       end
       # rubocop:enable Layout/LineLength
 
-      # Temporary set Postgresql related environment variables if there are in @config
-      #
+      # Temporarily set PostgreSQL environment variables for pg_dump shell commands.
+      # Must preserve and restore existing ENV values to avoid polluting global state.
+      # pg_dump reads these instead of passing connection params as CLI args.
       def with_pg_env
-        pghost = ENV['PGHOST']
-        pgport = ENV['PGPORT']
-        pguser = ENV['PGUSER']
-        pgpassword = ENV['PGPASSWORD']
+        pghost = ENV.fetch('PGHOST', nil)
+        pgport = ENV.fetch('PGPORT', nil)
+        pguser = ENV.fetch('PGUSER', nil)
+        pgpassword = ENV.fetch('PGPASSWORD', nil)
 
         ENV['PGHOST'] = @config[:host] if @config[:host]
         ENV['PGPORT'] = @config[:port].to_s if @config[:port]
@@ -224,6 +247,7 @@ module Apartment
 
         yield
       ensure
+        # Always restore original ENV state (might be nil)
         ENV['PGHOST'] = pghost
         ENV['PGPORT'] = pgport
         ENV['PGUSER'] = pguser
@@ -239,16 +263,15 @@ module Apartment
 
         swap_schema_qualifier(sql)
           .split("\n")
-          .select { |line| check_input_against_regexps(line, PSQL_DUMP_BLACKLISTED_STATEMENTS).empty? }
+          .grep_v(Regexp.union(PSQL_DUMP_GLOBAL_BLACKLIST))
           .prepend(search_path)
           .join("\n")
       end
 
       def swap_schema_qualifier(sql)
         sql.gsub(/#{default_tenant}\.\w*/) do |match|
-          if Apartment.pg_excluded_names.any? { |name| match.include? name }
-            match
-          elsif Apartment.pg_exclude_clone_tables && excluded_tables.any?(match)
+          if Apartment.pg_excluded_names.any? { |name| match.include?(name) } ||
+             (Apartment.pg_exclude_clone_tables && excluded_tables.any?(match))
             match
           else
             match.gsub("#{default_tenant}.", %("#{current}".))
@@ -259,7 +282,7 @@ module Apartment
       #   Checks if any of regexps matches against input
       #
       def check_input_against_regexps(input, regexps)
-        regexps.select { |c| input.match c }
+        regexps.select { |c| input.match(c) }
       end
 
       # Convenience method for excluded table names
