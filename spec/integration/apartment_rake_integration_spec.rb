@@ -23,12 +23,18 @@ describe 'apartment rake tasks', database: :postgresql do
       config.tenant_names = -> { Company.pluck(:database) }
     end
     Apartment::Tenant.reload!(config)
-
-    # fix up table name of shared/excluded models
-    Company.table_name = 'public.companies'
+    Apartment::Tenant.init
   end
 
-  after { Rake.application = nil }
+  after do
+    Rake.application = nil
+
+    # Apartment::Tenant.init creates per model connection.
+    # Remove the connection after testing not to unintentionally keep the connection across tests.
+    Apartment.excluded_models.each do |excluded_model|
+      excluded_model.constantize.remove_connection
+    end
+  end
 
   context 'with x number of databases' do
     let(:x) { rand(1..5) } # random number of dbs to create

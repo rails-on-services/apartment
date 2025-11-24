@@ -14,6 +14,7 @@ describe 'query caching' do
       end
 
       Apartment::Tenant.reload!(config)
+      Apartment::Tenant.init
 
       db_names.each do |db_name|
         Apartment::Tenant.create(db_name)
@@ -25,6 +26,12 @@ describe 'query caching' do
       db_names.each { |db| Apartment::Tenant.drop(db) }
       Apartment::Tenant.reset
       Company.delete_all
+
+      # Apartment::Tenant.init creates per model connection.
+      # Remove the connection after testing not to unintentionally keep the connection across tests.
+      Apartment.excluded_models.each do |excluded_model|
+        excluded_model.constantize.remove_connection
+      end
     end
 
     it 'clears the ActiveRecord::QueryCache after switching databases' do
@@ -54,6 +61,7 @@ describe 'query caching' do
       end
 
       Apartment::Tenant.reload!(config)
+      Apartment::Tenant.init
 
       Apartment::Tenant.create(db_name)
       Company.create(database: db_name)
@@ -64,6 +72,12 @@ describe 'query caching' do
 
       Apartment::Tenant.drop(db_name)
       Company.delete_all
+
+      # Apartment::Tenant.init creates per model connection.
+      # Remove the connection after testing not to unintentionally keep the connection across tests.
+      Apartment.excluded_models.each do |excluded_model|
+        excluded_model.constantize.remove_connection
+      end
     end
 
     it 'configuration value is kept after switching databases' do

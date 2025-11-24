@@ -10,6 +10,7 @@ describe 'connection handling monkey patch' do
       config.excluded_models = ['Company']
       config.use_schemas = true
     end
+    Apartment::Tenant.init
     Apartment::Tenant.create(db_name)
     Company.create(database: db_name)
 
@@ -26,6 +27,12 @@ describe 'connection handling monkey patch' do
     Apartment::Tenant.drop(db_name)
     Apartment::Tenant.reset
     Company.delete_all
+
+    # Apartment::Tenant.init creates per model connection.
+    # Remove the connection after testing not to unintentionally keep the connection across tests.
+    Apartment.excluded_models.each do |excluded_model|
+      excluded_model.constantize.remove_connection
+    end
   end
 
   context 'when ActiveRecord >= 6.0', if: ActiveRecord::VERSION::MAJOR >= 6 do
