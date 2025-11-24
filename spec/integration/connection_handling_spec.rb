@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-describe 'connection handling monkey patch' do
+describe 'connection handling monkey patch', database: :postgresql do
   let(:db_name) { db1 }
 
   before do

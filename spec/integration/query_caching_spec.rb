@@ -3,7 +3,7 @@
 require 'spec_helper'
 
 describe 'query caching' do
-  describe 'when use_schemas = true' do
+  describe 'when use_schemas = true', database: :postgresql do
     let(:db_names) { [db1, db2] }
 
     before do
@@ -50,7 +50,7 @@ describe 'query caching' do
     end
   end
 
-  describe 'when use_schemas = false' do
+  describe 'when use_schemas = false', database: :mysql do
     let(:db_name) { db1 }
 
     before do
