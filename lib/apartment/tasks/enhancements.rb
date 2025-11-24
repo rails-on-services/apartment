@@ -46,7 +46,7 @@ module Apartment
       end
 
       def inserted_task_name(task)
-        task.name.sub(/db:/, 'apartment:')
+        task.name.sub('db:', 'apartment:')
       end
     end
   end

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 begin
-  require 'bundler'
+  require('bundler')
 rescue StandardError
   'You must `gem install bundler` and `bundle install` to run rake tasks'
 end
@@ -26,6 +26,7 @@ namespace :spec do
   end
 end
 
+desc 'Start an interactive console with Apartment loaded'
 task :console do
   require 'pry'
   require 'apartment'
@@ -39,15 +40,15 @@ namespace :db do
   namespace :test do
     case ENV.fetch('DATABASE_ENGINE', nil)
     when 'postgresql'
-      task prepare: %w[postgres:drop_db postgres:build_db]
+      task(prepare: %w[postgres:drop_db postgres:build_db])
     when 'mysql'
-      task prepare: %w[mysql:drop_db mysql:build_db]
+      task(prepare: %w[mysql:drop_db mysql:build_db])
     when 'sqlite'
-      task :prepare do
+      task(:prepare) do
         puts 'No need to prepare sqlite3 database'
       end
     else
-      task :prepare do
+      task(:prepare) do
         puts 'No database engine specified, skipping db:test:prepare'
       end
     end

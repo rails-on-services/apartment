@@ -32,13 +32,13 @@ module Apartment
         end
 
         begin
-          require "apartment/adapters/#{adapter_method}"
+          require("apartment/adapters/#{adapter_method}")
         rescue LoadError
-          raise "The adapter `#{adapter_method}` is not yet supported"
+          raise("The adapter `#{adapter_method}` is not yet supported")
         end
 
         unless respond_to?(adapter_method)
-          raise AdapterNotFound, "database configuration specifies nonexistent #{config[:adapter]} adapter"
+          raise(AdapterNotFound, "database configuration specifies nonexistent #{config[:adapter]} adapter")
         end
 
         send(adapter_method, config)

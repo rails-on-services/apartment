@@ -9,9 +9,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
     subject(:adapter) { Apartment::Tenant.adapter }
 
     def tenant_names
-      ActiveRecord::Base.connection.execute('SELECT schema_name FROM information_schema.schemata').collect do |row|
-        row[0]
-      end
+      ActiveRecord::Base.connection.execute('SELECT schema_name FROM information_schema.schemata').pluck(0)
     end
 
     let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.current_database } }
@@ -25,7 +23,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
 
       describe '#default_tenant' do
         it 'is set to the original db from config' do
-          expect(subject.default_tenant).to eq(config[:database])
+          expect(subject.default_tenant).to(eq(config[:database]))
         end
       end
 
@@ -49,7 +47,7 @@ if !defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'mysql'
         it 'processes model exclusions' do
           Apartment::Tenant.init
 
-          expect(Company.table_name).to eq("#{default_tenant}.companies")
+          expect(Company.table_name).to(eq("#{default_tenant}.companies"))
         end
       end
     end

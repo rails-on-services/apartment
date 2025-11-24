@@ -7,7 +7,7 @@ shared_examples_for 'a generic apartment adapter able to handle custom configura
   let(:db) { |example| example.metadata[:database] }
   let(:custom_tenant_names) do
     {
-      custom_tenant_name => custom_db_conf
+      custom_tenant_name => custom_db_conf,
     }
   end
 
@@ -24,26 +24,26 @@ shared_examples_for 'a generic apartment adapter able to handle custom configura
     let(:expected_args) { custom_db_conf }
 
     describe '#create' do
-      it 'should establish_connection with the separate connection with expected args' do
+      it 'establish_connections with the separate connection with expected args' do
         expect(Apartment::Adapters::AbstractAdapter::SeparateDbConnectionHandler).to(
           receive(:establish_connection).with(expected_args).and_call_original
         )
 
         # because we don't have another server to connect to it errors
         # what matters is establish_connection receives proper args
-        expect { subject.create(custom_tenant_name) }.to raise_error(Apartment::TenantExists)
+        expect { subject.create(custom_tenant_name) }.to(raise_error(Apartment::TenantExists))
       end
     end
 
     describe '#drop' do
-      it 'should establish_connection with the separate connection with expected args' do
+      it 'establish_connections with the separate connection with expected args' do
         expect(Apartment::Adapters::AbstractAdapter::SeparateDbConnectionHandler).to(
           receive(:establish_connection).with(expected_args).and_call_original
         )
 
         # because we dont have another server to connect to it errors
         # what matters is establish_connection receives proper args
-        expect { subject.drop(custom_tenant_name) }.to raise_error(Apartment::TenantNotFound)
+        expect { subject.drop(custom_tenant_name) }.to(raise_error(Apartment::TenantNotFound))
       end
     end
   end
@@ -54,19 +54,19 @@ shared_examples_for 'a generic apartment adapter able to handle custom configura
     end
 
     describe '#switch!' do
-      it 'should connect to new db' do
-        expect(Apartment).to receive(:establish_connection) do |args|
+      it 'connects to new db' do
+        expect(Apartment).to(receive(:establish_connection)) do |args|
           db_name = args.delete(:database)
 
-          expect(args).to eq expected_args
-          expect(db_name).to match custom_tenant_name
+          expect(args).to(eq(expected_args))
+          expect(db_name).to(match(custom_tenant_name))
 
           # we only need to check args, then we short circuit
           # in order to avoid the mess due to the `establish_connection` override
           raise ActiveRecord::ActiveRecordError
         end
 
-        expect { subject.switch!(custom_tenant_name) }.to raise_error(Apartment::TenantNotFound)
+        expect { subject.switch!(custom_tenant_name) }.to(raise_error(Apartment::TenantNotFound))
       end
     end
   end
@@ -77,17 +77,17 @@ shared_examples_for 'a generic apartment adapter able to handle custom configura
         adapter: 'postgresql',
         database: 'override_database',
         password: 'override_password',
-        username: 'overridepostgres'
+        username: 'overridepostgres',
       },
       mysql: {
         adapter: 'mysql2',
         database: 'override_database',
-        username: 'root'
+        username: 'root',
       },
       sqlite: {
         adapter: 'sqlite3',
-        database: 'override_database'
-      }
+        database: 'override_database',
+      },
     }
   end
 

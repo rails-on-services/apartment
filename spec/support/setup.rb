@@ -13,7 +13,7 @@ module Apartment
           # This around ensures that we run these hooks before and after
           # any before/after hooks defined in individual tests
           # Otherwise these actually get run after test defined hooks
-          around(:each) do |example|
+          around do |example|
             def config
               db = RSpec.current_example.metadata.fetch(:database, :postgresql)
 
@@ -22,7 +22,7 @@ module Apartment
 
             # before
             Apartment::Tenant.reload!(config)
-            ActiveRecord::Base.establish_connection config
+            ActiveRecord::Base.establish_connection(config)
 
             example.run
 

@@ -15,7 +15,7 @@ if defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
 
       # Not sure why, but somehow using let(:tenant_names) memoizes for the whole example group, not just each test
       def tenant_names
-        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').collect { |row| row['nspname'] }
+        ActiveRecord::Base.connection.execute('SELECT nspname FROM pg_namespace;').pluck('nspname')
       end
 
       let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.schema_search_path.delete('"') } }
@@ -29,7 +29,7 @@ if defined?(JRUBY_VERSION) && ENV['DATABASE_ENGINE'] == 'postgresql'
 
       # Not sure why, but somehow using let(:tenant_names) memoizes for the whole example group, not just each test
       def tenant_names
-        connection.execute('select datname from pg_database;').collect { |row| row['datname'] }
+        connection.execute('select datname from pg_database;').pluck('datname')
       end
 
       let(:default_tenant) { subject.switch { ActiveRecord::Base.connection.current_database } }

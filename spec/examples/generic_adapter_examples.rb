@@ -12,7 +12,7 @@ shared_examples_for 'a generic apartment adapter' do
   end
 
   describe '#init' do
-    it 'should not connect if env var is set' do
+    it 'does not connect if env var is set' do
       ENV['APARTMENT_DISABLE_INIT'] = 'true'
       begin
         ActiveRecord::Base.connection_pool.disconnect!
@@ -20,11 +20,11 @@ shared_examples_for 'a generic apartment adapter' do
         Apartment::Railtie.config.to_prepare_blocks.map(&:call)
 
         num_available_connections = Apartment.connection_class.connection_pool
-                                             .instance_variable_get(:@available)
-                                             .instance_variable_get(:@queue)
-                                             .size
+          .instance_variable_get(:@available)
+          .instance_variable_get(:@queue)
+          .size
 
-        expect(num_available_connections).to eq(0)
+        expect(num_available_connections).to(eq(0))
       ensure
         ENV.delete('APARTMENT_DISABLE_INIT')
       end
@@ -35,34 +35,34 @@ shared_examples_for 'a generic apartment adapter' do
   #   Creates happen already in our before_filter
   #
   describe '#create' do
-    it 'should create the new databases' do
-      expect(tenant_names).to include(db1)
-      expect(tenant_names).to include(db2)
+    it 'creates the new databases' do
+      expect(tenant_names).to(include(db1))
+      expect(tenant_names).to(include(db2))
     end
 
-    it 'should load schema.rb to new schema' do
+    it 'loads schema.rb to new schema' do
       subject.switch(db1) do
-        expect(connection.tables).to include('users')
+        expect(connection.tables).to(include('users'))
       end
     end
 
-    it 'should yield to block if passed and reset' do
+    it 'yields to block if passed and reset' do
       subject.drop(db2) # so we don't get errors on creation
 
       @count = 0 # set our variable so its visible in and outside of blocks
 
       subject.create(db2) do
         @count = User.count
-        expect(subject.current).to eq(db2)
+        expect(subject.current).to(eq(db2))
         User.create
       end
 
-      expect(subject.current).not_to eq(db2)
+      expect(subject.current).not_to(eq(db2))
 
-      subject.switch(db2) { expect(User.count).to eq(@count + 1) }
+      subject.switch(db2) { expect(User.count).to(eq(@count + 1)) }
     end
 
-    it 'should raise error when the schema.rb is missing unless Apartment.use_sql is set to true' do
+    it 'raises error when the schema.rb is missing unless Apartment.use_sql is set to true' do
       next if Apartment.use_sql
 
       subject.drop(db1)
@@ -71,7 +71,7 @@ shared_examples_for 'a generic apartment adapter' do
           Apartment.database_schema_file = "#{tmpdir}/schema.rb"
           expect do
             subject.create(db1)
-          end.to raise_error(Apartment::FileNotFound)
+          end.to(raise_error(Apartment::FileNotFound))
         end
       ensure
         Apartment.remove_instance_variable(:@database_schema_file)
@@ -80,61 +80,61 @@ shared_examples_for 'a generic apartment adapter' do
   end
 
   describe '#drop' do
-    it 'should remove the db' do
-      subject.drop db1
-      expect(tenant_names).not_to include(db1)
+    it 'removes the db' do
+      subject.drop(db1)
+      expect(tenant_names).not_to(include(db1))
     end
   end
 
   describe '#switch!' do
-    it 'should connect to new db' do
+    it 'connects to new db' do
       subject.switch!(db1)
-      expect(subject.current).to eq(db1)
+      expect(subject.current).to(eq(db1))
     end
 
-    it 'should reset connection if database is nil' do
+    it 'resets connection if database is nil' do
       subject.switch!
-      expect(subject.current).to eq(default_tenant)
+      expect(subject.current).to(eq(default_tenant))
     end
 
-    it 'should raise an error if database is invalid' do
+    it 'raises an error if database is invalid' do
       expect do
-        subject.switch! 'unknown_database'
-      end.to raise_error(Apartment::TenantNotFound)
+        subject.switch!('unknown_database')
+      end.to(raise_error(Apartment::TenantNotFound))
     end
   end
 
   describe '#switch' do
     it 'connects and resets the tenant' do
       subject.switch(db1) do
-        expect(subject.current).to eq(db1)
+        expect(subject.current).to(eq(db1))
       end
-      expect(subject.current).to eq(default_tenant)
+      expect(subject.current).to(eq(default_tenant))
     end
 
     # We're often finding when using Apartment in tests, the `current` (ie the previously connect to db)
     # gets dropped, but switch will try to return to that db in a test.  We should just reset if it doesn't exist
-    it 'should not throw exception if current is no longer accessible' do
+    it 'does not throw exception if current is no longer accessible' do
       subject.switch!(db2)
 
       expect do
         subject.switch(db1) { subject.drop(db2) }
-      end.not_to raise_error
+      end.not_to(raise_error)
     end
   end
 
   describe '#reset' do
-    it 'should reset connection' do
+    it 'resets connection' do
       subject.switch!(db1)
       subject.reset
-      expect(subject.current).to eq(default_tenant)
+      expect(subject.current).to(eq(default_tenant))
     end
   end
 
   describe '#current' do
-    it 'should return the current db name' do
+    it 'returns the current db name' do
       subject.switch!(db1)
-      expect(subject.current).to eq(db1)
+      expect(subject.current).to(eq(db1))
     end
   end
 
@@ -145,10 +145,10 @@ shared_examples_for 'a generic apartment adapter' do
 
       subject.each do |tenant|
         result << tenant
-        expect(subject.current).to eq(tenant)
+        expect(subject.current).to(eq(tenant))
       end
 
-      expect(result).to eq([db2, db1])
+      expect(result).to(eq([db2, db1]))
     end
 
     it 'iterates over the given tenants' do
@@ -157,10 +157,10 @@ shared_examples_for 'a generic apartment adapter' do
 
       subject.each([db2]) do |tenant|
         result << tenant
-        expect(subject.current).to eq(tenant)
+        expect(subject.current).to(eq(tenant))
       end
 
-      expect(result).to eq([db2])
+      expect(result).to(eq([db2]))
     end
   end
 end

@@ -45,7 +45,6 @@ RSpec.configure do |config|
   config.include(Apartment::Spec::Setup)
 
   # Somewhat brutal hack so that rails 4 postgres extensions don't modify this file
-  # rubocop:disable RSpec/BeforeAfterAll
   config.after(:all) do
     `git checkout -- spec/dummy/db/schema.rb`
   end

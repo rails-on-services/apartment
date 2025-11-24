@@ -12,19 +12,19 @@ describe Apartment::Elevators::FirstSubdomain do
     context 'when one subdomain' do
       let(:subdomain) { 'test' }
 
-      it { is_expected.to eq('test') }
+      it { is_expected.to(eq('test')) }
     end
 
     context 'when nested subdomains' do
       let(:subdomain) { 'test1.test2' }
 
-      it { is_expected.to eq('test1') }
+      it { is_expected.to(eq('test1')) }
     end
 
     context 'when no subdomain' do
       let(:subdomain) { nil }
 
-      it { is_expected.to eq(nil) }
+      it { is_expected.to(be_nil) }
     end
   end
 end

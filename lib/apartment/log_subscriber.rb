@@ -14,7 +14,7 @@ module Apartment
 
     private
 
-    def debug(progname = nil, &blk)
+    def debug(progname = nil, &)
       progname = "  #{apartment_log}#{progname}" unless progname.nil?
 
       super

@@ -2,10 +2,10 @@
 
 module Apartment
   module TaskHelper
-    def self.each_tenant(&block)
+    def self.each_tenant
       Parallel.each(tenants_without_default, in_threads: Apartment.parallel_migration_threads) do |tenant|
         Rails.application.executor.wrap do
-          block.call(tenant)
+          yield(tenant)
         end
       end
     end
@@ -44,9 +44,9 @@ module Apartment
       create_tenant(tenant_name) if strategy == :create_tenant
 
       puts("Migrating #{tenant_name} tenant")
-      Apartment::Migrator.migrate tenant_name
+      Apartment::Migrator.migrate(tenant_name)
     rescue Apartment::TenantNotFound => e
-      raise e if strategy == :raise_exception
+      raise(e) if strategy == :raise_exception
 
       puts e.message
     end

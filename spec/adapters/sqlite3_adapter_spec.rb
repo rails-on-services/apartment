@@ -20,16 +20,18 @@ if !defined?(JRUBY_VERSION) && (ENV['DATABASE_ENGINE'] == 'sqlite' || ENV['DATAB
         subject.switch { File.basename(Apartment::Test.config['connections']['sqlite']['database'], '.sqlite3') }
       end
 
+      after(:all) { FileUtils.rm_f(Apartment::Test.config['connections']['sqlite']['database']) }
+
       it_behaves_like 'a generic apartment adapter'
       it_behaves_like 'a connection based apartment adapter'
-
-      after(:all) { FileUtils.rm_f(Apartment::Test.config['connections']['sqlite']['database']) }
     end
 
     context 'with prepend and append' do
       let(:default_dir) { File.expand_path(File.dirname(config[:database])) }
+
       describe '#prepend' do
         let(:db_name) { 'db_with_prefix' }
+
         before do
           Apartment.configure do |config|
             config.prepend_environment = true
@@ -38,39 +40,41 @@ if !defined?(JRUBY_VERSION) && (ENV['DATABASE_ENGINE'] == 'sqlite' || ENV['DATAB
         end
 
         after do
-          subject.drop db_name
+          subject.drop(db_name)
         rescue StandardError => _e
           nil
         end
 
-        it 'should create a new database' do
-          subject.create db_name
+        it 'creates a new database' do
+          subject.create(db_name)
 
-          expect(File.exist?("#{default_dir}/#{Rails.env}_#{db_name}.sqlite3")).to eq true
+          expect(File.exist?("#{default_dir}/#{Rails.env}_#{db_name}.sqlite3")).to(be(true))
         end
       end
 
       describe '#neither' do
         let(:db_name) { 'db_without_prefix_suffix' }
+
         before do
           Apartment.configure { |config| config.prepend_environment = config.append_environment = false }
         end
 
         after do
-          subject.drop db_name
+          subject.drop(db_name)
         rescue StandardError => _e
           nil
         end
 
-        it 'should create a new database' do
-          subject.create db_name
+        it 'creates a new database' do
+          subject.create(db_name)
 
-          expect(File.exist?("#{default_dir}/#{db_name}.sqlite3")).to eq true
+          expect(File.exist?("#{default_dir}/#{db_name}.sqlite3")).to(be(true))
         end
       end
 
       describe '#append' do
         let(:db_name) { 'db_with_suffix' }
+
         before do
           Apartment.configure do |config|
             config.prepend_environment = false
@@ -79,15 +83,15 @@ if !defined?(JRUBY_VERSION) && (ENV['DATABASE_ENGINE'] == 'sqlite' || ENV['DATAB
         end
 
         after do
-          subject.drop db_name
+          subject.drop(db_name)
         rescue StandardError => _e
           nil
         end
 
-        it 'should create a new database' do
-          subject.create db_name
+        it 'creates a new database' do
+          subject.create(db_name)
 
-          expect(File.exist?("#{default_dir}/#{db_name}_#{Rails.env}.sqlite3")).to eq true
+          expect(File.exist?("#{default_dir}/#{db_name}_#{Rails.env}.sqlite3")).to(be(true))
         end
       end
     end

@@ -2,7 +2,7 @@
 
 #   Some shared contexts for specs
 
-shared_context 'with default schema', default_tenant: true do
+shared_context 'with default schema', :default_tenant do
   let(:default_tenant) { Apartment::Test.next_db }
 
   before do
@@ -20,7 +20,7 @@ shared_context 'with default schema', default_tenant: true do
 end
 
 # Some default setup for elevator specs
-shared_context 'elevators', elevator: true do
+shared_context 'elevators', :elevator do
   let(:company1)  { mock_model(Company, database: db1).as_null_object }
   let(:company2)  { mock_model(Company, database: db2).as_null_object }
 
@@ -41,7 +41,7 @@ shared_context 'elevators', elevator: true do
   end
 end
 
-shared_context 'persistent_schemas', persistent_schemas: true do
+shared_context 'persistent_schemas', :persistent_schemas do
   let(:persistent_schemas) { %w[hstore postgis] }
 
   before do
