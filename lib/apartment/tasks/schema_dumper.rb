@@ -23,7 +23,7 @@ module Apartment
           end
         rescue StandardError => e
           # Don't fail the migration if schema dump fails
-          puts "[Apartment] Warning: Schema dump failed: #{e.message}"
+          Rails.logger.warn("[Apartment] Schema dump failed: #{e.message}")
         end
 
         private
@@ -46,12 +46,12 @@ module Apartment
         # Invoke Rails schema dump task
         def dump_schema
           if task_defined?('db:schema:dump')
-            puts '[Apartment] Dumping schema from public schema...'
+            Rails.logger.info('[Apartment] Dumping schema from public schema...')
             Rake::Task['db:schema:dump'].reenable
             Rake::Task['db:schema:dump'].invoke
-            puts '[Apartment] Schema dump completed.'
+            Rails.logger.info('[Apartment] Schema dump completed.')
           else
-            puts '[Apartment] Warning: db:schema:dump task not found'
+            Rails.logger.warn('[Apartment] db:schema:dump task not found')
           end
         end
 

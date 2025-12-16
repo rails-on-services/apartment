@@ -31,10 +31,17 @@ describe Apartment::Tasks::SchemaDumper do
         allow(Rake::Task).to(receive(:task_defined?).with('db:schema:dump').and_return(true))
         allow(Rake::Task).to(receive(:[]).with('db:schema:dump')
           .and_return(double(reenable: nil, invoke: nil)))
+        allow(Rails.logger).to(receive(:info))
       end
 
       it 'switches to default tenant and dumps schema' do
         expect(Apartment::Tenant).to(receive(:switch).with('public'))
+        described_class.dump_if_enabled
+      end
+
+      it 'logs schema dump progress' do
+        expect(Rails.logger).to(receive(:info).with(/Dumping schema/))
+        expect(Rails.logger).to(receive(:info).with(/Schema dump completed/))
         described_class.dump_if_enabled
       end
 
@@ -61,9 +68,9 @@ describe Apartment::Tasks::SchemaDumper do
           allow(Apartment::Tenant).to(receive(:switch).and_raise(StandardError.new('Test error')))
         end
 
-        it 'catches the error and outputs a warning' do
-          expect { described_class.dump_if_enabled }
-            .to(output(/Warning: Schema dump failed/).to_stdout)
+        it 'catches the error and logs a warning' do
+          expect(Rails.logger).to(receive(:warn).with(/Schema dump failed: Test error/))
+          described_class.dump_if_enabled
         end
       end
     end

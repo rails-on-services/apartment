@@ -182,6 +182,169 @@ describe Apartment::TaskHelper do
     end
   end
 
+  describe '.each_tenant_in_threads' do
+    before do
+      allow(Apartment).to(receive_messages(tenant_names: %w[public tenant1 tenant2], parallel_migration_threads: 2))
+
+      # Mock connection pool behavior
+      connection_pool = double('ConnectionPool')
+      allow(connection_pool).to(receive(:with_connection).and_yield)
+
+      # Mock connection config for reconnect
+      db_config = double('DatabaseConfig', configuration_hash: { adapter: 'postgresql' })
+      allow(ActiveRecord::Base).to(receive(:establish_connection))
+
+      # Mock connection handler cleanup
+      connection_handler = double('ConnectionHandler')
+      allow(connection_handler).to(receive(:clear_all_connections!))
+      allow(ActiveRecord::Base).to(receive_messages(connection_pool: connection_pool, connection_db_config: db_config,
+                                                    connection_handler: connection_handler))
+
+      # Mock Rails executor
+      allow(Rails.application).to(receive(:executor).and_return(double(wrap: nil)))
+      allow(Rails.application.executor).to(receive(:wrap).and_yield)
+    end
+
+    it 'returns Result structs for each tenant' do
+      results = described_class.each_tenant_in_threads { |_tenant| nil }
+      expect(results.size).to(eq(2))
+      expect(results).to(all(be_a(Apartment::TaskHelper::Result)))
+    end
+
+    it 'marks successful operations' do
+      results = described_class.each_tenant_in_threads { |_tenant| nil }
+      expect(results).to(all(have_attributes(success: true, error: nil)))
+    end
+
+    it 'captures errors without stopping other tenants' do
+      results = described_class.each_tenant_in_threads do |tenant|
+        raise('Thread error') if tenant == 'tenant1'
+      end
+
+      failed = results.find { |r| r.tenant == 'tenant1' }
+      succeeded = results.find { |r| r.tenant == 'tenant2' }
+
+      expect(failed).to(have_attributes(success: false, error: 'Thread error'))
+      expect(succeeded).to(have_attributes(success: true))
+    end
+
+    it 'uses Parallel.map with in_threads option' do
+      allow(Parallel).to(receive(:map)
+        .with(%w[tenant1 tenant2], in_threads: 2)
+        .and_return([]))
+
+      described_class.each_tenant_in_threads { |_t| nil }
+
+      expect(Parallel).to(have_received(:map).with(%w[tenant1 tenant2], in_threads: 2))
+    end
+
+    it 'restores original connection config after completion' do
+      original_config = { adapter: 'postgresql', database: 'test' }
+      db_config = double('DatabaseConfig', configuration_hash: original_config)
+      allow(ActiveRecord::Base).to(receive(:connection_db_config).and_return(db_config))
+
+      expect(ActiveRecord::Base).to(receive(:establish_connection).with(original_config))
+
+      described_class.each_tenant_in_threads { |_t| nil }
+    end
+  end
+
+  describe '.each_tenant_in_processes' do
+    before do
+      allow(Apartment).to(receive_messages(tenant_names: %w[public tenant1 tenant2], parallel_migration_threads: 2))
+
+      # Mock connection handler cleanup
+      connection_handler = double('ConnectionHandler')
+      allow(connection_handler).to(receive(:clear_all_connections!))
+
+      # Mock connection config for reconnect
+      db_config = double('DatabaseConfig', configuration_hash: { adapter: 'postgresql' })
+      allow(ActiveRecord::Base).to(receive_messages(connection_handler: connection_handler,
+                                                    connection_db_config: db_config))
+      allow(ActiveRecord::Base).to(receive(:establish_connection))
+
+      # Mock Rails executor
+      allow(Rails.application).to(receive(:executor).and_return(double(wrap: nil)))
+      allow(Rails.application.executor).to(receive(:wrap).and_yield)
+    end
+
+    it 'returns Result structs for each tenant' do
+      results = described_class.each_tenant_in_processes { |_tenant| nil }
+      expect(results.size).to(eq(2))
+      expect(results).to(all(be_a(Apartment::TaskHelper::Result)))
+    end
+
+    it 'marks successful operations' do
+      results = described_class.each_tenant_in_processes { |_tenant| nil }
+      expect(results).to(all(have_attributes(success: true, error: nil)))
+    end
+
+    it 'captures errors without stopping other tenants' do
+      results = described_class.each_tenant_in_processes do |tenant|
+        raise('Process error') if tenant == 'tenant1'
+      end
+
+      failed = results.find { |r| r.tenant == 'tenant1' }
+      succeeded = results.find { |r| r.tenant == 'tenant2' }
+
+      expect(failed).to(have_attributes(success: false, error: 'Process error'))
+      expect(succeeded).to(have_attributes(success: true))
+    end
+
+    it 'uses Parallel.map with in_processes option' do
+      allow(Parallel).to(receive(:map)
+        .with(%w[tenant1 tenant2], in_processes: 2)
+        .and_return([]))
+
+      described_class.each_tenant_in_processes { |_t| nil }
+
+      expect(Parallel).to(have_received(:map).with(%w[tenant1 tenant2], in_processes: 2))
+    end
+
+    # NOTE: Connection clearing inside forked processes cannot be directly tested
+    # via mocks due to process isolation. The behavior is verified by integration tests.
+  end
+
+  describe '.each_tenant' do
+    before do
+      allow(Apartment).to(receive(:tenant_names).and_return(%w[public tenant1 tenant2]))
+      allow(Rails.application).to(receive(:executor).and_return(double(wrap: nil)))
+      allow(Rails.application.executor).to(receive(:wrap).and_yield)
+    end
+
+    context 'when parallel_migration_threads is 0' do
+      before { allow(Apartment).to(receive(:parallel_migration_threads).and_return(0)) }
+
+      it 'delegates to each_tenant_sequential' do
+        expect(described_class).to(receive(:each_tenant_sequential))
+        described_class.each_tenant { |_t| nil }
+      end
+    end
+
+    context 'when parallel_migration_threads > 0' do
+      before do
+        allow(Apartment).to(receive_messages(parallel_migration_threads: 4, manage_advisory_locks: true))
+        allow(described_class).to(receive(:each_tenant_parallel).and_return([]))
+      end
+
+      it 'delegates to each_tenant_parallel' do
+        expect(described_class).to(receive(:each_tenant_parallel))
+        described_class.each_tenant { |_t| nil }
+      end
+    end
+
+    context 'when tenants_without_default is empty' do
+      before do
+        allow(Apartment).to(receive(:tenant_names).and_return(%w[public]))
+      end
+
+      it 'returns empty array without processing' do
+        expect(described_class).not_to(receive(:each_tenant_sequential))
+        expect(described_class.each_tenant { |_t| nil }).to(eq([]))
+      end
+    end
+  end
+
   describe '.display_summary' do
     let(:successful_results) do
       [
