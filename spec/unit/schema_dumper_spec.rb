@@ -19,11 +19,24 @@ describe Apartment::Tasks::SchemaDumper do
       end
     end
 
+    context 'when Rails dump_schema_after_migration is false' do
+      before do
+        allow(Apartment).to(receive(:auto_dump_schema).and_return(true))
+        allow(ActiveRecord::Base).to(receive(:dump_schema_after_migration).and_return(false))
+      end
+
+      it 'does not dump schema' do
+        expect(described_class).not_to(receive(:find_schema_dump_config))
+        described_class.dump_if_enabled
+      end
+    end
+
     context 'when auto_dump_schema is true' do
       let(:db_config) { double('DatabaseConfig', configuration_hash: { schema_dump: true }) }
 
       before do
         allow(Apartment).to(receive_messages(auto_dump_schema: true, auto_dump_schema_cache: false))
+        allow(ActiveRecord::Base).to(receive(:dump_schema_after_migration).and_return(true))
         allow(described_class).to(receive(:find_schema_dump_config).and_return(db_config))
         allow(Apartment::Tenant).to(receive(:switch).and_yield)
         allow(Rake::Task).to(receive(:task_defined?).with('db:schema:dump').and_return(true))

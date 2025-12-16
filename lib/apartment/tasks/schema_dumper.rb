@@ -8,8 +8,10 @@ module Apartment
       class << self
         # Dump schema if enabled in configuration
         # Called after successful migrations
+        # Respects both Apartment.auto_dump_schema and Rails' dump_schema_after_migration
         def dump_if_enabled
           return unless Apartment.auto_dump_schema
+          return unless rails_dump_schema_enabled?
 
           db_config = find_schema_dump_config
           return if db_config.nil?
@@ -91,6 +93,14 @@ module Apartment
         # Calling load_tasks would re-trigger apartment task enhancements.
         def task_defined?(task_name)
           Rake::Task.task_defined?(task_name)
+        end
+
+        # Check if Rails' dump_schema_after_migration is enabled
+        # This respects the global Rails setting for schema dumping
+        def rails_dump_schema_enabled?
+          return true unless ActiveRecord::Base.respond_to?(:dump_schema_after_migration)
+
+          ActiveRecord::Base.dump_schema_after_migration
         end
       end
     end
