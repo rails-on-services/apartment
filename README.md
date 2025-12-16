@@ -23,6 +23,12 @@ As of May 2024, Apartment is maintained with the support of [CampusESP](https://
 
 ## Installation
 
+### Requirements
+
+- Ruby 3.1+
+- Rails 7.0+ (Rails 6.1 support was dropped in v3.4.0)
+- PostgreSQL, MySQL, or SQLite3
+
 ### Rails
 
 Add the following to your Gemfile:
