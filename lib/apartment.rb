@@ -28,7 +28,8 @@ module Apartment
     WRITER_METHODS = %i[tenant_names database_schema_file excluded_models
                         persistent_schemas connection_class
                         db_migrate_tenants db_migrate_tenant_missing_strategy seed_data_file
-                        parallel_migration_threads pg_excluded_names].freeze
+                        parallel_migration_threads pg_excluded_names
+                        parallel_strategy manage_advisory_locks].freeze
 
     attr_accessor(*ACCESSOR_METHODS)
     attr_writer(*WRITER_METHODS)
@@ -91,6 +92,24 @@ module Apartment
 
     def parallel_migration_threads
       @parallel_migration_threads || 0
+    end
+
+    # Parallelism strategy for migrations
+    # :auto (default) - Detect platform: processes on Linux, threads on macOS/Windows
+    # :threads - Always use threads (safer, works everywhere)
+    # :processes - Always use processes (faster on Linux, may crash on macOS/Windows)
+    def parallel_strategy
+      @parallel_strategy || :auto
+    end
+
+    # Whether to manage PostgreSQL advisory locks during parallel migrations
+    # When true and parallel_migration_threads > 0, advisory locks are disabled
+    # during migration to prevent deadlocks, then restored afterward.
+    # Default: true
+    def manage_advisory_locks
+      return @manage_advisory_locks if defined?(@manage_advisory_locks)
+
+      @manage_advisory_locks = true
     end
 
     def persistent_schemas

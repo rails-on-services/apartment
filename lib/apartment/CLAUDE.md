@@ -6,11 +6,11 @@ This directory contains the core implementation of Apartment v3's multi-tenancy 
 
 ```
 lib/apartment/
-├── adapters/              # Database-specific tenant isolation strategies
+├── adapters/              # Database-specific tenant isolation strategies (see CLAUDE.md)
 ├── active_record/         # ActiveRecord patches and extensions
-├── elevators/             # Rack middleware for automatic tenant switching
+├── elevators/             # Rack middleware for automatic tenant switching (see CLAUDE.md)
 ├── patches/               # Ruby/Rails core patches
-├── tasks/                 # Rake task utilities
+├── tasks/                 # Rake task utilities, parallel migrations (see CLAUDE.md)
 ├── console.rb             # Rails console tenant switching utilities
 ├── custom_console.rb      # Enhanced console with tenant prompts
 ├── deprecation.rb         # Deprecation warnings configuration
