@@ -6,7 +6,7 @@ This directory contains modules that support Apartment's rake task operations, p
 
 Multi-tenant PostgreSQL applications using schema-per-tenant isolation face operational challenges:
 
-1. **Migration time scales linearly**: 100 tenants × 2 seconds each = 3+ minutes of downtime
+1. **Migration time scales linearly**: 100 tenants × 2 seconds each = 3+ minutes blocking deploys
 2. **Rails assumes single-schema**: Built-in migration tasks don't iterate over tenant schemas
 3. **Parallel execution has pitfalls**: Database connections, advisory locks, and platform differences create subtle failure modes
 
