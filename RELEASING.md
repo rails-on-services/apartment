@@ -92,7 +92,7 @@ The `gem-publish.yml` workflow uses:
 The tag was created manually before the workflow ran. Delete the tag and re-run:
 
 ```bash
-git push origin :refs/tags/vX.Y.Z
+git push origin --delete vX.Y.Z
 ```
 
 Then re-trigger the workflow by pushing to main again (or re-run from GitHub Actions UI).
