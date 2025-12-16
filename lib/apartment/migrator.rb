@@ -42,5 +42,39 @@ module Apartment
         end
       end
     end
+
+    # Rollback all migrations after a specific version
+    # This ensures consistent state across all schemas when used with consistent_rollback
+    #
+    # @param database [String] tenant/schema name
+    # @param target_version [String, Integer] version to rollback to (migrations after this will be reversed)
+    # @return [Array<Integer>] versions that were rolled back
+    def rollback_to_version(database, target_version)
+      Tenant.switch(database) do
+        connection = ActiveRecord::Base.connection
+        quoted_version = connection.quote(target_version.to_s)
+
+        # Find all migrations applied after the target version
+        migrations_to_rollback = connection.select_values(
+          "SELECT version FROM schema_migrations WHERE version > #{quoted_version} ORDER BY version DESC"
+        ).map(&:to_i)
+
+        return [] if migrations_to_rollback.empty?
+
+        # Get migration context for running down migrations
+        ctx = if ActiveRecord.version >= Gem::Version.new('7.2.0')
+                ActiveRecord::Base.connection_pool.migration_context
+              else
+                ActiveRecord::Base.connection.migration_context
+              end
+
+        # Roll back each migration in reverse order
+        migrations_to_rollback.each do |version|
+          ctx.run(:down, version)
+        end
+
+        migrations_to_rollback
+      end
+    end
   end
 end
