@@ -2,22 +2,22 @@
 
 module Apartment
   module Tasks
-    # Handles automatic schema.rb dumping after tenant migrations.
+    # Handles automatic schema dumping after tenant migrations.
     #
     # ## Problem Context
     #
-    # After running `rails db:migrate`, Rails dumps schema.rb to capture the
+    # After running `rails db:migrate`, Rails dumps the schema to capture the
     # current database structure. With Apartment, tenant migrations modify
     # individual schemas but the canonical structure lives in the public/default
-    # schema. Without explicit handling, schema.rb could be dumped from the
+    # schema. Without explicit handling, the schema could be dumped from the
     # last-migrated tenant schema instead of the authoritative public schema.
     #
     # ## Why This Approach
     #
-    # We switch to the default tenant before dumping to ensure schema.rb
+    # We switch to the default tenant before dumping to ensure the schema file
     # reflects the public schema structure. This is correct because:
     #
-    # 1. All tenant schemas are created from the same schema.rb
+    # 1. All tenant schemas are created from the same schema file
     # 2. The public schema is the source of truth for structure
     # 3. Tenant-specific data differences don't affect schema structure
     #
@@ -26,9 +26,13 @@ module Apartment
     # We respect several Rails configurations rather than inventing our own:
     #
     # - `config.active_record.dump_schema_after_migration`: Global toggle
+    # - `config.active_record.schema_format`: `:ruby` for schema.rb, `:sql` for structure.sql
     # - `database_tasks: true/false`: Per-database migration responsibility
     # - `replica: true`: Excludes read replicas from schema operations
     # - `schema_dump: false`: Per-database schema dump toggle
+    #
+    # The `db:schema:dump` task respects `schema_format` and produces either
+    # schema.rb or structure.sql accordingly.
     #
     # ## Gotchas
     #
@@ -62,8 +66,8 @@ module Apartment
         private
 
         # Finds the database configuration responsible for schema management.
-        # Rails 6.1+ multi-database setups use `database_tasks: true` to mark
-        # the primary migration database. Falls back to 'primary' named config.
+        # Multi-database setups use `database_tasks: true` to mark the primary
+        # migration database. Falls back to 'primary' named config.
         def find_schema_dump_config
           configs = ActiveRecord::Base.configurations.configs_for(env_name: Rails.env)
 
@@ -77,7 +81,7 @@ module Apartment
         # because Rake tasks can only run once per session by default.
         def dump_schema
           if task_defined?('db:schema:dump')
-            Rails.logger.info('[Apartment] Dumping schema from public schema...')
+            Rails.logger.info('[Apartment] Dumping schema from default tenant...')
             Rake::Task['db:schema:dump'].reenable
             Rake::Task['db:schema:dump'].invoke
             Rails.logger.info('[Apartment] Schema dump completed.')

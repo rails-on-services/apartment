@@ -105,7 +105,7 @@ module Apartment
           # Forked processes inherit parent's connection handles but the
           # underlying sockets are invalid. Must reconnect before any DB work.
           ActiveRecord::Base.connection_handler.clear_all_connections!(:all)
-          reconnect_with_advisory_locks_disabled
+          reconnect_for_parallel_execution
 
           Rails.application.executor.wrap do
             yield(tenant)
@@ -124,7 +124,7 @@ module Apartment
       # spawning and restore after completion.
       def each_tenant_in_threads
         original_config = ActiveRecord::Base.connection_db_config.configuration_hash
-        reconnect_with_advisory_locks_disabled
+        reconnect_for_parallel_execution
 
         Parallel.map(tenants_without_default, in_threads: parallel_migration_threads) do |tenant|
           # Explicit connection checkout prevents pool exhaustion when
@@ -190,11 +190,19 @@ module Apartment
         end
       end
 
-      # Establishes connection with advisory_locks: false in the config hash.
-      # Belt-and-suspenders with the ENV var approach above.
-      def reconnect_with_advisory_locks_disabled
+      # Re-establishes database connection for parallel execution.
+      # When manage_advisory_locks is true, disables advisory locks in the
+      # connection config (belt-and-suspenders with the ENV var approach).
+      # When false, reconnects with existing config unchanged.
+      def reconnect_for_parallel_execution
         current_config = ActiveRecord::Base.connection_db_config.configuration_hash
-        new_config = current_config.merge(advisory_locks: false)
+
+        new_config = if Apartment.manage_advisory_locks
+                       current_config.merge(advisory_locks: false)
+                     else
+                       current_config
+                     end
+
         ActiveRecord::Base.establish_connection(new_config)
       end
 

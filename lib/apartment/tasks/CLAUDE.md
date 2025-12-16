@@ -38,11 +38,14 @@ Use when you have many tenants and your migrations only touch tenant-specific ob
 
 ### schema_dumper.rb
 
-**Purpose**: Ensures `schema.rb` is dumped from the public schema after tenant migrations.
+**Purpose**: Ensures schema is dumped from the public schema after tenant migrations.
 
 **Why this exists**: After `rails db:migrate`, Rails dumps the current schema. Without intervention, this could capture the last-migrated tenant's schema rather than the authoritative public schema. We switch to the default tenant before invoking the dump.
 
-**Rails convention compliance**: Respects `dump_schema_after_migration`, `database_tasks`, `replica`, and `schema_dump` settings from Rails configuration rather than inventing parallel config options.
+**Rails convention compliance**: Respects all relevant Rails settings:
+- `dump_schema_after_migration`: Global toggle for automatic dumps
+- `schema_format`: `:ruby` produces schema.rb, `:sql` produces structure.sql
+- `database_tasks`, `replica`, `schema_dump`: Per-database settings
 
 ### enhancements.rb
 
