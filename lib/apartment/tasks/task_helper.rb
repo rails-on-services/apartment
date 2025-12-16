@@ -3,18 +3,63 @@
 require 'active_support/core_ext/module/delegation'
 
 module Apartment
-  # Helper module for Apartment rake tasks
-  # Provides parallel execution, advisory lock management, and error reporting
+  # Coordinates tenant operations for rake tasks with parallel execution support.
+  #
+  # ## Problem Context
+  #
+  # Multi-tenant applications with many schemas face slow migration times when
+  # running sequentially. A 100-tenant system with 2-second migrations takes
+  # 3+ minutes sequentially but ~20 seconds with 10 parallel workers.
+  #
+  # ## Why This Design
+  #
+  # Parallel database migrations introduce two categories of problems:
+  #
+  # 1. **Platform-specific fork safety**: macOS/Windows have issues with libpq
+  #    (PostgreSQL C library) after fork() due to GSS/Kerberos state corruption.
+  #    Linux handles fork() cleanly. We auto-detect and choose the safe strategy.
+  #
+  # 2. **PostgreSQL advisory lock deadlocks**: Rails uses advisory locks to
+  #    prevent concurrent migrations. When multiple processes/threads migrate
+  #    different schemas simultaneously, they deadlock competing for the same
+  #    lock. We disable advisory locks during parallel execution, which means
+  #    **you accept responsibility for ensuring your migrations are parallel-safe**.
+  #
+  # ## When to Use Parallel Migrations
+  #
+  # This is an advanced feature. Use it when:
+  # - You have many tenants and sequential migration time is problematic
+  # - Your migrations only modify tenant-specific schema objects
+  # - You've verified your migrations don't have cross-schema side effects
+  #
+  # Stick with sequential execution (the default) when:
+  # - Migrations create/modify extensions, types, or shared objects
+  # - Migrations have ordering dependencies across tenants
+  # - You're unsure whether parallel execution is safe for your use case
+  #
+  # ## Gotchas
+  #
+  # - The `parallel_migration_threads` count should be less than your connection
+  #   pool size to avoid connection exhaustion.
+  # - Empty/nil tenant names from `tenant_names` proc are filtered to prevent
+  #   PostgreSQL "zero-length delimited identifier" errors.
+  # - Process-based parallelism requires fresh connections in each fork;
+  #   thread-based parallelism shares the pool but needs explicit checkout.
+  #
+  # @see Apartment.parallel_migration_threads
+  # @see Apartment.parallel_strategy
+  # @see Apartment.manage_advisory_locks
   module TaskHelper
-    # Result structure for tracking tenant operation outcomes
+    # Captures outcome per tenant for aggregated reporting. Allows migrations
+    # to continue for remaining tenants even when one fails.
     Result = Struct.new(:tenant, :success, :error, keyword_init: true)
 
     class << self
-      # Iterate over all tenants, executing the block for each
-      # Handles parallelism, advisory locks, and error collection
+      # Primary entry point for tenant iteration. Automatically selects
+      # sequential or parallel execution based on configuration.
       #
       # @yield [String] tenant name
-      # @return [Array<Result>] results for each tenant
+      # @return [Array<Result>] outcome for each tenant
       def each_tenant(&)
         return [] if tenants_without_default.empty?
 
@@ -25,10 +70,8 @@ module Apartment
         end
       end
 
-      # Iterate over tenants sequentially (no parallelism)
-      #
-      # @yield [String] tenant name
-      # @return [Array<Result>] results for each tenant
+      # Sequential execution: simpler, no connection management complexity.
+      # Used when parallel_migration_threads is 0 (the default).
       def each_tenant_sequential
         tenants_without_default.map do |tenant|
           Rails.application.executor.wrap do
@@ -40,10 +83,8 @@ module Apartment
         end
       end
 
-      # Iterate over tenants in parallel with proper resource management
-      #
-      # @yield [String] tenant name
-      # @return [Array<Result>] results for each tenant
+      # Parallel execution wrapper. Disables advisory locks for the duration,
+      # then delegates to platform-appropriate parallelism strategy.
       def each_tenant_parallel(&)
         with_advisory_locks_disabled do
           case resolve_parallel_strategy
@@ -55,17 +96,15 @@ module Apartment
         end
       end
 
-      # Execute block for each tenant using process-based parallelism
-      # Best for Linux where fork() is safe
-      #
-      # @yield [String] tenant name
-      # @return [Array<Result>] results for each tenant
+      # Process-based parallelism via fork(). Faster on Linux due to
+      # copy-on-write memory and no GIL contention. Each forked process
+      # gets isolated memory, so we must clear inherited connections
+      # and establish fresh ones.
       def each_tenant_in_processes
         Parallel.map(tenants_without_default, in_processes: parallel_migration_threads) do |tenant|
-          # Each forked process needs fresh connections
+          # Forked processes inherit parent's connection handles but the
+          # underlying sockets are invalid. Must reconnect before any DB work.
           ActiveRecord::Base.connection_handler.clear_all_connections!(:all)
-
-          # Establish new connection with advisory locks disabled
           reconnect_with_advisory_locks_disabled
 
           Rails.application.executor.wrap do
@@ -79,18 +118,17 @@ module Apartment
         end
       end
 
-      # Execute block for each tenant using thread-based parallelism
-      # Safe for macOS and Windows where fork() has issues
-      #
-      # @yield [String] tenant name
-      # @return [Array<Result>] results for each tenant
+      # Thread-based parallelism. Safe on all platforms but subject to GIL
+      # for CPU-bound work (migrations are typically I/O-bound, so this is fine).
+      # Threads share the connection pool, so we reconfigure once before
+      # spawning and restore after completion.
       def each_tenant_in_threads
-        # Threads share the connection pool, so we need to reconfigure it once
-        # before parallel execution with advisory locks disabled
         original_config = ActiveRecord::Base.connection_db_config.configuration_hash
         reconnect_with_advisory_locks_disabled
 
         Parallel.map(tenants_without_default, in_threads: parallel_migration_threads) do |tenant|
+          # Explicit connection checkout prevents pool exhaustion when
+          # thread count exceeds pool size minus buffer.
           ActiveRecord::Base.connection_pool.with_connection do
             Rails.application.executor.wrap do
               yield(tenant)
@@ -101,38 +139,40 @@ module Apartment
           Result.new(tenant: tenant, success: false, error: e.message)
         end
       ensure
-        # Restore original connection configuration
         ActiveRecord::Base.connection_handler.clear_all_connections!(:all)
         ActiveRecord::Base.establish_connection(original_config) if original_config
       end
 
-      # Determine the parallelism strategy based on configuration and platform
-      #
-      # @return [Symbol] :threads or :processes
+      # Auto-detection logic for parallelism strategy. Only Linux gets
+      # process-based parallelism by default due to macOS libpq fork issues.
       def resolve_parallel_strategy
         strategy = Apartment.parallel_strategy
 
         return :threads if strategy == :threads
         return :processes if strategy == :processes
 
-        # Auto-detect based on platform
         fork_safe_platform? ? :processes : :threads
       end
 
-      # Check if the current platform supports fork-based parallelism
-      #
-      # @return [Boolean] true if fork is safe
+      # Platform detection. Conservative: only Linux is considered fork-safe.
+      # macOS has documented issues with libpq, GSS-API, and Kerberos after fork.
+      # See: https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNECT-GSSENCMODE
       def fork_safe_platform?
-        # Only Linux supports fork safely
-        # macOS has issues with libpq/GSS/Kerberos after fork
-        # Windows has no fork() syscall
-        # Unknown platforms default to threads (safe option)
         RUBY_PLATFORM.include?('linux')
       end
 
-      # Wrap block with advisory lock management for parallel safety
+      # Advisory lock management. Rails acquires pg_advisory_lock during migrations
+      # to prevent concurrent schema changes. With parallel tenant migrations,
+      # this causes deadlocks since all workers compete for the same lock.
       #
-      # @yield Block to execute with advisory locks disabled
+      # **Important**: Disabling advisory locks shifts responsibility to you.
+      # Your migrations must be safe to run concurrently across tenants. If your
+      # migrations modify shared resources, create extensions, or have other
+      # cross-schema side effects, parallel execution may cause failures.
+      # When in doubt, use sequential execution (parallel_migration_threads = 0).
+      #
+      # Uses ENV var because Rails checks it at connection establishment time,
+      # and we need it disabled before Parallel spawns workers.
       def with_advisory_locks_disabled
         return yield unless parallel_migration_threads.positive?
         return yield unless Apartment.manage_advisory_locks
@@ -150,7 +190,8 @@ module Apartment
         end
       end
 
-      # Reconnect to database with advisory locks explicitly disabled
+      # Establishes connection with advisory_locks: false in the config hash.
+      # Belt-and-suspenders with the ENV var approach above.
       def reconnect_with_advisory_locks_disabled
         current_config = ActiveRecord::Base.connection_db_config.configuration_hash
         new_config = current_config.merge(advisory_locks: false)
