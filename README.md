@@ -23,6 +23,12 @@ As of May 2024, Apartment is maintained with the support of [CampusESP](https://
 
 ## Installation
 
+### Requirements
+
+- Ruby 3.1+
+- Rails 7.0+ (Rails 6.1 support was dropped in v3.4.0)
+- PostgreSQL, MySQL, or SQLite3
+
 ### Rails
 
 Add the following to your Gemfile:
@@ -531,14 +537,55 @@ Note that you can disable the default migrating of all tenants with `db:migrate`
 
 #### Parallel Migrations
 
-Apartment supports parallelizing migrations into multiple threads when
-you have a large number of tenants. By default, parallel migrations is
-turned off. You can enable this by setting `parallel_migration_threads` to
-the number of threads you want to use in your initializer.
+Apartment supports parallel tenant migrations for applications with many schemas where sequential migration time becomes problematic. This is an **advanced feature** that requires understanding of your migration safety guarantees.
 
-Keep in mind that because migrations are going to access the database,
-the number of threads indicated here should be less than the pool size
-that Rails will use to connect to your database.
+##### Enabling Parallel Migrations
+
+```ruby
+Apartment.configure do |config|
+  config.parallel_migration_threads = 4
+end
+```
+
+##### Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `parallel_migration_threads` | `0` | Number of parallel workers. `0` disables parallelism (recommended default). |
+| `parallel_strategy` | `:auto` | `:auto` detects platform, `:threads` forces thread-based, `:processes` forces fork-based. |
+| `manage_advisory_locks` | `true` | Disables PostgreSQL advisory locks during parallel execution to prevent deadlocks. |
+
+##### Platform Considerations
+
+Apartment auto-detects the safest parallelism strategy for your platform:
+
+- **Linux**: Uses process-based parallelism (faster due to copy-on-write memory)
+- **macOS/Windows**: Uses thread-based parallelism (avoids libpq fork issues)
+
+You can override this with `parallel_strategy: :threads` or `parallel_strategy: :processes`, but forcing processes on macOS may cause crashes due to PostgreSQL's C library (libpq) not being fork-safe on that platform.
+
+##### Important: Your Responsibility
+
+When you enable parallel migrations, Apartment disables PostgreSQL advisory locks to prevent deadlocks. This means **you are responsible for ensuring your migrations are safe to run concurrently**.
+
+**Use parallel migrations when:**
+- You have many tenants and sequential migration time is problematic
+- Your migrations only modify objects within each tenant's schema
+- You've verified your migrations have no cross-schema side effects
+
+**Stick with sequential execution when:**
+- Migrations create or modify PostgreSQL extensions
+- Migrations modify shared types, functions, or other database-wide objects
+- Migrations have ordering dependencies that span tenants
+- You're unsure whether your migrations are parallel-safe
+
+##### Connection Pool Sizing
+
+The `parallel_migration_threads` value should be less than your database connection pool size to avoid exhaustion errors. If you set `parallel_migration_threads: 8`, ensure your `pool` setting in `database.yml` is at least 10 to leave headroom.
+
+##### Schema Dump After Migration
+
+Apartment automatically dumps `schema.rb` after successful migrations, ensuring the dump comes from the public schema (the source of truth). This respects Rails' `dump_schema_after_migration` setting.
 
 ### Handling Environments
 

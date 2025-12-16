@@ -33,6 +33,12 @@ Metrics/MethodLength:
   Exclude:
     - spec/**/*.rb
     - lib/apartment/tenant.rb
+    - lib/apartment/migrator.rb
+
+Metrics/ModuleLength:
+  Max: 150
+  Exclude:
+    - spec/**/*.rb
 
 Metrics/AbcSize:
   Max: 20
