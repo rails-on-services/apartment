@@ -161,18 +161,21 @@ module Apartment
       delegate :parallel_migration_threads, to: Apartment
 
       # Get list of tenants excluding the default tenant
+      # Also filters out blank/empty tenant names to prevent errors
       #
       # @return [Array<String>] tenant names
       def tenants_without_default
-        tenants - [Apartment.default_tenant]
+        (tenants - [Apartment.default_tenant]).reject { |t| t.nil? || t.to_s.strip.empty? }
       end
 
       # Get list of all tenants to operate on
       # Supports DB env var for targeting specific tenants
+      # Filters out blank tenant names for safety
       #
       # @return [Array<String>] tenant names
       def tenants
-        ENV['DB'] ? ENV['DB'].split(',').map(&:strip) : Apartment.tenant_names || []
+        result = ENV['DB'] ? ENV['DB'].split(',').map(&:strip) : Apartment.tenant_names || []
+        result.reject { |t| t.nil? || t.to_s.strip.empty? }
       end
 
       # Display warning if tenant list is empty

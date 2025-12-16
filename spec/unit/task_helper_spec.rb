@@ -33,6 +33,21 @@ describe Apartment::TaskHelper do
       allow(Apartment).to(receive(:tenant_names).and_return(%w[public tenant1 tenant2]))
       expect(described_class.tenants_without_default).to(eq(%w[tenant1 tenant2]))
     end
+
+    it 'filters out empty strings' do
+      allow(Apartment).to(receive(:tenant_names).and_return(['', 'tenant1', 'tenant2']))
+      expect(described_class.tenants_without_default).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'filters out nil values' do
+      allow(Apartment).to(receive(:tenant_names).and_return([nil, 'tenant1', 'tenant2']))
+      expect(described_class.tenants_without_default).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'filters out whitespace-only strings' do
+      allow(Apartment).to(receive(:tenant_names).and_return(['  ', 'tenant1', 'tenant2']))
+      expect(described_class.tenants_without_default).to(eq(%w[tenant1 tenant2]))
+    end
   end
 
   describe '.fork_safe_platform?' do
