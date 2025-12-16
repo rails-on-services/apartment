@@ -10,18 +10,8 @@ describe Apartment::Tasks::SchemaDumper do
   end
 
   describe '.dump_if_enabled' do
-    context 'when auto_dump_schema is false' do
-      before { allow(Apartment).to(receive(:auto_dump_schema).and_return(false)) }
-
-      it 'does not dump schema' do
-        expect(described_class).not_to(receive(:dump_schema))
-        described_class.dump_if_enabled
-      end
-    end
-
     context 'when Rails dump_schema_after_migration is false' do
       before do
-        allow(Apartment).to(receive(:auto_dump_schema).and_return(true))
         allow(ActiveRecord::Base).to(receive(:dump_schema_after_migration).and_return(false))
       end
 
@@ -31,11 +21,10 @@ describe Apartment::Tasks::SchemaDumper do
       end
     end
 
-    context 'when auto_dump_schema is true' do
+    context 'when Rails dump_schema_after_migration is true' do
       let(:db_config) { double('DatabaseConfig', configuration_hash: { schema_dump: true }) }
 
       before do
-        allow(Apartment).to(receive_messages(auto_dump_schema: true, auto_dump_schema_cache: false))
         allow(ActiveRecord::Base).to(receive(:dump_schema_after_migration).and_return(true))
         allow(described_class).to(receive(:find_schema_dump_config).and_return(db_config))
         allow(Apartment::Tenant).to(receive(:switch).and_yield)
@@ -67,20 +56,6 @@ describe Apartment::Tasks::SchemaDumper do
         end
       end
 
-      context 'when auto_dump_schema_cache is true' do
-        before do
-          allow(Apartment).to(receive(:auto_dump_schema_cache).and_return(true))
-          allow(Rake::Task).to(receive(:task_defined?).with('db:schema:cache:dump').and_return(true))
-          allow(Rake::Task).to(receive(:[]).with('db:schema:cache:dump')
-            .and_return(double(reenable: nil, invoke: nil)))
-        end
-
-        it 'also dumps schema cache' do
-          expect(Rake::Task).to(receive(:[]).with('db:schema:cache:dump'))
-          described_class.dump_if_enabled
-        end
-      end
-
       context 'when dump fails' do
         before do
           allow(Apartment::Tenant).to(receive(:switch).and_raise(StandardError.new('Test error')))
@@ -103,19 +78,7 @@ describe Apartment::Tasks::SchemaDumper do
       allow(Rails).to(receive(:env).and_return('test'))
     end
 
-    context 'when schema_dump_connection is configured' do
-      let(:primary_config) { double('DatabaseConfig', name: 'primary') }
-      let(:custom_config) { double('DatabaseConfig', name: 'custom') }
-      let(:configs) { [primary_config, custom_config] }
-
-      before { allow(Apartment).to(receive(:schema_dump_connection).and_return('custom')) }
-
-      it 'returns the configured connection' do
-        expect(described_class.send(:find_schema_dump_config)).to(eq(custom_config))
-      end
-    end
-
-    context 'when finding database_tasks config' do
+    context 'when database_tasks config exists' do
       let(:primary_config) do
         double('DatabaseConfig', name: 'primary', database_tasks?: false, replica?: false)
       end
@@ -123,8 +86,6 @@ describe Apartment::Tasks::SchemaDumper do
         double('DatabaseConfig', name: 'migration', database_tasks?: true, replica?: false)
       end
       let(:configs) { [primary_config, migration_config] }
-
-      before { allow(Apartment).to(receive(:schema_dump_connection).and_return(nil)) }
 
       it 'returns config with database_tasks: true' do
         expect(described_class.send(:find_schema_dump_config)).to(eq(migration_config))
@@ -136,8 +97,6 @@ describe Apartment::Tasks::SchemaDumper do
         double('DatabaseConfig', name: 'primary', database_tasks?: false, replica?: false)
       end
       let(:configs) { [primary_config] }
-
-      before { allow(Apartment).to(receive(:schema_dump_connection).and_return(nil)) }
 
       it 'falls back to primary' do
         expect(described_class.send(:find_schema_dump_config)).to(eq(primary_config))
@@ -152,8 +111,6 @@ describe Apartment::Tasks::SchemaDumper do
         double('DatabaseConfig', name: 'primary', database_tasks?: false, replica?: false)
       end
       let(:configs) { [replica_config, primary_config] }
-
-      before { allow(Apartment).to(receive(:schema_dump_connection).and_return(nil)) }
 
       it 'excludes replica configs' do
         expect(described_class.send(:find_schema_dump_config)).to(eq(primary_config))

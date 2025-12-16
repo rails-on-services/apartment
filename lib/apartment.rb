@@ -29,8 +29,7 @@ module Apartment
                         persistent_schemas connection_class
                         db_migrate_tenants db_migrate_tenant_missing_strategy seed_data_file
                         parallel_migration_threads pg_excluded_names
-                        parallel_strategy manage_advisory_locks consistent_rollback
-                        auto_dump_schema auto_dump_schema_cache schema_dump_connection].freeze
+                        parallel_strategy manage_advisory_locks].freeze
 
     attr_accessor(*ACCESSOR_METHODS)
     attr_writer(*WRITER_METHODS)
@@ -112,38 +111,6 @@ module Apartment
 
       @manage_advisory_locks = true
     end
-
-    # Whether to use consistent rollback behavior across all schemas
-    # When true and VERSION is specified, all schemas roll back to the same version
-    # When false (default), STEP-based rollback rolls back N migrations per schema
-    # Default: false (opt-in for backwards compatibility)
-    def consistent_rollback
-      return @consistent_rollback if defined?(@consistent_rollback)
-
-      @consistent_rollback = false
-    end
-
-    # Whether to automatically dump schema after migrations complete
-    # Uses the schema_dump setting from the database config with database_tasks: true
-    # Default: true
-    def auto_dump_schema
-      return @auto_dump_schema if defined?(@auto_dump_schema)
-
-      @auto_dump_schema = true
-    end
-
-    # Whether to automatically dump schema cache after migrations complete
-    # Default: false
-    def auto_dump_schema_cache
-      return @auto_dump_schema_cache if defined?(@auto_dump_schema_cache)
-
-      @auto_dump_schema_cache = false
-    end
-
-    # Override which database connection to use for schema dump
-    # If nil, uses the connection with database_tasks: true, or falls back to primary
-    # Default: nil
-    attr_reader :schema_dump_connection
 
     def persistent_schemas
       @persistent_schemas || []

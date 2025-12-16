@@ -65,25 +65,12 @@ apartment_namespace = namespace(:apartment) do
   task(rollback: :environment) do
     Apartment::TaskHelper.warn_if_tenants_empty
 
-    target_version = ENV.fetch('VERSION', nil)
     step = ENV.fetch('STEP', '1').to_i
 
-    # Use consistent rollback when VERSION is provided and feature is enabled
-    results = if target_version && Apartment.consistent_rollback
-                puts "Rolling back all tenants to version #{target_version} (consistent rollback)"
-
-                Apartment::TaskHelper.each_tenant do |tenant|
-                  puts("Rolling back #{tenant} tenant to version #{target_version}")
-                  rolled_back = Apartment::Migrator.rollback_to_version(tenant, target_version)
-                  puts("  Rolled back #{rolled_back.size} migration(s)") if rolled_back.any?
-                end
-              else
-                # Legacy behavior: STEP-based rollback per tenant
-                Apartment::TaskHelper.each_tenant do |tenant|
-                  puts("Rolling back #{tenant} tenant")
-                  Apartment::Migrator.rollback(tenant, step)
-                end
-              end
+    results = Apartment::TaskHelper.each_tenant do |tenant|
+      puts("Rolling back #{tenant} tenant")
+      Apartment::Migrator.rollback(tenant, step)
+    end
 
     Apartment::TaskHelper.display_summary('Rollback', results)
 

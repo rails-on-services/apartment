@@ -8,9 +8,8 @@ module Apartment
       class << self
         # Dump schema if enabled in configuration
         # Called after successful migrations
-        # Respects both Apartment.auto_dump_schema and Rails' dump_schema_after_migration
+        # Respects Rails' dump_schema_after_migration and per-database schema_dump settings
         def dump_if_enabled
-          return unless Apartment.auto_dump_schema
           return unless rails_dump_schema_enabled?
 
           db_config = find_schema_dump_config
@@ -21,40 +20,20 @@ module Apartment
 
           Apartment::Tenant.switch(Apartment.default_tenant) do
             dump_schema
-            dump_schema_cache if Apartment.auto_dump_schema_cache
           end
         rescue StandardError => e
           # Don't fail the migration if schema dump fails
           puts "[Apartment] Warning: Schema dump failed: #{e.message}"
         end
 
-        # Dump schema cache if enabled in configuration
-        def dump_schema_cache_if_enabled
-          return unless Apartment.auto_dump_schema_cache
-
-          db_config = find_schema_dump_config
-          return if db_config.nil?
-
-          Apartment::Tenant.switch(Apartment.default_tenant) do
-            dump_schema_cache
-          end
-        rescue StandardError => e
-          puts "[Apartment] Warning: Schema cache dump failed: #{e.message}"
-        end
-
         private
 
         # Find the database configuration to use for schema dump
-        # Priority: 1) User-configured, 2) database_tasks: true, 3) primary
+        # Uses Rails convention: database_tasks: true indicates the migration connection
         #
         # @return [ActiveRecord::DatabaseConfigurations::DatabaseConfig, nil]
         def find_schema_dump_config
           configs = ActiveRecord::Base.configurations.configs_for(env_name: Rails.env)
-
-          # User explicitly configured which connection to use
-          if Apartment.schema_dump_connection
-            return configs.find { |c| c.name == Apartment.schema_dump_connection.to_s }
-          end
 
           # Find connection with database_tasks: true (non-replica)
           migration_config = configs.find { |c| c.database_tasks? && !c.replica? }
@@ -73,18 +52,6 @@ module Apartment
             puts '[Apartment] Schema dump completed.'
           else
             puts '[Apartment] Warning: db:schema:dump task not found'
-          end
-        end
-
-        # Invoke Rails schema cache dump task
-        def dump_schema_cache
-          if task_defined?('db:schema:cache:dump')
-            puts '[Apartment] Dumping schema cache from public schema...'
-            Rake::Task['db:schema:cache:dump'].reenable
-            Rake::Task['db:schema:cache:dump'].invoke
-            puts '[Apartment] Schema cache dump completed.'
-          else
-            puts '[Apartment] Warning: db:schema:cache:dump task not found'
           end
         end
 
