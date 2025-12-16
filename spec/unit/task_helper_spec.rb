@@ -154,6 +154,87 @@ describe Apartment::TaskHelper do
     end
   end
 
+  describe '.reconnect_for_parallel_execution' do
+    let(:original_config) { { adapter: 'postgresql', host: 'localhost' } }
+
+    before do
+      db_config = double('DatabaseConfig', configuration_hash: original_config)
+      allow(ActiveRecord::Base).to(receive(:connection_db_config).and_return(db_config))
+      allow(ActiveRecord::Base).to(receive(:establish_connection))
+    end
+
+    context 'when manage_advisory_locks is true' do
+      before { allow(Apartment).to(receive(:manage_advisory_locks).and_return(true)) }
+
+      it 'establishes connection with advisory_locks disabled' do
+        expect(ActiveRecord::Base).to(receive(:establish_connection)
+          .with(hash_including(advisory_locks: false)))
+
+        described_class.send(:reconnect_for_parallel_execution)
+      end
+
+      it 'preserves other connection config options' do
+        expect(ActiveRecord::Base).to(receive(:establish_connection)
+          .with(hash_including(adapter: 'postgresql', host: 'localhost')))
+
+        described_class.send(:reconnect_for_parallel_execution)
+      end
+    end
+
+    context 'when manage_advisory_locks is false' do
+      before { allow(Apartment).to(receive(:manage_advisory_locks).and_return(false)) }
+
+      it 'establishes connection with original config unchanged' do
+        expect(ActiveRecord::Base).to(receive(:establish_connection).with(original_config))
+
+        described_class.send(:reconnect_for_parallel_execution)
+      end
+
+      it 'does not add advisory_locks to connection config' do
+        expect(ActiveRecord::Base).to(receive(:establish_connection)
+          .with(hash_not_including(:advisory_locks)))
+
+        described_class.send(:reconnect_for_parallel_execution)
+      end
+    end
+  end
+
+  describe 'parallel migrations with manage_advisory_locks disabled' do
+    # Documents the expected behavior: when manage_advisory_locks is false,
+    # the user is responsible for disabling advisory locks. If they don't,
+    # parallel migrations will deadlock competing for the same lock.
+
+    before do
+      allow(Apartment).to(receive_messages(
+                            tenant_names: %w[public tenant1 tenant2],
+                            parallel_migration_threads: 4,
+                            manage_advisory_locks: false,
+                            parallel_strategy: :threads
+                          ))
+
+      db_config = double('DatabaseConfig', configuration_hash: { adapter: 'postgresql' })
+      allow(ActiveRecord::Base).to(receive(:connection_db_config).and_return(db_config))
+      allow(ActiveRecord::Base).to(receive(:establish_connection))
+    end
+
+    it 'does not disable advisory locks via ENV' do
+      allow(described_class).to(receive(:each_tenant_in_threads).and_return([]))
+
+      described_class.each_tenant_parallel { |_t| nil }
+
+      expect(ENV.fetch('DISABLE_ADVISORY_LOCKS', nil)).to(be_nil)
+    end
+
+    it 'does not disable advisory locks in connection config' do
+      allow(described_class).to(receive(:each_tenant_in_threads).and_return([]))
+
+      expect(ActiveRecord::Base).not_to(receive(:establish_connection)
+        .with(hash_including(advisory_locks: false)))
+
+      described_class.each_tenant_parallel { |_t| nil }
+    end
+  end
+
   describe '.each_tenant_sequential' do
     before do
       allow(Apartment).to(receive(:tenant_names).and_return(%w[public tenant1 tenant2]))
