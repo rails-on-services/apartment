@@ -72,47 +72,40 @@ describe Apartment::RakeTaskEnhancer do
     end
 
     context 'when Rails is defined with multiple databases' do
-      let(:primary_config) do
-        double('DatabaseConfig', name: 'primary', database_tasks?: true, replica?: false)
-      end
-      let(:secondary_config) do
-        double('DatabaseConfig', name: 'secondary', database_tasks?: true, replica?: false)
-      end
-      let(:replica_config) do
-        double('DatabaseConfig', name: 'replica', database_tasks?: true, replica?: true)
-      end
-      let(:no_tasks_config) do
-        double('DatabaseConfig', name: 'analytics', database_tasks?: false, replica?: false)
-      end
-
-      before do
+      def stub_database_configs(configs)
         allow(Rails).to(receive(:env).and_return('test'))
         allow(ActiveRecord::Base).to(receive(:configurations)
           .and_return(double(configs_for: configs)))
       end
 
-      context 'with multiple database_tasks databases' do
-        let(:configs) { [primary_config, secondary_config] }
+      it 'returns all database names with database_tasks enabled' do
+        configs = [
+          double('DatabaseConfig', name: 'primary', database_tasks?: true, replica?: false),
+          double('DatabaseConfig', name: 'secondary', database_tasks?: true, replica?: false),
+        ]
+        stub_database_configs(configs)
 
-        it 'returns all database names with database_tasks enabled' do
-          expect(described_class.send(:database_names_with_tasks)).to(eq(%w[primary secondary]))
-        end
+        expect(described_class.send(:database_names_with_tasks)).to(eq(%w[primary secondary]))
       end
 
-      context 'with replica databases' do
-        let(:configs) { [primary_config, replica_config] }
+      it 'excludes replica databases' do
+        configs = [
+          double('DatabaseConfig', name: 'primary', database_tasks?: true, replica?: false),
+          double('DatabaseConfig', name: 'replica', database_tasks?: true, replica?: true),
+        ]
+        stub_database_configs(configs)
 
-        it 'excludes replica databases' do
-          expect(described_class.send(:database_names_with_tasks)).to(eq(['primary']))
-        end
+        expect(described_class.send(:database_names_with_tasks)).to(eq(['primary']))
       end
 
-      context 'with database_tasks: false databases' do
-        let(:configs) { [primary_config, no_tasks_config] }
+      it 'excludes databases with database_tasks: false' do
+        configs = [
+          double('DatabaseConfig', name: 'primary', database_tasks?: true, replica?: false),
+          double('DatabaseConfig', name: 'analytics', database_tasks?: false, replica?: false),
+        ]
+        stub_database_configs(configs)
 
-        it 'excludes databases with database_tasks: false' do
-          expect(described_class.send(:database_names_with_tasks)).to(eq(['primary']))
-        end
+        expect(described_class.send(:database_names_with_tasks)).to(eq(['primary']))
       end
     end
 
