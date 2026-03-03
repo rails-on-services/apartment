@@ -24,6 +24,7 @@ jobs:
           - 7_1
           - 7_2
           - 8_0
+          - 8_1
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails_version }}.gemfile
       CI: true

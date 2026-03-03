@@ -68,4 +68,5 @@ workflows:
                   "gemfiles/rails_7_1.gemfile",
                   "gemfiles/rails_7_2.gemfile",
                   "gemfiles/rails_8_0.gemfile",
+                  "gemfiles/rails_8_1.gemfile",
                 ]

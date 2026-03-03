@@ -36,6 +36,18 @@ appraise 'rails-8-0' do
   end
 end
 
+appraise 'rails-8-1' do
+  gem 'rails', '~> 8.1.0'
+  platforms :ruby do
+    gem 'sqlite3', '~> 2.0'
+  end
+  platforms :jruby do
+    gem 'activerecord-jdbc-adapter', '~> 72.0'
+    gem 'activerecord-jdbcpostgresql-adapter', '~> 72.0'
+    gem 'activerecord-jdbcmysql-adapter', '~> 72.0'
+  end
+end
+
 # Install Rails from the main branch are failing
 # appraise 'rails-master' do
 #   gem 'rails', git: 'https://github.com/rails/rails.git'

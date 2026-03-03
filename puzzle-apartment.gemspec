@@ -32,7 +32,7 @@ Gem::Specification.new do |s|
 
   s.required_ruby_version = '>= 3.1', '< 3.5'
 
-  s.add_dependency 'activerecord', '>= 7.0.0', '< 8.1'
+  s.add_dependency 'activerecord', '>= 7.0.0', '< 8.2'
   s.add_dependency 'parallel', '< 2.0'
   s.add_dependency 'public_suffix', '>= 2.0.5', '<= 6.0.1'
   s.add_dependency 'rack', '>= 1.3.6', '< 4.0'
