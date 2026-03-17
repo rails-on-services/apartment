@@ -13,5 +13,6 @@ cookbooks
 tmp
 spec/dummy/db/*.sqlite3
 .DS_Store
-.claude/
-.mcp.json
+# Claude Code local settings (user-specific)
+.claude/settings.local.json
+# AI agent MCP configs are checked in (generic paths, soft suggestions).
