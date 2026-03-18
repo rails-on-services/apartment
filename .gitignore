@@ -17,3 +17,5 @@ spec/dummy/db/*.sqlite3
 .vscode/*
 # Claude Code local settings (user-specific)
 .claude/settings.local.json
+# Firecrawl working data
+.firecrawl/
