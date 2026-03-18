@@ -13,5 +13,7 @@ cookbooks
 tmp
 spec/dummy/db/*.sqlite3
 .DS_Store
-.claude/
-.mcp.json
+# VS Code files
+.vscode/*
+# Claude Code local settings (user-specific)
+.claude/settings.local.json
