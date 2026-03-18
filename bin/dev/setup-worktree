@@ -1,0 +1,158 @@
+#!/bin/bash
+# Setup script for new Git worktrees (apartment gem)
+# Copies essential untracked files and configures Peacock colors.
+# Adapted from the CampusESP www repo.
+
+set -e
+
+# Source shared UX helpers
+_GUM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_GUM_DIR/_gum.sh"
+
+# Defaults
+SKIP_PEACOCK=false
+
+# Parse arguments
+WORKTREE_PATH=""
+for arg in "$@"; do
+    case $arg in
+        --no-peacock|--skip-peacock)
+            SKIP_PEACOCK=true
+            ;;
+        --help|-h)
+            echo "Usage: $0 <worktree-path> [options]"
+            echo ""
+            echo "Options:"
+            echo "  --no-peacock    Skip VS Code Peacock color configuration"
+            echo ""
+            echo "Example: $0 ../apartment-worktrees/v4-foundation"
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $arg" >&2
+            echo "Run with --help for usage" >&2
+            exit 1
+            ;;
+        *)
+            WORKTREE_PATH="$arg"
+            ;;
+    esac
+done
+
+if [ -z "$WORKTREE_PATH" ]; then
+    echo "Usage: $0 <worktree-path> [--no-peacock]"
+    echo "Example: $0 ../apartment-worktrees/v4-foundation"
+    exit 1
+fi
+
+MAIN_REPO_PATH=$(pwd)
+
+if [ ! -d "$WORKTREE_PATH" ]; then
+    log_error "Worktree path '$WORKTREE_PATH' does not exist"
+    log_info "Create the worktree first with: git worktree add $WORKTREE_PATH -b branch-name"
+    exit 1
+fi
+
+header "Worktree Setup"
+log_info "Worktree: $WORKTREE_PATH"
+log_info "Main repo: $MAIN_REPO_PATH"
+
+cd "$WORKTREE_PATH"
+
+# Copy files/directories using ditto (macOS-native, APFS copy-on-write)
+copy_if_exists() {
+    local source="$MAIN_REPO_PATH/$1"
+    local dest="$1"
+
+    if [ -e "$source" ]; then
+        log_info "Copying $1"
+        ditto "$source" "$dest"
+    else
+        log_warn "Skipping $1 (doesn't exist in main repo)"
+    fi
+}
+
+section "Copying untracked files and directories"
+
+copy_if_exists ".claude"
+copy_if_exists ".bundle"
+copy_if_exists ".vscode"
+
+# Peacock color assignment via shared color registry
+PEACOCK_COLOR=""
+if [ "$SKIP_PEACOCK" = false ]; then
+    WORKTREE_NAME=$(basename "$WORKTREE_PATH")
+
+    REGISTRY="$HOME/.config/campusesp/color-registry.json"
+    if ! command -v jq &>/dev/null; then
+        log_error "jq is required for color assignment (brew install jq)"
+        exit 1
+    fi
+    if [ ! -f "$REGISTRY" ]; then
+        log_error "Color registry not found: $REGISTRY"
+        exit 1
+    fi
+
+    EXISTING=$(jq -r --arg name "$WORKTREE_NAME" '.worktree_colors[$name] // empty' "$REGISTRY")
+    if [ -n "$EXISTING" ]; then
+        PEACOCK_COLOR="$EXISTING"
+        log_info "Color registry: reusing $EXISTING for $WORKTREE_NAME"
+    else
+        # Assign first palette color not used by any project or worktree
+        ASSIGNED_COLOR=$(jq -r '
+          .palette as $p |
+          ([.projects | to_entries[].value.color] + [.worktree_colors // {} | to_entries[].value]) as $used |
+          ($p - $used) | first // empty
+        ' "$REGISTRY" 2>/dev/null) || ASSIGNED_COLOR=""
+        if [ -z "$ASSIGNED_COLOR" ]; then
+            log_error "Color registry: palette exhausted (all colors in use)"
+            exit 1
+        fi
+        if jq --arg name "$WORKTREE_NAME" --arg color "$ASSIGNED_COLOR" \
+           '.worktree_colors[$name] = $color' "$REGISTRY" > "${REGISTRY}.tmp" \
+           && mv "${REGISTRY}.tmp" "$REGISTRY"; then
+            PEACOCK_COLOR="$ASSIGNED_COLOR"
+            log_info "Color registry: assigned $ASSIGNED_COLOR to $WORKTREE_NAME"
+        else
+            log_error "Color registry: failed to write $REGISTRY"
+            exit 1
+        fi
+    fi
+
+    # Update or create .vscode/settings.json with Peacock color
+    mkdir -p .vscode
+    if [ -f ".vscode/settings.json" ]; then
+        if grep -q '"peacock.color"' .vscode/settings.json; then
+            sed -i '' "s/\"peacock.color\": \"[^\"]*\"/\"peacock.color\": \"$PEACOCK_COLOR\"/" .vscode/settings.json
+        else
+            sed -i '' "s/{/{\\
+  \"peacock.color\": \"$PEACOCK_COLOR\",/" .vscode/settings.json
+        fi
+    else
+        echo "{
+  \"peacock.color\": \"$PEACOCK_COLOR\"
+}" > .vscode/settings.json
+    fi
+else
+    log_info "Skipping Peacock color configuration (--no-peacock)"
+fi
+
+# Check dependencies
+section "Checking dependencies"
+
+if [ -f "Gemfile" ]; then
+    log_info "Ruby gems should be available (gems are installed globally)"
+    log_info "Run 'bundle install' only if you add new gems to this worktree"
+else
+    log_warn "No Gemfile found"
+fi
+
+echo ""
+log_success "Worktree setup complete!"
+log_info "To work in this worktree:"
+log_info "  cd $WORKTREE_PATH"
+if [ -n "$PEACOCK_COLOR" ]; then
+    log_info "  code .              # Open in Cursor/VSCode (Peacock: $PEACOCK_COLOR)"
+else
+    log_info "  code .              # Open in Cursor/VSCode"
+fi

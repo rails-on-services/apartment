@@ -1,0 +1,154 @@
+#!/bin/bash
+# Remove a git worktree and clean up all associated files (apartment gem).
+# Adapted from the CampusESP www repo.
+
+set -e
+
+source "$(dirname "${BASH_SOURCE[0]}")/_gum.sh"
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+WORKTREE_PATH=""
+DELETE_BRANCH=false
+CONFIRM=false
+
+for arg in "$@"; do
+    case $arg in
+        --delete-branch)
+            DELETE_BRANCH=true
+            ;;
+        --confirm)
+            CONFIRM=true
+            ;;
+        --help|-h)
+            echo "Usage: $0 <worktree-name-or-path> [options]"
+            echo ""
+            echo "Options:"
+            echo "  --delete-branch   Also delete the local branch"
+            echo "  --confirm         Skip confirmation prompts"
+            echo ""
+            echo "Examples:"
+            echo "  $0 v4-foundation                              # by name"
+            echo "  $0 ../apartment-worktrees/v4-foundation       # by path"
+            echo "  $0 v4-foundation --delete-branch              # remove + delete branch"
+            exit 0
+            ;;
+        -*)
+            log_error "Unknown option: $arg"
+            echo "Run with --help for usage" >&2
+            exit 1
+            ;;
+        *)
+            WORKTREE_PATH="$arg"
+            ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Interactive mode: if no worktree specified, let user pick from list
+# ---------------------------------------------------------------------------
+WORKTREE_DIR="../apartment-worktrees"
+if [ -z "$WORKTREE_PATH" ]; then
+    if [ ! -d "$WORKTREE_DIR" ] || [ -z "$(ls -A "$WORKTREE_DIR" 2>/dev/null)" ]; then
+        log_error "No worktrees found in $WORKTREE_DIR"
+        exit 1
+    fi
+
+    # shellcheck disable=SC2046
+    WORKTREE_PATH=$(choose "Select worktree to remove:" $(ls "$WORKTREE_DIR")) || exit 1
+    [ -z "$WORKTREE_PATH" ] && exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Resolve path
+# ---------------------------------------------------------------------------
+if [ ! -d "$WORKTREE_PATH" ]; then
+    RESOLVED="$WORKTREE_DIR/$WORKTREE_PATH"
+    if [ -d "$RESOLVED" ]; then
+        WORKTREE_PATH="$RESOLVED"
+    else
+        log_error "Worktree not found: $WORKTREE_PATH (also tried $RESOLVED)"
+        exit 1
+    fi
+fi
+
+ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd || echo "$WORKTREE_PATH")
+WORKTREE_NAME=$(basename "$ABS_PATH")
+
+header "Remove worktree: $WORKTREE_NAME"
+
+# ---------------------------------------------------------------------------
+# Detect branch
+# ---------------------------------------------------------------------------
+BRANCH=""
+IS_GIT_WORKTREE=false
+if git worktree list --porcelain | grep -q "worktree $ABS_PATH"; then
+    IS_GIT_WORKTREE=true
+    BRANCH=$(git worktree list --porcelain | awk -v path="$ABS_PATH" '
+        $1 == "worktree" && $2 == path { found=1 }
+        found && $1 == "branch" { gsub("refs/heads/", "", $2); print $2; exit }
+    ')
+    [ -n "$BRANCH" ] && log_info "Branch: $BRANCH"
+fi
+
+# ---------------------------------------------------------------------------
+# Check for uncommitted changes
+# ---------------------------------------------------------------------------
+if [ "$IS_GIT_WORKTREE" = true ]; then
+    CHANGES=$(git -C "$WORKTREE_PATH" status --porcelain 2>/dev/null || true)
+    if [ -n "$CHANGES" ]; then
+        log_warn "Worktree has uncommitted changes:"
+        echo ""
+        git -C "$WORKTREE_PATH" status --short
+        echo ""
+        if [ "$CONFIRM" = false ]; then
+            confirm "Discard these changes and remove worktree?" || { echo "Aborted."; exit 1; }
+        else
+            log_info "Proceeding without prompt (--confirm)"
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Remove worktree
+# ---------------------------------------------------------------------------
+if [ "$IS_GIT_WORKTREE" = true ]; then
+    spin "Removing git worktree..." git worktree remove --force "$WORKTREE_PATH" 2>/dev/null || true
+fi
+
+if [ -d "$WORKTREE_PATH" ]; then
+    spin "Cleaning up leftover files..." rm -rf "$WORKTREE_PATH"
+fi
+
+git worktree prune
+
+# --- Color Registry cleanup ---
+REGISTRY="$HOME/.config/campusesp/color-registry.json"
+if command -v jq &>/dev/null && [ -f "$REGISTRY" ]; then
+    if jq -e --arg name "$WORKTREE_NAME" '.worktree_colors[$name]' "$REGISTRY" &>/dev/null; then
+        jq --arg name "$WORKTREE_NAME" 'del(.worktree_colors[$name])' "$REGISTRY" > "${REGISTRY}.tmp" \
+            && mv "${REGISTRY}.tmp" "$REGISTRY"
+        log_info "Color registry: freed color for $WORKTREE_NAME"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Optionally delete the local branch
+# ---------------------------------------------------------------------------
+if [ -n "$BRANCH" ] && [ "$DELETE_BRANCH" = false ] && [ "$CONFIRM" = false ]; then
+    if git branch --list "$BRANCH" | grep -q .; then
+        confirm "Also delete local branch '$BRANCH'?" && DELETE_BRANCH=true || true
+    fi
+fi
+
+if [ "$DELETE_BRANCH" = true ] && [ -n "$BRANCH" ]; then
+    if git branch --list "$BRANCH" | grep -q .; then
+        git branch -D "$BRANCH"
+        log_info "Deleted branch: $BRANCH"
+    else
+        log_info "Branch '$BRANCH' not found locally (already deleted?)"
+    fi
+fi
+
+log_success "Worktree '$WORKTREE_NAME' removed."
