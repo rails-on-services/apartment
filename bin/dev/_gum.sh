@@ -159,7 +159,7 @@ choose() {
 spin() {
   local title="$1"; shift
   if $GUM_AVAILABLE; then
-    gum spin --spinner dot --title "$title" -- "$@"
+    gum spin --spinner dot --show-error --title "$title" -- "$@"
   else
     echo "$title"
     "$@"

@@ -21,10 +21,12 @@ Phase 3  Phase 4   Phase 5
 Elevators  Railtie   Job
            & Migrations  Middleware
     |        |         |
+    |        v         |
+    |   Phase 6:       |
+    |   CLI &          |
+    |   Generator      |
+    |        |         |
     +--------+---------+
-    |
-    v
-Phase 6: CLI & Generator
     |
     v
 Phase 7: Integration & Stress Tests
@@ -32,6 +34,8 @@ Phase 7: Integration & Stress Tests
     v
 Phase 8: Docs & Upgrade
 ```
+
+**Note:** Phase 6 depends only on Phase 4 (Thor commands delegate to the Migrator and Railtie). Phases 3 and 5 feed directly into Phase 7.
 
 ## Phases
 

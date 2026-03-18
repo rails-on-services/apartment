@@ -82,7 +82,7 @@ Gem::Specification.new do |s|
   s.summary       = 'A Ruby gem for managing database multi-tenancy. Apartment Gem drop in replacement'
   s.description   = 'Apartment allows Rack applications to deal with database multi-tenancy through ActiveRecord'
   s.email         = ['ryan@influitive.com', 'brad@influitive.com', 'rui.p.baltazar@gmail.com', 'mauricio@campusesp.com']
-  s.files = %w[ros-apartment.gemspec README.md] + `git ls-files -z | grep -E '^lib'`.split("\n")
+  s.files = %w[ros-apartment.gemspec README.md] + `git ls-files -- lib`.split("\n")
   s.executables = s.files.grep(%r{^bin/}).map { |f| File.basename(f) }
 
   s.licenses = ['MIT']

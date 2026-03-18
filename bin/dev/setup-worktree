@@ -1,6 +1,7 @@
 #!/bin/bash
 # Setup script for new Git worktrees (apartment gem)
 # Copies essential untracked files and configures Peacock colors.
+# macOS-only (uses ditto for APFS copy-on-write).
 
 set -e
 
@@ -44,7 +45,8 @@ if [ -z "$WORKTREE_PATH" ]; then
     exit 1
 fi
 
-MAIN_REPO_PATH=$(pwd)
+# Resolve main repo from git worktree list (works even when invoked from a worktree)
+MAIN_REPO_PATH=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
 
 if [ ! -d "$WORKTREE_PATH" ]; then
     log_error "Worktree path '$WORKTREE_PATH' does not exist"
@@ -56,7 +58,7 @@ header "Worktree Setup"
 log_info "Worktree: $WORKTREE_PATH"
 log_info "Main repo: $MAIN_REPO_PATH"
 
-cd "$WORKTREE_PATH"
+cd "$WORKTREE_PATH" || { log_error "Failed to cd into $WORKTREE_PATH"; exit 1; }
 
 # Copy files/directories using ditto (macOS-native, APFS copy-on-write)
 copy_if_exists() {
@@ -65,7 +67,10 @@ copy_if_exists() {
 
     if [ -e "$source" ]; then
         log_info "Copying $1"
-        ditto "$source" "$dest"
+        if ! ditto "$source" "$dest"; then
+            log_error "Failed to copy $1 — check permissions and disk space"
+            exit 1
+        fi
     else
         log_warn "Skipping $1 (doesn't exist in main repo)"
     fi
@@ -79,18 +84,26 @@ copy_if_exists ".vscode"
 
 # Peacock color assignment via shared color registry
 PEACOCK_COLOR=""
+REGISTRY="${WORKTREE_COLOR_REGISTRY:-$HOME/.config/campusesp/color-registry.json}"
+
 if [ "$SKIP_PEACOCK" = false ]; then
     WORKTREE_NAME=$(basename "$WORKTREE_PATH")
 
-    REGISTRY="$HOME/.config/campusesp/color-registry.json"
+    # Gracefully degrade if jq or registry are missing
     if ! command -v jq &>/dev/null; then
-        log_error "jq is required for color assignment (brew install jq)"
-        exit 1
+        log_warn "jq not found — skipping Peacock color assignment (brew install jq)"
+        SKIP_PEACOCK=true
+    elif [ ! -f "$REGISTRY" ]; then
+        log_warn "Color registry not found at $REGISTRY — skipping Peacock color assignment"
+        SKIP_PEACOCK=true
     fi
-    if [ ! -f "$REGISTRY" ]; then
-        log_error "Color registry not found: $REGISTRY"
-        exit 1
-    fi
+fi
+
+if [ "$SKIP_PEACOCK" = false ]; then
+    # Trap to clean up temp files on interrupt
+    _REGISTRY_TMP=""
+    cleanup_registry_tmp() { rm -f "$_REGISTRY_TMP" 2>/dev/null; }
+    trap cleanup_registry_tmp EXIT INT TERM
 
     EXISTING=$(jq -r --arg name "$WORKTREE_NAME" '.worktree_colors[$name] // empty' "$REGISTRY")
     if [ -n "$EXISTING" ]; then
@@ -98,42 +111,64 @@ if [ "$SKIP_PEACOCK" = false ]; then
         log_info "Color registry: reusing $EXISTING for $WORKTREE_NAME"
     else
         # Assign first palette color not used by any project or worktree
-        ASSIGNED_COLOR=$(jq -r '
+        JQ_OUTPUT=$(jq -r '
           .palette as $p |
           ([.projects | to_entries[].value.color] + [.worktree_colors // {} | to_entries[].value]) as $used |
           ($p - $used) | first // empty
-        ' "$REGISTRY" 2>/dev/null) || ASSIGNED_COLOR=""
-        if [ -z "$ASSIGNED_COLOR" ]; then
-            log_error "Color registry: palette exhausted (all colors in use)"
-            exit 1
-        fi
-        if jq --arg name "$WORKTREE_NAME" --arg color "$ASSIGNED_COLOR" \
-           '.worktree_colors[$name] = $color' "$REGISTRY" > "${REGISTRY}.tmp" \
-           && mv "${REGISTRY}.tmp" "$REGISTRY"; then
-            PEACOCK_COLOR="$ASSIGNED_COLOR"
-            log_info "Color registry: assigned $ASSIGNED_COLOR to $WORKTREE_NAME"
+        ' "$REGISTRY" 2>&1)
+        JQ_EXIT=$?
+
+        if [ $JQ_EXIT -ne 0 ]; then
+            log_warn "Color registry: failed to parse $REGISTRY — skipping color assignment"
+            log_warn "  jq output: $JQ_OUTPUT"
+            SKIP_PEACOCK=true
         else
-            log_error "Color registry: failed to write $REGISTRY"
-            exit 1
+            ASSIGNED_COLOR="$JQ_OUTPUT"
+        fi
+
+        if [ "$SKIP_PEACOCK" = false ] && [ -z "$ASSIGNED_COLOR" ]; then
+            log_warn "Color registry: palette exhausted (all colors in use) — skipping"
+            SKIP_PEACOCK=true
+        fi
+
+        if [ "$SKIP_PEACOCK" = false ]; then
+            _REGISTRY_TMP=$(mktemp "${REGISTRY}.XXXXXX")
+            if jq --arg name "$WORKTREE_NAME" --arg color "$ASSIGNED_COLOR" \
+               '.worktree_colors[$name] = $color' "$REGISTRY" > "$_REGISTRY_TMP" \
+               && mv "$_REGISTRY_TMP" "$REGISTRY"; then
+                _REGISTRY_TMP=""  # Successfully moved, nothing to clean up
+                PEACOCK_COLOR="$ASSIGNED_COLOR"
+                log_info "Color registry: assigned $ASSIGNED_COLOR to $WORKTREE_NAME"
+            else
+                log_warn "Color registry: failed to write — skipping color assignment"
+                SKIP_PEACOCK=true
+            fi
         fi
     fi
 
-    # Update or create .vscode/settings.json with Peacock color
-    mkdir -p .vscode
-    if [ -f ".vscode/settings.json" ]; then
-        if grep -q '"peacock.color"' .vscode/settings.json; then
-            sed -i '' "s/\"peacock.color\": \"[^\"]*\"/\"peacock.color\": \"$PEACOCK_COLOR\"/" .vscode/settings.json
+    # Update or create .vscode/settings.json with Peacock color using jq
+    if [ -n "$PEACOCK_COLOR" ]; then
+        mkdir -p .vscode
+        if [ -f ".vscode/settings.json" ]; then
+            _SETTINGS_TMP=$(mktemp ".vscode/settings.json.XXXXXX")
+            if jq --arg color "$PEACOCK_COLOR" '.["peacock.color"] = $color' \
+                 .vscode/settings.json > "$_SETTINGS_TMP" \
+               && mv "$_SETTINGS_TMP" .vscode/settings.json; then
+                :  # Success
+            else
+                log_warn "Failed to update .vscode/settings.json — skipping Peacock"
+                rm -f "$_SETTINGS_TMP"
+            fi
         else
-            sed -i '' "s/{/{\\
-  \"peacock.color\": \"$PEACOCK_COLOR\",/" .vscode/settings.json
+            jq -n --arg color "$PEACOCK_COLOR" '{"peacock.color": $color}' > .vscode/settings.json
         fi
-    else
-        echo "{
-  \"peacock.color\": \"$PEACOCK_COLOR\"
-}" > .vscode/settings.json
     fi
 else
-    log_info "Skipping Peacock color configuration (--no-peacock)"
+    if [ "$SKIP_PEACOCK" = true ]; then
+        :  # Already logged the reason above
+    else
+        log_info "Skipping Peacock color configuration (--no-peacock)"
+    fi
 fi
 
 # Check dependencies
