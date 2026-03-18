@@ -102,8 +102,9 @@ fi
 if [ "$SKIP_PEACOCK" = false ]; then
     # Trap to clean up temp files on interrupt
     _REGISTRY_TMP=""
-    cleanup_registry_tmp() { rm -f "$_REGISTRY_TMP" 2>/dev/null; }
-    trap cleanup_registry_tmp EXIT INT TERM
+    _SETTINGS_TMP=""
+    cleanup_tmp_files() { rm -f "$_REGISTRY_TMP" "$_SETTINGS_TMP" 2>/dev/null; }
+    trap cleanup_tmp_files EXIT INT TERM
 
     EXISTING=$(jq -r --arg name "$WORKTREE_NAME" '.worktree_colors[$name] // empty' "$REGISTRY")
     if [ -n "$EXISTING" ]; then
@@ -150,14 +151,23 @@ if [ "$SKIP_PEACOCK" = false ]; then
     if [ -n "$PEACOCK_COLOR" ]; then
         mkdir -p .vscode
         if [ -f ".vscode/settings.json" ]; then
-            _SETTINGS_TMP=$(mktemp ".vscode/settings.json.XXXXXX")
-            if jq --arg color "$PEACOCK_COLOR" '.["peacock.color"] = $color' \
-                 .vscode/settings.json > "$_SETTINGS_TMP" \
-               && mv "$_SETTINGS_TMP" .vscode/settings.json; then
-                :  # Success
+            # VS Code settings files often contain JSONC (comments, trailing commas)
+            # which jq cannot parse. Detect and provide actionable guidance.
+            if ! jq empty .vscode/settings.json 2>/dev/null; then
+                log_warn ".vscode/settings.json contains invalid JSON (comments or trailing commas?)"
+                log_warn "Add manually: \"peacock.color\": \"$PEACOCK_COLOR\""
             else
-                log_warn "Failed to update .vscode/settings.json — skipping Peacock"
-                rm -f "$_SETTINGS_TMP"
+                _SETTINGS_TMP=$(mktemp ".vscode/settings.json.XXXXXX")
+                if jq --arg color "$PEACOCK_COLOR" '.["peacock.color"] = $color' \
+                     .vscode/settings.json > "$_SETTINGS_TMP" \
+                   && mv "$_SETTINGS_TMP" .vscode/settings.json; then
+                    _SETTINGS_TMP=""  # Successfully moved
+                else
+                    log_warn "Failed to update .vscode/settings.json"
+                    log_warn "Add manually: \"peacock.color\": \"$PEACOCK_COLOR\""
+                    rm -f "$_SETTINGS_TMP"
+                    _SETTINGS_TMP=""
+                fi
             fi
         else
             jq -n --arg color "$PEACOCK_COLOR" '{"peacock.color": $color}' > .vscode/settings.json

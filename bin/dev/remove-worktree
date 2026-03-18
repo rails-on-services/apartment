@@ -102,7 +102,13 @@ fi
 # Check for uncommitted changes
 # ---------------------------------------------------------------------------
 if [ "$IS_GIT_WORKTREE" = true ]; then
-    CHANGES=$(git -C "$WORKTREE_PATH" status --porcelain 2>/dev/null || true)
+    if ! CHANGES=$(git -C "$WORKTREE_PATH" status --porcelain 2>&1); then
+        log_warn "Could not check worktree status: $CHANGES"
+        if [ "$CONFIRM" = false ]; then
+            confirm "Proceed with removal anyway? (uncommitted changes may exist)" || { echo "Aborted."; exit 1; }
+        fi
+        CHANGES=""  # Don't re-prompt below
+    fi
     if [ -n "$CHANGES" ]; then
         log_warn "Worktree has uncommitted changes:"
         echo ""
@@ -148,14 +154,23 @@ if ! command -v jq &>/dev/null; then
 elif [ ! -f "$REGISTRY" ]; then
     # No registry, nothing to clean up — not a warning since it may not be configured
     :
-elif jq -e --arg name "$WORKTREE_NAME" '.worktree_colors[$name]' "$REGISTRY" &>/dev/null; then
-    _REGISTRY_TMP=$(mktemp "${REGISTRY}.XXXXXX")
-    if jq --arg name "$WORKTREE_NAME" 'del(.worktree_colors[$name])' "$REGISTRY" > "$_REGISTRY_TMP" \
-        && mv "$_REGISTRY_TMP" "$REGISTRY"; then
-        log_info "Color registry: freed color for $WORKTREE_NAME"
+else
+    JQ_CHECK=$(jq -e --arg name "$WORKTREE_NAME" '.worktree_colors[$name]' "$REGISTRY" 2>&1)
+    JQ_EXIT=$?
+    if [ $JQ_EXIT -eq 0 ]; then
+        # Key exists — remove it
+        _REGISTRY_TMP=$(mktemp "${REGISTRY}.XXXXXX")
+        if jq --arg name "$WORKTREE_NAME" 'del(.worktree_colors[$name])' "$REGISTRY" > "$_REGISTRY_TMP" \
+            && mv "$_REGISTRY_TMP" "$REGISTRY"; then
+            log_info "Color registry: freed color for $WORKTREE_NAME"
+        else
+            log_warn "Color registry: failed to free color for $WORKTREE_NAME"
+            rm -f "$_REGISTRY_TMP"
+        fi
+    elif [ $JQ_EXIT -eq 1 ]; then
+        :  # Key not found (jq -e returns 1 for null/false) — nothing to clean
     else
-        log_warn "Color registry: failed to free color for $WORKTREE_NAME"
-        rm -f "$_REGISTRY_TMP"
+        log_warn "Color registry: failed to read $REGISTRY"
     fi
 fi
 
