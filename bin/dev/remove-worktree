@@ -1,6 +1,5 @@
 #!/bin/bash
 # Remove a git worktree and clean up all associated files (apartment gem).
-# Adapted from the CampusESP www repo.
 
 set -e
 

@@ -303,7 +303,7 @@ Apartment.configure do |config|
   config.elevator = Apartment::Elevators::Subdomain
   # For Header elevator:
   # config.elevator = Apartment::Elevators::Header
-  # config.elevator_options = { header: "X-CampusESP-Tenant", trusted: true }
+  # config.elevator_options = { header: "X-Tenant-Id", trusted: true }
 
   # Tenant-not-found handling
   config.tenant_not_found_handler = ->(tenant, request) {
@@ -452,7 +452,7 @@ For infrastructure that injects tenant identity at the edge (CloudFront, Nginx, 
 
 ```ruby
 config.elevator = Apartment::Elevators::Header
-config.elevator_options = { header: "X-CampusESP-Tenant", trusted: true }
+config.elevator_options = { header: "X-Tenant-Id", trusted: true }
 ```
 
 Security model:
@@ -460,7 +460,7 @@ Security model:
 - `trusted: true`: warning suppressed; developer has acknowledged the trust model
 - Missing header: falls through to default tenant (same as other elevators returning nil)
 
-Design reference: CampusESP's CloudFront function strips any client-injected `X-CampusESP-Tenant` header, then sets it only from a trusted KVS lookup. The app can trust the header because it can only arrive via CloudFront.
+**Example pattern:** A CloudFront or Nginx edge function strips any client-injected `X-Tenant-Id` header, then sets it only from a trusted lookup (KVS, database, config). The app can trust the header because it can only arrive through the trusted edge layer.
 
 ## Job Middleware
 

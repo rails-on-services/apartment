@@ -1,7 +1,6 @@
 #!/bin/bash
 # Setup script for new Git worktrees (apartment gem)
 # Copies essential untracked files and configures Peacock colors.
-# Adapted from the CampusESP www repo.
 
 set -e
 
