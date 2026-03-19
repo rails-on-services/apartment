@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'concurrent'
+require_relative 'instrumentation'
 
 module Apartment
   class PoolReaper
@@ -41,6 +42,7 @@ module Apartment
           next if tenant == @default_tenant
 
           pool = @pool_manager.remove(tenant)
+          Instrumentation.instrument(:evict, tenant: tenant, reason: :idle)
           @on_evict&.call(tenant, pool)
         end
       end
@@ -56,6 +58,7 @@ module Apartment
           next if tenant == @default_tenant
 
           pool = @pool_manager.remove(tenant)
+          Instrumentation.instrument(:evict, tenant: tenant, reason: :lru)
           @on_evict&.call(tenant, pool)
           evicted += 1
         end

@@ -86,4 +86,27 @@ RSpec.describe Apartment::PoolReaper do
       expect(disconnect_calls).not_to include('public')
     end
   end
+
+  describe 'instrumentation' do
+    it 'emits evict.apartment events on eviction' do
+      events = Concurrent::Array.new
+      ActiveSupport::Notifications.subscribe('evict.apartment') { |event| events << event }
+
+      pool_manager.fetch_or_create('stale') { 'pool_stale' }
+      pool_manager.instance_variable_get(:@timestamps)['stale'] = Time.now - 10
+
+      described_class.start(
+        pool_manager: pool_manager,
+        interval: 0.05,
+        idle_timeout: 1,
+        on_evict: on_evict
+      )
+
+      sleep 0.2
+
+      expect(events.any? { |e| e.payload[:tenant] == 'stale' }).to be true
+    ensure
+      ActiveSupport::Notifications.unsubscribe('evict.apartment')
+    end
+  end
 end
