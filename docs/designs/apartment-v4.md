@@ -345,19 +345,27 @@ end
 
 ```
 Apartment::Adapters::AbstractAdapter
-  +-- PostgreSQLAdapter    (:schema)
-  +-- MySQL2Adapter        (:database_name)
-  +-- TrilogyAdapter       (:database_name)
-  +-- SQLite3Adapter       (:database_name)
+  +-- PostgreSQLSchemaAdapter     (:schema + postgresql)
+  +-- PostgreSQLDatabaseAdapter   (:database_name + postgresql)
+  +-- MySQL2Adapter               (:database_name + mysql2)
+  +-- TrilogyAdapter              (:database_name + trilogy)
+  +-- SQLite3Adapter              (:database_name + sqlite3)
 ```
 
-JDBC adapters dropped (negligible JRuby usage, high maintenance). PostGIS adapter dropped (users should use the PostgreSQLAdapter with PostGIS-enabled connections; the adapter handles schema isolation the same way).
+JDBC adapters dropped (negligible JRuby usage, high maintenance). PostGIS adapter dropped (users should use the PostgreSQL adapters with PostGIS-enabled connections; the adapters handle isolation the same way).
 
-**Strategy mapping:**
-- `:schema` -> `PostgreSQLAdapter` (schema-per-tenant)
-- `:database_name` -> `MySQL2Adapter`, `TrilogyAdapter`, or `SQLite3Adapter` (database-per-tenant)
-- `:shard` -> Uses tenant name as Rails shard identifier, delegates to `connected_to(shard:)`
-- `:database_config` -> Merges custom per-tenant config hashes (full connection override per tenant)
+**Strategy x Database matrix:**
+
+| Strategy | PostgreSQL | MySQL | SQLite |
+|----------|-----------|-------|--------|
+| `:schema` | PostgreSQLSchemaAdapter | N/A | N/A |
+| `:database_name` | PostgreSQLDatabaseAdapter | MySQL2Adapter / TrilogyAdapter | SQLite3Adapter |
+| `:shard` | delegates to Rails `connected_to` | same | same |
+| `:database_config` | full config override per tenant | same | same |
+
+Adapter selection is automatic based on `tenant_strategy` + the database adapter detected from `database.yml`. The `:schema` strategy is only valid with PostgreSQL — using it with MySQL or SQLite raises `ConfigurationError` at boot.
+
+**Why PostgreSQL supports both strategies:** Schema-per-tenant (`:schema`) is the primary and recommended path — fast switching, shared connection pool benefits, and `persistent_schemas` for extensions. Database-per-tenant (`:database_name`) provides stronger isolation boundaries: separate `pg_dump` per tenant, independent extensions, and full database-level access control. Use database-per-tenant when regulatory or security requirements demand complete isolation.
 
 The `:shard` and `:database_config` strategies reuse the same adapter classes but with different `resolve_connection_config` implementations.
 
@@ -374,7 +382,7 @@ Responsibilities:
 
 Callbacks via `ActiveSupport::Callbacks` on `:create` and `:switch` (same as v3).
 
-### PostgreSQLAdapter
+### PostgreSQLSchemaAdapter
 
 Primary strategy. Pool config sets `schema_search_path` at connection creation time.
 
@@ -391,6 +399,28 @@ Handles:
 - Extension availability via `persistent_schemas` (e.g., `["ext", "public"]` ensures `pgcrypto`, `uuid-ossp` etc. are accessible in tenant schemas — addresses #321)
 - Rails 8.1 schema dump patch: strips `public.` prefix when loading structure into tenant schemas (#341)
 - Excluded model table names prefixed: `public.users`
+
+### PostgreSQLDatabaseAdapter
+
+Database-per-tenant on PostgreSQL. Same pool-per-tenant model, but varies `database` instead of `schema_search_path`.
+
+```ruby
+def resolve_connection_config(tenant)
+  base_config.merge(database: tenant_database_name(tenant))
+end
+```
+
+Handles:
+- Database creation/dropping via `CREATE DATABASE` / `DROP DATABASE`
+- Each tenant has fully independent schemas, extensions, and access control
+- Excluded model table names reference the default database: `default_db.users`
+
+Trade-offs vs schema adapter:
+- (+) Stronger isolation (separate `pg_dump`, independent extensions, database-level `GRANT`)
+- (+) No `search_path` concerns — each database is self-contained
+- (-) Slower switching (new connection per database vs search_path change)
+- (-) Cannot cross-query between tenants (no `other_schema.table` access)
+- (-) Higher connection count (one pool per database, not shared)
 
 ### MySQL2Adapter / TrilogyAdapter
 
