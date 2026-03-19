@@ -1,0 +1,202 @@
+#!/bin/bash
+# Setup script for new Git worktrees (apartment gem)
+# Copies essential untracked files and configures Peacock colors.
+# macOS-only (uses ditto for APFS copy-on-write).
+
+set -e
+
+# Source shared UX helpers
+_GUM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_GUM_DIR/_gum.sh"
+
+# Defaults
+SKIP_PEACOCK=false
+
+# Parse arguments
+WORKTREE_PATH=""
+for arg in "$@"; do
+    case $arg in
+        --no-peacock|--skip-peacock)
+            SKIP_PEACOCK=true
+            ;;
+        --help|-h)
+            echo "Usage: $0 <worktree-path> [options]"
+            echo ""
+            echo "Options:"
+            echo "  --no-peacock    Skip VS Code Peacock color configuration"
+            echo ""
+            echo "Example: $0 ../apartment-worktrees/v4-foundation"
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $arg" >&2
+            echo "Run with --help for usage" >&2
+            exit 1
+            ;;
+        *)
+            WORKTREE_PATH="$arg"
+            ;;
+    esac
+done
+
+if [ -z "$WORKTREE_PATH" ]; then
+    echo "Usage: $0 <worktree-path> [--no-peacock]"
+    echo "Example: $0 ../apartment-worktrees/v4-foundation"
+    exit 1
+fi
+
+# Resolve main repo from git worktree list (works even when invoked from a worktree)
+MAIN_REPO_PATH=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+
+if [ ! -d "$WORKTREE_PATH" ]; then
+    log_error "Worktree path '$WORKTREE_PATH' does not exist"
+    log_info "Create the worktree first with: git worktree add $WORKTREE_PATH -b branch-name"
+    exit 1
+fi
+
+header "Worktree Setup"
+log_info "Worktree: $WORKTREE_PATH"
+log_info "Main repo: $MAIN_REPO_PATH"
+
+cd "$WORKTREE_PATH" || { log_error "Failed to cd into $WORKTREE_PATH"; exit 1; }
+
+# Copy files/directories using ditto (macOS-native, APFS copy-on-write)
+copy_if_exists() {
+    local source="$MAIN_REPO_PATH/$1"
+    local dest="$1"
+
+    if [ -e "$source" ]; then
+        log_info "Copying $1"
+        if ! ditto "$source" "$dest"; then
+            log_error "Failed to copy $1 — check permissions and disk space"
+            exit 1
+        fi
+    else
+        log_warn "Skipping $1 (doesn't exist in main repo)"
+    fi
+}
+
+section "Copying untracked files and directories"
+
+copy_if_exists ".claude"
+copy_if_exists ".bundle"
+copy_if_exists ".vscode"
+
+# Peacock color assignment via shared color registry
+PEACOCK_COLOR=""
+REGISTRY="${WORKTREE_COLOR_REGISTRY:-$HOME/.config/campusesp/color-registry.json}"
+
+if [ "$SKIP_PEACOCK" = false ]; then
+    WORKTREE_NAME=$(basename "$WORKTREE_PATH")
+
+    # Gracefully degrade if jq or registry are missing
+    if ! command -v jq &>/dev/null; then
+        log_warn "jq not found — skipping Peacock color assignment (brew install jq)"
+        SKIP_PEACOCK=true
+    elif [ ! -f "$REGISTRY" ]; then
+        log_warn "Color registry not found at $REGISTRY — skipping Peacock color assignment"
+        SKIP_PEACOCK=true
+    fi
+fi
+
+if [ "$SKIP_PEACOCK" = false ]; then
+    # Trap to clean up temp files on interrupt
+    _REGISTRY_TMP=""
+    _SETTINGS_TMP=""
+    cleanup_tmp_files() { rm -f "$_REGISTRY_TMP" "$_SETTINGS_TMP" 2>/dev/null; }
+    trap cleanup_tmp_files EXIT INT TERM
+
+    EXISTING=$(jq -r --arg name "$WORKTREE_NAME" '.worktree_colors[$name] // empty' "$REGISTRY")
+    if [ -n "$EXISTING" ]; then
+        PEACOCK_COLOR="$EXISTING"
+        log_info "Color registry: reusing $EXISTING for $WORKTREE_NAME"
+    else
+        # Assign first palette color not used by any project or worktree
+        JQ_OUTPUT=$(jq -r '
+          .palette as $p |
+          ([.projects | to_entries[].value.color] + [.worktree_colors // {} | to_entries[].value]) as $used |
+          ($p - $used) | first // empty
+        ' "$REGISTRY" 2>&1)
+        JQ_EXIT=$?
+
+        if [ $JQ_EXIT -ne 0 ]; then
+            log_warn "Color registry: failed to parse $REGISTRY — skipping color assignment"
+            log_warn "  jq output: $JQ_OUTPUT"
+            SKIP_PEACOCK=true
+        else
+            ASSIGNED_COLOR="$JQ_OUTPUT"
+        fi
+
+        if [ "$SKIP_PEACOCK" = false ] && [ -z "$ASSIGNED_COLOR" ]; then
+            log_warn "Color registry: palette exhausted (all colors in use) — skipping"
+            SKIP_PEACOCK=true
+        fi
+
+        if [ "$SKIP_PEACOCK" = false ]; then
+            _REGISTRY_TMP=$(mktemp "${REGISTRY}.XXXXXX")
+            if jq --arg name "$WORKTREE_NAME" --arg color "$ASSIGNED_COLOR" \
+               '.worktree_colors[$name] = $color' "$REGISTRY" > "$_REGISTRY_TMP" \
+               && mv "$_REGISTRY_TMP" "$REGISTRY"; then
+                _REGISTRY_TMP=""  # Successfully moved, nothing to clean up
+                PEACOCK_COLOR="$ASSIGNED_COLOR"
+                log_info "Color registry: assigned $ASSIGNED_COLOR to $WORKTREE_NAME"
+            else
+                log_warn "Color registry: failed to write — skipping color assignment"
+                SKIP_PEACOCK=true
+            fi
+        fi
+    fi
+
+    # Update or create .vscode/settings.json with Peacock color using jq
+    if [ -n "$PEACOCK_COLOR" ]; then
+        mkdir -p .vscode
+        if [ -f ".vscode/settings.json" ]; then
+            # VS Code settings files often contain JSONC (comments, trailing commas)
+            # which jq cannot parse. Detect and provide actionable guidance.
+            if ! jq empty .vscode/settings.json 2>/dev/null; then
+                log_warn ".vscode/settings.json contains invalid JSON (comments or trailing commas?)"
+                log_warn "Add manually: \"peacock.color\": \"$PEACOCK_COLOR\""
+            else
+                _SETTINGS_TMP=$(mktemp ".vscode/settings.json.XXXXXX")
+                if jq --arg color "$PEACOCK_COLOR" '.["peacock.color"] = $color' \
+                     .vscode/settings.json > "$_SETTINGS_TMP" \
+                   && mv "$_SETTINGS_TMP" .vscode/settings.json; then
+                    _SETTINGS_TMP=""  # Successfully moved
+                else
+                    log_warn "Failed to update .vscode/settings.json"
+                    log_warn "Add manually: \"peacock.color\": \"$PEACOCK_COLOR\""
+                    rm -f "$_SETTINGS_TMP"
+                    _SETTINGS_TMP=""
+                fi
+            fi
+        else
+            jq -n --arg color "$PEACOCK_COLOR" '{"peacock.color": $color}' > .vscode/settings.json
+        fi
+    fi
+else
+    if [ "$SKIP_PEACOCK" = true ]; then
+        :  # Already logged the reason above
+    else
+        log_info "Skipping Peacock color configuration (--no-peacock)"
+    fi
+fi
+
+# Check dependencies
+section "Checking dependencies"
+
+if [ -f "Gemfile" ]; then
+    log_info "Ruby gems should be available (gems are installed globally)"
+    log_info "Run 'bundle install' only if you add new gems to this worktree"
+else
+    log_warn "No Gemfile found"
+fi
+
+echo ""
+log_success "Worktree setup complete!"
+log_info "To work in this worktree:"
+log_info "  cd $WORKTREE_PATH"
+if [ -n "$PEACOCK_COLOR" ]; then
+    log_info "  code .              # Open in Cursor/VSCode (Peacock: $PEACOCK_COLOR)"
+else
+    log_info "  code .              # Open in Cursor/VSCode"
+fi
