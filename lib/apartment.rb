@@ -54,6 +54,7 @@ module Apartment
       @config = Config.new
       yield @config if block_given?
       @config.validate!
+      @pool_manager = PoolManager.new
       @config
     end
 
