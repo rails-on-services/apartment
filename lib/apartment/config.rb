@@ -92,15 +92,13 @@ module Apartment
     def validate!
       raise ConfigurationError, 'tenant_strategy is required' unless @tenant_strategy
 
-      if @tenants_provider && !@tenants_provider.respond_to?(:call)
-        raise ConfigurationError, 'tenants_provider must be callable (proc, lambda, or object responding to #call)'
+      unless @tenants_provider.respond_to?(:call)
+        raise ConfigurationError, 'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })'
       end
 
       if @postgres_config && @mysql_config
-        raise ConfigurationError, 'Cannot configure both PostgreSQL and MySQL simultaneously'
+        raise ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time'
       end
-
-      true
     end
   end
 end

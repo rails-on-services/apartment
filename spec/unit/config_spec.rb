@@ -100,12 +100,13 @@ RSpec.describe Apartment::Config do
       config.tenant_strategy = :schema
       config.tenants_provider = 'not_callable'
       expect { config.validate! }.to raise_error(
-        Apartment::ConfigurationError, /tenants_provider must be callable/
+        Apartment::ConfigurationError, /tenants_provider must be a callable/
       )
     end
 
     it 'raises when both postgres and mysql are configured' do
       config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
       config.configure_postgres
       config.configure_mysql
       expect { config.validate! }.to raise_error(
@@ -113,15 +114,17 @@ RSpec.describe Apartment::Config do
       )
     end
 
-    it 'passes with valid minimal configuration' do
+    it 'raises when tenants_provider is missing' do
       config.tenant_strategy = :schema
-      expect(config.validate!).to eq(true)
+      expect { config.validate! }.to raise_error(
+        Apartment::ConfigurationError, /tenants_provider/
+      )
     end
 
-    it 'passes with callable tenants_provider' do
+    it 'passes with valid minimal configuration' do
       config.tenant_strategy = :schema
-      config.tenants_provider = -> { ['tenant1'] }
-      expect(config.validate!).to eq(true)
+      config.tenants_provider = -> { [] }
+      expect { config.validate! }.not_to raise_error
     end
   end
 end
@@ -130,6 +133,7 @@ RSpec.describe 'Apartment.configure' do
   it 'yields a Config instance and stores it' do
     Apartment.configure do |config|
       config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
       config.default_tenant = 'public'
     end
 
@@ -147,7 +151,7 @@ end
 
 RSpec.describe 'Apartment.clear_config' do
   it 'resets config and pool_manager to nil' do
-    Apartment.configure { |c| c.tenant_strategy = :schema }
+    Apartment.configure { |c| c.tenant_strategy = :schema; c.tenants_provider = -> { [] } }
     Apartment.clear_config
 
     expect(Apartment.config).to be_nil

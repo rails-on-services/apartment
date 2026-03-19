@@ -35,12 +35,20 @@ RSpec.describe 'Phase 1 integration' do
     expect(Apartment::Current.tenant).to be_nil
   end
 
-  it 'raises correct errors for invalid config' do
+  it 'raises ConfigurationError when tenant_strategy missing' do
     expect {
-      Apartment.configure do |_config|
-        # Missing tenant_strategy — validate! requires it
+      Apartment.configure do |config|
+        config.tenants_provider = -> { [] }
       end
-    }.to raise_error(Apartment::ConfigurationError, /tenant_strategy is required/)
+    }.to raise_error(Apartment::ConfigurationError, /tenant_strategy/)
+  end
+
+  it 'raises ConfigurationError when tenants_provider missing' do
+    expect {
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+      end
+    }.to raise_error(Apartment::ConfigurationError, /tenants_provider/)
   end
 
   it 'raises TenantNotFound with tenant name' do
