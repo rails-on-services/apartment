@@ -121,6 +121,27 @@ RSpec.describe Apartment::Config do
       )
     end
 
+    it 'raises when tenant_pool_size is not a positive integer' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_pool_size = 0
+      expect { config.validate! }.to raise_error(Apartment::ConfigurationError, /tenant_pool_size/)
+    end
+
+    it 'raises when pool_idle_timeout is not a positive number' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.pool_idle_timeout = -1
+      expect { config.validate! }.to raise_error(Apartment::ConfigurationError, /pool_idle_timeout/)
+    end
+
+    it 'raises when max_total_connections is invalid' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.max_total_connections = 0
+      expect { config.validate! }.to raise_error(Apartment::ConfigurationError, /max_total_connections/)
+    end
+
     it 'passes with valid minimal configuration' do
       config.tenant_strategy = :schema
       config.tenants_provider = -> { [] }
@@ -146,6 +167,10 @@ RSpec.describe 'Apartment.configure' do
     expect {
       Apartment.configure { |c| } # no strategy set
     }.to raise_error(Apartment::ConfigurationError)
+  end
+
+  it 'raises without a block' do
+    expect { Apartment.configure }.to raise_error(Apartment::ConfigurationError, /requires a block/)
   end
 end
 

@@ -4,37 +4,54 @@ require 'concurrent'
 require_relative 'instrumentation'
 
 module Apartment
+  # Evicts idle and excess tenant pools on a background timer.
+  # Complementary to ActiveRecord's ConnectionPool::Reaper which handles
+  # intra-pool connection reaping — this handles inter-pool (tenant) eviction.
   class PoolReaper
+    @mutex = Mutex.new
+
     class << self
       def start(pool_manager:, interval:, idle_timeout:, max_total: nil, default_tenant: nil, on_evict: nil)
-        stop if running?
+        @mutex.synchronize do
+          stop_internal
 
-        @pool_manager = pool_manager
-        @idle_timeout = idle_timeout
-        @max_total = max_total
-        @default_tenant = default_tenant
-        @on_evict = on_evict
+          @pool_manager = pool_manager
+          @idle_timeout = idle_timeout
+          @max_total = max_total
+          @default_tenant = default_tenant
+          @on_evict = on_evict
 
-        @timer = Concurrent::TimerTask.new(execution_interval: interval) { reap }
-        @timer.execute
+          @timer = Concurrent::TimerTask.new(execution_interval: interval) { reap }
+          @timer.execute
+        end
       end
 
       def stop
-        @timer&.shutdown
-        @timer = nil
+        @mutex.synchronize { stop_internal }
       end
 
       def running?
-        @timer&.running? || false
+        @mutex.synchronize { @timer&.running? || false }
       end
 
       private
 
+      def stop_internal
+        if @timer
+          @timer.shutdown
+          @timer.wait_for_termination(5)
+          @timer = nil
+        end
+      end
+
       def reap
         evict_idle
         evict_lru if @max_total
+      rescue Apartment::ApartmentError => e
+        warn "[Apartment::PoolReaper] #{e.class}: #{e.message}"
       rescue => e
-        warn "[Apartment::PoolReaper] Error during eviction: #{e.message}"
+        warn "[Apartment::PoolReaper] Unexpected error: #{e.class}: #{e.message}"
+        warn e.backtrace&.first(5)&.join("\n") if e.backtrace
       end
 
       def evict_idle
@@ -44,6 +61,8 @@ module Apartment
           pool = @pool_manager.remove(tenant)
           Instrumentation.instrument(:evict, tenant: tenant, reason: :idle)
           @on_evict&.call(tenant, pool)
+        rescue => e
+          warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
         end
       end
 
@@ -61,6 +80,8 @@ module Apartment
           Instrumentation.instrument(:evict, tenant: tenant, reason: :lru)
           @on_evict&.call(tenant, pool)
           evicted += 1
+        rescue => e
+          warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
         end
       end
     end

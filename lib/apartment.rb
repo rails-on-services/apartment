@@ -51,15 +51,21 @@ module Apartment
     #   end
     #
     def configure
+      raise ConfigurationError, 'Apartment.configure requires a block' unless block_given?
+
+      PoolReaper.stop
+      @pool_manager&.clear
       @config = Config.new
-      yield @config if block_given?
+      yield @config
       @config.validate!
       @pool_manager = PoolManager.new
       @config
     end
 
-    # Reset all configuration (primarily for testing).
+    # Reset all configuration and stop background tasks.
     def clear_config
+      PoolReaper.stop
+      @pool_manager&.clear
       @config = nil
       @pool_manager = nil
     end

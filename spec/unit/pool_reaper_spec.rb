@@ -87,6 +87,56 @@ RSpec.describe Apartment::PoolReaper do
     end
   end
 
+  describe 'double start' do
+    it 'stops the previous timer before starting a new one' do
+      described_class.start(
+        pool_manager: pool_manager,
+        interval: 0.1,
+        idle_timeout: 999,
+        on_evict: on_evict
+      )
+      expect(described_class).to be_running
+
+      # Start again — should not leak the old timer
+      described_class.start(
+        pool_manager: pool_manager,
+        interval: 0.1,
+        idle_timeout: 999,
+        on_evict: on_evict
+      )
+      expect(described_class).to be_running
+      described_class.stop
+      expect(described_class).not_to be_running
+    end
+  end
+
+  describe 'error resilience' do
+    it 'continues running when on_evict callback raises' do
+      bad_callback = ->(_tenant, _pool) { raise 'callback explosion' }
+
+      pool_manager.fetch_or_create('tenant_a') { 'pool_a' }
+      pool_manager.instance_variable_get(:@timestamps)['tenant_a'] = Time.now - 10
+      pool_manager.fetch_or_create('tenant_b') { 'pool_b' }
+      pool_manager.instance_variable_get(:@timestamps)['tenant_b'] = Time.now - 10
+
+      described_class.start(
+        pool_manager: pool_manager,
+        interval: 0.05,
+        idle_timeout: 1,
+        on_evict: bad_callback
+      )
+
+      sleep 0.3
+
+      # Timer should still be running despite callback errors
+      expect(described_class).to be_running
+      # Both tenants should still have been removed from the pool manager
+      # (the removal happens before the callback)
+      expect(pool_manager.tracked?('tenant_a')).to be false
+      expect(pool_manager.tracked?('tenant_b')).to be false
+    end
+  end
+
   describe 'instrumentation' do
     it 'emits evict.apartment events on eviction' do
       events = Concurrent::Array.new

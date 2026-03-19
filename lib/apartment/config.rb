@@ -5,8 +5,8 @@ require_relative 'configs/postgresql_config'
 require_relative 'configs/mysql_config'
 
 module Apartment
-  # Immutable-ish configuration object for Apartment v4.
-  # Created via Apartment.configure block; validated on freeze.
+  # Configuration object for Apartment v4.
+  # Created via Apartment.configure block; validated after the block yields.
   class Config
     VALID_STRATEGIES = %i[schema database_name shard database_config].freeze
     VALID_PARALLEL_STRATEGIES = %i[auto threads processes].freeze
@@ -98,6 +98,18 @@ module Apartment
 
       if @postgres_config && @mysql_config
         raise ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time'
+      end
+
+      unless @tenant_pool_size.is_a?(Integer) && @tenant_pool_size > 0
+        raise ConfigurationError, "tenant_pool_size must be a positive integer, got: #{@tenant_pool_size.inspect}"
+      end
+
+      unless @pool_idle_timeout.is_a?(Numeric) && @pool_idle_timeout > 0
+        raise ConfigurationError, "pool_idle_timeout must be a positive number, got: #{@pool_idle_timeout.inspect}"
+      end
+
+      if @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
+        raise ConfigurationError, "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}"
       end
     end
   end

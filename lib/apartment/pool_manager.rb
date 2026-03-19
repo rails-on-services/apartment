@@ -9,9 +9,12 @@ module Apartment
       @timestamps = Concurrent::Map.new
     end
 
+    # Fetch an existing pool or create one via the block.
+    # Timestamp is updated after pool creation to avoid orphaned timestamps if the block raises.
     def fetch_or_create(tenant_key)
+      pool = @pools.compute_if_absent(tenant_key) { yield }
       touch(tenant_key)
-      @pools.compute_if_absent(tenant_key) { yield }
+      pool
     end
 
     def get(tenant_key)
@@ -45,6 +48,8 @@ module Apartment
                   .map(&:first)
     end
 
+    # Phase 1: basic stats. Full observability (per-tenant breakdown,
+    # connection counts, eviction counters) deferred to Phase 2+.
     def stats
       {
         total_pools: @pools.size,

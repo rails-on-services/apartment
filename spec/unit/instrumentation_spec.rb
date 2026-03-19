@@ -28,6 +28,18 @@ RSpec.describe Apartment::Instrumentation do
       ActiveSupport::Notifications.unsubscribe('create.apartment')
     end
 
+    it 'forwards blocks and returns block result' do
+      events = []
+      ActiveSupport::Notifications.subscribe('switch.apartment') { |event| events << event }
+
+      result = described_class.instrument(:switch, tenant: 'acme') { 'block_result' }
+
+      expect(result).to eq('block_result')
+      expect(events.size).to eq(1)
+    ensure
+      ActiveSupport::Notifications.unsubscribe('switch.apartment')
+    end
+
     it 'publishes evict.apartment events' do
       events = []
       ActiveSupport::Notifications.subscribe('evict.apartment') { |event| events << event }

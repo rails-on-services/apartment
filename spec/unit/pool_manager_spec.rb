@@ -26,6 +26,29 @@ RSpec.describe Apartment::PoolManager do
     end
   end
 
+  describe '#get' do
+    it 'returns the pool for an existing tenant' do
+      manager.fetch_or_create('tenant_a') { 'pool_a' }
+      expect(manager.get('tenant_a')).to eq('pool_a')
+    end
+
+    it 'returns nil for unknown tenants' do
+      expect(manager.get('unknown')).to be_nil
+    end
+
+    it 'updates last_accessed for existing tenants' do
+      manager.fetch_or_create('tenant_a') { 'pool_a' }
+      manager.instance_variable_get(:@timestamps)['tenant_a'] = Time.now - 600
+      manager.get('tenant_a')
+      expect(manager.stats_for('tenant_a')[:last_accessed]).to be_within(1).of(Time.now)
+    end
+
+    it 'does not create timestamps for unknown tenants' do
+      manager.get('unknown')
+      expect(manager.stats_for('unknown')).to be_nil
+    end
+  end
+
   describe '#remove' do
     it 'removes a tracked pool' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
