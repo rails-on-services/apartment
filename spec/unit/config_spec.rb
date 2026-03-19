@@ -2,124 +2,155 @@
 
 require 'spec_helper'
 
-describe Apartment do
-  describe '#config' do
-    let(:excluded_models) { ['Company'] }
-    let(:seed_data_file_path) { Rails.root.join('db/seeds/import.rb') }
+RSpec.describe Apartment::Config do
+  subject(:config) { described_class.new }
 
-    def tenant_names_from_array(names)
-      names.index_with do |_tenant|
-        Apartment.connection_config
-      end.with_indifferent_access
-    end
+  describe 'defaults' do
+    it { expect(config.tenant_strategy).to be_nil }
+    it { expect(config.tenants_provider).to be_nil }
+    it { expect(config.default_tenant).to be_nil }
+    it { expect(config.excluded_models).to eq([]) }
+    it { expect(config.persistent_schemas).to eq([]) }
+    it { expect(config.tenant_pool_size).to eq(5) }
+    it { expect(config.pool_idle_timeout).to eq(300) }
+    it { expect(config.max_total_connections).to be_nil }
+    it { expect(config.seed_after_create).to eq(false) }
+    it { expect(config.seed_data_file).to be_nil }
+    it { expect(config.parallel_migration_threads).to eq(0) }
+    it { expect(config.parallel_strategy).to eq(:auto) }
+    it { expect(config.environmentify_strategy).to be_nil }
+    it { expect(config.elevator).to be_nil }
+    it { expect(config.elevator_options).to eq({}) }
+    it { expect(config.tenant_not_found_handler).to be_nil }
+    it { expect(config.active_record_log).to eq(false) }
+    it { expect(config.postgres_config).to be_nil }
+    it { expect(config.mysql_config).to be_nil }
+  end
 
-    it 'yields the Apartment object' do
-      described_class.configure do |config|
-        config.excluded_models = []
-        expect(config).to(eq(described_class))
+  describe '#tenant_strategy=' do
+    it 'accepts valid strategies' do
+      %i[schema database_name shard database_config].each do |strategy|
+        expect { config.tenant_strategy = strategy }.not_to raise_error
       end
     end
 
-    it 'sets excluded models' do
-      described_class.configure do |config|
-        config.excluded_models = excluded_models
+    it 'rejects invalid strategies' do
+      expect { config.tenant_strategy = :invalid }.to raise_error(
+        Apartment::ConfigurationError, /Invalid tenant_strategy/
+      )
+    end
+  end
+
+  describe '#parallel_strategy=' do
+    it 'rejects invalid strategies' do
+      expect { config.parallel_strategy = :bad }.to raise_error(
+        Apartment::ConfigurationError, /Invalid parallel_strategy/
+      )
+    end
+  end
+
+  describe '#environmentify_strategy=' do
+    it 'accepts nil, :prepend, :append' do
+      [nil, :prepend, :append].each do |val|
+        expect { config.environmentify_strategy = val }.not_to raise_error
       end
-      expect(described_class.excluded_models).to(eq(excluded_models))
     end
 
-    it 'sets use_schemas' do
-      described_class.configure do |config|
-        config.excluded_models = []
-        config.use_schemas = false
-      end
-      expect(described_class.use_schemas).to(be(false))
+    it 'accepts a callable' do
+      expect { config.environmentify_strategy = ->(t) { "test_#{t}" } }.not_to raise_error
     end
 
-    it 'sets seed_data_file' do
-      described_class.configure do |config|
-        config.seed_data_file = seed_data_file_path
+    it 'rejects invalid values' do
+      expect { config.environmentify_strategy = :bad }.to raise_error(
+        Apartment::ConfigurationError, /Invalid environmentify_strategy/
+      )
+    end
+  end
+
+  describe '#configure_postgres' do
+    it 'creates a PostgreSQLConfig' do
+      pg = config.configure_postgres do |pg|
+        pg.persistent_schemas = ['shared']
+        pg.enforce_search_path_reset = true
       end
-      expect(described_class.seed_data_file).to(eq(seed_data_file_path))
+
+      expect(pg).to be_a(Apartment::Configs::PostgreSQLConfig)
+      expect(pg.persistent_schemas).to eq(['shared'])
+      expect(pg.enforce_search_path_reset).to eq(true)
+      expect(config.postgres_config).to eq(pg)
+    end
+  end
+
+  describe '#configure_mysql' do
+    it 'creates a MySQLConfig' do
+      my = config.configure_mysql
+      expect(my).to be_a(Apartment::Configs::MySQLConfig)
+      expect(config.mysql_config).to eq(my)
+    end
+  end
+
+  describe '#validate!' do
+    it 'raises when tenant_strategy is missing' do
+      expect { config.validate! }.to raise_error(
+        Apartment::ConfigurationError, /tenant_strategy is required/
+      )
     end
 
-    it 'sets seed_after_create' do
-      described_class.configure do |config|
-        config.excluded_models = []
-        config.seed_after_create = true
-      end
-      expect(described_class.seed_after_create).to(be(true))
+    it 'raises when tenants_provider is not callable' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = 'not_callable'
+      expect { config.validate! }.to raise_error(
+        Apartment::ConfigurationError, /tenants_provider must be callable/
+      )
     end
 
-    it 'sets tenant_presence_check' do
-      described_class.configure do |config|
-        config.tenant_presence_check = true
-      end
-      expect(described_class.tenant_presence_check).to(be(true))
+    it 'raises when both postgres and mysql are configured' do
+      config.tenant_strategy = :schema
+      config.configure_postgres
+      config.configure_mysql
+      expect { config.validate! }.to raise_error(
+        Apartment::ConfigurationError, /Cannot configure both/
+      )
     end
 
-    it 'sets active_record_log' do
-      described_class.configure do |config|
-        config.active_record_log = true
-      end
-      expect(described_class.active_record_log).to(be(true))
+    it 'passes with valid minimal configuration' do
+      config.tenant_strategy = :schema
+      expect(config.validate!).to eq(true)
     end
 
-    context 'when databases' do
-      let(:users_conf_hash) { { port: 5444 } }
-
-      before do
-        described_class.configure do |config|
-          config.tenant_names = tenant_names
-        end
-      end
-
-      context 'when tenant_names as string array' do
-        let(:tenant_names) { %w[users companies] }
-
-        it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to(eq(tenant_names_from_array(tenant_names).keys))
-        end
-
-        it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to(eq(tenant_names_from_array(tenant_names)))
-        end
-      end
-
-      context 'when tenant_names as proc returning an array' do
-        let(:tenant_names) { -> { %w[users companies] } }
-
-        it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to(eq(tenant_names_from_array(tenant_names.call).keys))
-        end
-
-        it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to(eq(tenant_names_from_array(tenant_names.call)))
-        end
-      end
-
-      context 'when tenant_names as Hash' do
-        let(:tenant_names) { { users: users_conf_hash }.with_indifferent_access }
-
-        it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to(eq(tenant_names.keys))
-        end
-
-        it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to(eq(tenant_names))
-        end
-      end
-
-      context 'when tenant_names as proc returning a Hash' do
-        let(:tenant_names) { -> { { users: users_conf_hash }.with_indifferent_access } }
-
-        it 'returns object if it doesnt respond_to call' do
-          expect(described_class.tenant_names).to(eq(tenant_names.call.keys))
-        end
-
-        it 'sets tenants_with_config' do
-          expect(described_class.tenants_with_config).to(eq(tenant_names.call))
-        end
-      end
+    it 'passes with callable tenants_provider' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { ['tenant1'] }
+      expect(config.validate!).to eq(true)
     end
+  end
+end
+
+RSpec.describe 'Apartment.configure' do
+  it 'yields a Config instance and stores it' do
+    Apartment.configure do |config|
+      config.tenant_strategy = :schema
+      config.default_tenant = 'public'
+    end
+
+    expect(Apartment.config).to be_a(Apartment::Config)
+    expect(Apartment.config.tenant_strategy).to eq(:schema)
+    expect(Apartment.config.default_tenant).to eq('public')
+  end
+
+  it 'validates the configuration' do
+    expect {
+      Apartment.configure { |c| } # no strategy set
+    }.to raise_error(Apartment::ConfigurationError)
+  end
+end
+
+RSpec.describe 'Apartment.clear_config' do
+  it 'resets config and pool_manager to nil' do
+    Apartment.configure { |c| c.tenant_strategy = :schema }
+    Apartment.clear_config
+
+    expect(Apartment.config).to be_nil
+    expect(Apartment.pool_manager).to be_nil
   end
 end
