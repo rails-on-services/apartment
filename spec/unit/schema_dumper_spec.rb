@@ -12,7 +12,7 @@ describe Apartment::Tasks::SchemaDumper do
   describe '.dump_if_enabled' do
     context 'when Rails dump_schema_after_migration is false' do
       before do
-        allow(ActiveRecord::Base).to(receive(:dump_schema_after_migration).and_return(false))
+        allow(ActiveRecord).to(receive(:dump_schema_after_migration).and_return(false))
       end
 
       it 'does not dump schema' do
@@ -25,7 +25,7 @@ describe Apartment::Tasks::SchemaDumper do
       let(:db_config) { double('DatabaseConfig', configuration_hash: { schema_dump: true }) }
 
       before do
-        allow(ActiveRecord::Base).to(receive(:dump_schema_after_migration).and_return(true))
+        allow(ActiveRecord).to(receive(:dump_schema_after_migration).and_return(true))
         allow(described_class).to(receive(:find_schema_dump_config).and_return(db_config))
         allow(Apartment::Tenant).to(receive(:switch).and_yield)
         allow(Rake::Task).to(receive(:task_defined?).with('db:schema:dump').and_return(true))
