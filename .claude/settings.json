@@ -9,6 +9,10 @@
     "claude-md-management@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true,
-    "sentry@claude-plugins-official": true
+    "sentry@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "firecrawl@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true
   }
 }

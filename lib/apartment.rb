@@ -1,180 +1,73 @@
 # frozen_string_literal: true
 
-require 'apartment/railtie' if defined?(Rails)
-require 'active_support/core_ext/object/blank'
-require 'forwardable'
-require 'active_record'
-require 'apartment/tenant'
-require 'apartment/deprecation'
+require 'zeitwerk'
+require 'active_support'
+require 'active_support/current_attributes'
 
-require_relative 'apartment/log_subscriber'
-require_relative 'apartment/active_record/connection_handling'
-require_relative 'apartment/active_record/schema_migration'
-require_relative 'apartment/active_record/internal_metadata'
+# Set up Zeitwerk autoloader for the Apartment namespace.
+# Must happen before requiring files that define constants in the Apartment module.
+loader = Zeitwerk::Loader.for_gem(warn_on_extra_files: false)
+loader.inflector.inflect(
+  'mysql_config' => 'MySQLConfig',
+  'postgresql_config' => 'PostgreSQLConfig'
+)
 
-if ActiveRecord.version.release >= Gem::Version.new('7.1')
-  require_relative 'apartment/active_record/postgres/schema_dumper'
-end
+# errors.rb defines multiple constants (not a single Errors class),
+# so it must be loaded explicitly rather than autoloaded.
+loader.ignore("#{__dir__}/apartment/errors.rb")
 
-# Apartment main definitions
+# Ignore v3 files that haven't been replaced yet.
+%w[
+  railtie
+  tenant
+  deprecation
+  log_subscriber
+  console
+  custom_console
+  migrator
+  model
+].each { |f| loader.ignore("#{__dir__}/apartment/#{f}.rb") }
+
+loader.ignore("#{__dir__}/apartment/adapters")
+loader.ignore("#{__dir__}/apartment/elevators")
+loader.ignore("#{__dir__}/apartment/patches")
+loader.ignore("#{__dir__}/apartment/tasks")
+loader.ignore("#{__dir__}/apartment/active_record")
+
+loader.setup
+
+require_relative 'apartment/errors'
+
 module Apartment
   class << self
-    extend Forwardable
+    attr_reader :config, :pool_manager
 
-    ACCESSOR_METHODS = %i[use_schemas use_sql seed_after_create prepend_environment default_tenant
-                          append_environment with_multi_server_setup tenant_presence_check
-                          active_record_log pg_exclude_clone_tables].freeze
-
-    WRITER_METHODS = %i[tenant_names database_schema_file excluded_models
-                        persistent_schemas connection_class
-                        db_migrate_tenants db_migrate_tenant_missing_strategy seed_data_file
-                        parallel_migration_threads pg_excluded_names
-                        parallel_strategy manage_advisory_locks].freeze
-
-    attr_accessor(*ACCESSOR_METHODS)
-    attr_writer(*WRITER_METHODS)
-
-    def_delegators :connection_class, :connection, :connection_db_config, :establish_connection
-
-    def connection_config
-      connection_db_config.configuration_hash
-    end
-
-    # configure apartment with available options
+    # Configure Apartment v4. Yields a Config instance, validates it,
+    # and prepares the module for use.
+    #
+    #   Apartment.configure do |config|
+    #     config.tenant_strategy = :schema
+    #     config.tenants_provider = -> { Tenant.pluck(:name) }
+    #   end
+    #
     def configure
-      yield(self) if block_given?
+      raise ConfigurationError, 'Apartment.configure requires a block' unless block_given?
+
+      PoolReaper.stop
+      @pool_manager&.clear
+      @config = Config.new
+      yield @config
+      @config.validate!
+      @pool_manager = PoolManager.new
+      @config
     end
 
-    def tenant_names
-      extract_tenant_config.keys.map(&:to_s)
-    end
-
-    def tenants_with_config
-      extract_tenant_config
-    end
-
-    def tld_length=(_)
-      Apartment::DEPRECATOR.warn('`config.tld_length` have no effect because it was removed in https://github.com/influitive/apartment/pull/309')
-    end
-
-    def db_config_for(tenant)
-      tenants_with_config[tenant] || connection_config
-    end
-
-    # Whether or not db:migrate should also migrate tenants
-    # defaults to true
-    def db_migrate_tenants
-      return @db_migrate_tenants if defined?(@db_migrate_tenants)
-
-      @db_migrate_tenants = true
-    end
-
-    # How to handle missing tenants during db:migrate
-    # :rescue_exception (default) - Log error, continue with other tenants
-    # :raise_exception - Stop migration immediately
-    # :create_tenant - Automatically create missing tenant and migrate
-    def db_migrate_tenant_missing_strategy
-      valid = %i[rescue_exception raise_exception create_tenant]
-      value = @db_migrate_tenant_missing_strategy || :rescue_exception
-
-      return value if valid.include?(value)
-
-      key_name  = 'config.db_migrate_tenant_missing_strategy'
-      opt_names = valid.join(', ')
-
-      raise(ApartmentError, "Option #{value} not valid for `#{key_name}`. Use one of #{opt_names}")
-    end
-
-    # Default to empty array
-    def excluded_models
-      @excluded_models || []
-    end
-
-    def parallel_migration_threads
-      @parallel_migration_threads || 0
-    end
-
-    # Parallelism strategy for migrations
-    # :auto (default) - Detect platform: processes on Linux, threads on macOS/Windows
-    # :threads - Always use threads (safer, works everywhere)
-    # :processes - Always use processes (faster on Linux, may crash on macOS/Windows)
-    def parallel_strategy
-      @parallel_strategy || :auto
-    end
-
-    # Whether to manage PostgreSQL advisory locks during parallel migrations
-    # When true and parallel_migration_threads > 0, advisory locks are disabled
-    # during migration to prevent deadlocks, then restored afterward.
-    # Default: true
-    def manage_advisory_locks
-      return @manage_advisory_locks if defined?(@manage_advisory_locks)
-
-      @manage_advisory_locks = true
-    end
-
-    def persistent_schemas
-      @persistent_schemas || []
-    end
-
-    def connection_class
-      @connection_class || ActiveRecord::Base
-    end
-
-    def database_schema_file
-      return @database_schema_file if defined?(@database_schema_file)
-
-      @database_schema_file = Rails.root.join('db/schema.rb')
-    end
-
-    def seed_data_file
-      return @seed_data_file if defined?(@seed_data_file)
-
-      @seed_data_file = Rails.root.join('db/seeds.rb')
-    end
-
-    def pg_excluded_names
-      @pg_excluded_names || []
-    end
-
-    # Reset all the config for Apartment
-    def reset
-      (ACCESSOR_METHODS + WRITER_METHODS).each do |method|
-        remove_instance_variable(:"@#{method}") if instance_variable_defined?(:"@#{method}")
-      end
-    end
-
-    def extract_tenant_config
-      return {} unless @tenant_names
-
-      # Execute callable (proc/lambda) to get dynamic tenant list from database
-      values = @tenant_names.respond_to?(:call) ? @tenant_names.call : @tenant_names
-
-      # Normalize arrays to hash format (tenant_name => connection_config)
-      unless values.is_a?(Hash)
-        values = values.index_with do |_tenant|
-          connection_config
-        end
-      end
-      values.with_indifferent_access
-    rescue ActiveRecord::StatementInvalid
-      # Database query failed (table doesn't exist yet, connection issue)
-      # Return empty hash to allow app to boot without tenants
-      {}
+    # Reset all configuration and stop background tasks.
+    def clear_config
+      PoolReaper.stop
+      @pool_manager&.clear
+      @config = nil
+      @pool_manager = nil
     end
   end
-
-  # Exceptions
-  ApartmentError = Class.new(StandardError)
-
-  # Raised when apartment cannot find the adapter specified in <tt>config/database.yml</tt>
-  AdapterNotFound = Class.new(ApartmentError)
-
-  # Raised when apartment cannot find the file to be loaded
-  FileNotFound = Class.new(ApartmentError)
-
-  # Tenant specified is unknown
-  TenantNotFound = Class.new(ApartmentError)
-
-  # The Tenant attempting to be created already exists
-  TenantExists = Class.new(ApartmentError)
 end
