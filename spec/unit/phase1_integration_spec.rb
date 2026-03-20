@@ -51,9 +51,10 @@ RSpec.describe 'Phase 1 integration' do
     }.to raise_error(Apartment::ConfigurationError, /tenants_provider/)
   end
 
-  it 'raises TenantNotFound with tenant name' do
+  it 'raises TenantNotFound with accessible tenant name' do
     error = Apartment::TenantNotFound.new('missing')
     expect(error.message).to eq("Tenant 'missing' not found")
+    expect(error.tenant).to eq('missing')
     expect(error).to be_a(Apartment::ApartmentError)
   end
 end

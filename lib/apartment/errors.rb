@@ -6,17 +6,21 @@ module Apartment
 
   # Raised when a tenant cannot be found.
   class TenantNotFound < ApartmentError
+    attr_reader :tenant
+
     def initialize(tenant = nil)
-      msg = tenant ? "Tenant '#{tenant}' not found" : 'Tenant not found'
-      super(msg)
+      @tenant = tenant
+      super(tenant ? "Tenant '#{tenant}' not found" : 'Tenant not found')
     end
   end
 
   # Raised when attempting to create a tenant that already exists.
   class TenantExists < ApartmentError
+    attr_reader :tenant
+
     def initialize(tenant = nil)
-      msg = tenant ? "Tenant '#{tenant}' already exists" : 'Tenant already exists'
-      super(msg)
+      @tenant = tenant
+      super(tenant ? "Tenant '#{tenant}' already exists" : 'Tenant already exists')
     end
   end
 

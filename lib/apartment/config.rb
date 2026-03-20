@@ -14,7 +14,7 @@ module Apartment
 
     attr_reader :tenant_strategy
     attr_accessor :tenants_provider
-    attr_accessor :default_tenant, :excluded_models, :persistent_schemas
+    attr_accessor :default_tenant, :excluded_models
     attr_accessor :tenant_pool_size, :pool_idle_timeout, :max_total_connections
     attr_accessor :seed_after_create, :seed_data_file
     attr_accessor :parallel_migration_threads, :parallel_strategy
@@ -29,7 +29,6 @@ module Apartment
       @tenants_provider = nil
       @default_tenant = nil
       @excluded_models = []
-      @persistent_schemas = []
       @tenant_pool_size = 5
       @pool_idle_timeout = 300
       @max_total_connections = nil

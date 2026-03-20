@@ -18,13 +18,17 @@ module Apartment
     end
 
     def get(tenant_key)
-      touch(tenant_key) if @pools.key?(tenant_key)
-      @pools[tenant_key]
+      pool = @pools[tenant_key]
+      touch(tenant_key) if pool
+      pool
     end
 
+    # Delete pool first, then timestamp. This ordering prevents a concurrent
+    # #get from orphaning a timestamp (get checks @pools, skips touch if absent).
     def remove(tenant_key)
+      pool = @pools.delete(tenant_key)
       @timestamps.delete(tenant_key)
-      @pools.delete(tenant_key)
+      pool
     end
 
     def tracked?(tenant_key)

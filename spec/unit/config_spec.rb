@@ -10,7 +10,6 @@ RSpec.describe Apartment::Config do
     it { expect(config.tenants_provider).to be_nil }
     it { expect(config.default_tenant).to be_nil }
     it { expect(config.excluded_models).to eq([]) }
-    it { expect(config.persistent_schemas).to eq([]) }
     it { expect(config.tenant_pool_size).to eq(5) }
     it { expect(config.pool_idle_timeout).to eq(300) }
     it { expect(config.max_total_connections).to be_nil }

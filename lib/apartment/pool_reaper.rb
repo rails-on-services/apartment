@@ -12,6 +12,10 @@ module Apartment
 
     class << self
       def start(pool_manager:, interval:, idle_timeout:, max_total: nil, default_tenant: nil, on_evict: nil)
+        raise ArgumentError, "interval must be a positive number" unless interval.is_a?(Numeric) && interval > 0
+        raise ArgumentError, "idle_timeout must be a positive number" unless idle_timeout.is_a?(Numeric) && idle_timeout > 0
+        raise ArgumentError, "max_total must be a positive integer or nil" if max_total && (!max_total.is_a?(Integer) || max_total < 1)
+
         @mutex.synchronize do
           stop_internal
 
