@@ -19,7 +19,6 @@ loader.ignore("#{__dir__}/apartment/errors.rb")
 # Ignore v3 files that haven't been replaced yet.
 %w[
   railtie
-  tenant
   deprecation
   log_subscriber
   console
@@ -41,6 +40,7 @@ require_relative 'apartment/errors'
 module Apartment
   class << self
     attr_reader :config, :pool_manager
+    attr_accessor :adapter
 
     # Configure Apartment v4. Yields a Config instance, validates it,
     # and prepares the module for use.
@@ -68,6 +68,7 @@ module Apartment
       @pool_manager&.clear
       @config = nil
       @pool_manager = nil
+      @adapter = nil
     end
   end
 end
