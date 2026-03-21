@@ -937,26 +937,91 @@ After deletion:
 
 ---
 
-## Task ordering and dependencies
+## Sub-Phases
+
+Phase 2 is split into sub-phases that can be executed as separate PRs on the same branch (`man/v4-adapters`). Each sub-phase produces a working, testable increment.
+
+### Phase 2.1: Core Structure (Tasks 1, 3, 8)
+
+**Branch:** `man/v4-adapters` (first PR)
+
+**What:** The skeleton everything plugs into.
+- Task 1: `Apartment::Tenant` public API (switch, current, reset, create/drop delegation)
+- Task 3: `Apartment::Adapters::AbstractAdapter` (lifecycle, callbacks, resolve_connection_config interface)
+- Task 8: Adapter factory in `Apartment.adapter` + Zeitwerk wiring
+
+**Produces:** Working `Apartment::Tenant.switch("acme") { ... }` with Current, and `Apartment.adapter` resolving the right adapter class. No real database operations yet — adapter subclasses come next.
+
+**Tests:** All unit tests with mocked adapters. No database required.
+
+**Estimated scope:** ~6 files to create/modify, ~40 test examples
+
+### Phase 2.2: Database Adapters (Tasks 4, 5, 6, 7)
+
+**What:** Concrete adapter implementations. These are independent of each other.
+- Task 4: `PostgreSQLSchemaAdapter` (CREATE/DROP SCHEMA, schema_search_path)
+- Task 5: `PostgreSQLDatabaseAdapter` (CREATE/DROP DATABASE on PostgreSQL)
+- Task 6: `MySQL2Adapter` + `TrilogyAdapter` (CREATE/DROP DATABASE on MySQL)
+- Task 7: `SQLite3Adapter` (file-per-tenant)
+
+**Produces:** All five adapter classes implemented with `resolve_connection_config`, `create_tenant`, `drop_tenant`.
+
+**Tests:** Unit tests with mocked database connections for config resolution. Database-specific lifecycle tests can use real DB if available, SQLite3 as fallback.
+
+**Estimated scope:** ~5 files to create, ~30 test examples
+
+### Phase 2.3: Connection Handling & Pool Wiring (Tasks 2, 9)
+
+**What:** The architecturally complex piece — ActiveRecord patching.
+- Task 2: `Apartment::Patches::ConnectionHandling` module definition
+- Task 9: Full implementation using AR's `establish_connection` with shard-based pool keying
+
+**Produces:** `ActiveRecord::Base.connection_pool` returns tenant-specific pools when `Current.tenant` is set. Pools are lazily created and cached in PoolManager.
+
+**Tests:** Tests with real SQLite3 database proving pool isolation. This is where the pool-per-tenant architecture is validated.
+
+**Estimated scope:** ~2 files to create, ~15 test examples. High complexity — most time spent here.
+
+### Phase 2.4: Excluded Models & Integration (Tasks 10, 11)
+
+**What:** Cross-cutting validation.
+- Task 10: Excluded model processing (establish_connection pinned to default)
+- Task 11: End-to-end integration tests with real PostgreSQL, MySQL, SQLite
+
+**Produces:** Full working system. `Apartment::Tenant.switch("acme") { User.count }` works against real databases. Excluded models bypass tenant switching.
+
+**Tests:** Integration tests requiring database services. Gemfile updated with `pg`, `mysql2`, `trilogy`, `sqlite3`.
+
+**Estimated scope:** ~5 files, ~25 test examples
+
+### Phase 2.5: Cleanup (Task 12)
+
+**What:** Delete replaced v3 files, clean up Zeitwerk ignores.
+
+**Produces:** Clean `lib/apartment/adapters/` directory with only v4 files. Zeitwerk loads without warnings.
+
+**Estimated scope:** File deletions, Zeitwerk cleanup, verification pass
+
+---
+
+## Sub-Phase Dependency Graph
 
 ```
-Task 1: Tenant API ──────────────────────┐
-Task 2: ConnectionHandling patches ──────┤
-Task 3: AbstractAdapter ─────────────────┤── Can be sequential
-Task 4: PostgreSQLSchemaAdapter ─────────┤
-Task 5: PostgreSQLDatabaseAdapter ───────┤
-Task 6: MySQL2/Trilogy Adapters ─────────┤
-Task 7: SQLite3Adapter ─────────────────┤
-Task 8: Adapter factory & wiring ────────┤ (needs Tasks 1-7)
-Task 9: ConnectionHandling impl ─────────┤ (needs Tasks 2, 3, 8)
-Task 10: Excluded models ────────────────┤ (needs Task 3)
-Task 11: Integration tests ──────────────┤ (needs Tasks 8-10)
-Task 12: v3 cleanup ─────────────────────┘ (needs Task 11 passing)
+Phase 2.1: Core Structure (Tasks 1, 3, 8)
+    |
+    +---------------------------+
+    |                           |
+Phase 2.2: Database Adapters    Phase 2.3: Connection Handling
+(Tasks 4, 5, 6, 7)             (Tasks 2, 9)
+    |                           |
+    +---------------------------+
+    |
+Phase 2.4: Excluded Models & Integration (Tasks 10, 11)
+    |
+Phase 2.5: Cleanup (Task 12)
 ```
 
-**Recommended execution order:** 1 → 3 → 4 → 5 → 6 → 7 → 2 → 8 → 9 → 10 → 11 → 12
-
-Rationale: Build the Tenant API and adapters first (testable with mocks), then wire ConnectionHandling (needs adapters to resolve configs), then integration tests prove everything works together, then clean up v3 files.
+Phase 2.2 and 2.3 are independent and can be done in either order. Phase 2.3 is more complex and architecturally risky — may benefit from being done first to surface issues early.
 
 ---
 
@@ -975,7 +1040,7 @@ Rationale: Build the Tenant API and adapters first (testable with mocks), then w
 
 These items were flagged during Phase 1 review and should be addressed during this phase:
 
-- [ ] Freeze Config after validate! (now that adapters consume it)
-- [ ] Consider converting PoolReaper from class singleton to instance
-- [ ] Add switch/reset methods to Current (encapsulate tenant/previous_tenant relationship)
-- [ ] Resolve any remaining persistent_schemas usage (now only on PostgreSQLConfig)
+- [ ] Freeze Config after validate! (now that adapters consume it) — address in Phase 2.1
+- [ ] Consider converting PoolReaper from class singleton to instance — address in Phase 2.3
+- [ ] Add switch/reset methods to Current (encapsulate tenant/previous_tenant relationship) — address in Phase 2.1
+- [ ] Resolve any remaining persistent_schemas usage (now only on PostgreSQLConfig) — address in Phase 2.2
