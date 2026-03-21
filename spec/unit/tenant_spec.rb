@@ -150,6 +150,15 @@ RSpec.describe Apartment::Tenant do
     end
   end
 
+  describe 'adapter guard' do
+    it 'raises ConfigurationError when adapter is not configured' do
+      Apartment.adapter = nil
+      expect { described_class.create('tenant1') }.to raise_error(
+        Apartment::ConfigurationError, /not configured/
+      )
+    end
+  end
+
   describe '.pool_stats' do
     it 'delegates to pool_manager.stats' do
       stats = { total: 2, active: 1 }

@@ -5,6 +5,10 @@ module Apartment
     class << self
       # Switch to a tenant for the duration of the block.
       # Guaranteed cleanup via ensure — tenant context is always restored.
+      #
+      # Note: previous_tenant reflects only the immediately preceding tenant
+      # for the current switch scope. It is not stacked across nesting levels —
+      # after an inner switch completes, previous_tenant resets to nil.
       def switch(tenant)
         raise ArgumentError, 'Apartment::Tenant.switch requires a block' unless block_given?
 
@@ -63,7 +67,8 @@ module Apartment
       private
 
       def adapter
-        Apartment.adapter
+        Apartment.adapter or
+          raise ConfigurationError, 'Apartment adapter not configured. Call Apartment.configure first.'
       end
     end
   end
