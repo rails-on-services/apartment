@@ -2,6 +2,17 @@
 
 require 'spec_helper'
 
+# Minimal ActiveRecord stub for unit tests (no Rails loaded).
+unless defined?(ActiveRecord::Base)
+  module ActiveRecord
+    class Base
+      def self.connection_db_config
+        raise 'Stub: ActiveRecord::Base.connection_db_config not mocked'
+      end
+    end
+  end
+end
+
 RSpec.describe Apartment do
   describe '.adapter' do
     context 'when not configured' do
@@ -126,11 +137,15 @@ RSpec.describe Apartment do
           allow(db_config).to receive(:adapter).and_return('trilogy')
           # V3 TrilogyAdapter happens to exist with matching constant name.
           # Verify the factory resolves without raising AdapterNotFound.
-          # It may succeed (v3 class) or raise depending on initialization —
-          # the key assertion is that routing logic doesn't raise AdapterNotFound.
-          expect {
+          # It may succeed (v3 class) or raise a different error depending on
+          # initialization — the key assertion is routing logic is correct.
+          begin
             described_class.send(:build_adapter)
-          }.not_to raise_error(Apartment::AdapterNotFound)
+          rescue Apartment::AdapterNotFound
+            raise 'Expected trilogy to route correctly, but got AdapterNotFound'
+          rescue StandardError
+            # Other errors (e.g., from v3 adapter init) are acceptable
+          end
         end
 
         it 'attempts to load sqlite3_adapter for sqlite3' do
