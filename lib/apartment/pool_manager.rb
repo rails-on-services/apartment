@@ -61,7 +61,15 @@ module Apartment
       }
     end
 
+    # Disconnect all pools before clearing to prevent connection leaks.
+    # Each pool's disconnect! is individually rescued so one broken pool
+    # doesn't prevent cleanup of others.
     def clear
+      @pools.each_pair do |key, pool|
+        pool.disconnect! if pool.respond_to?(:disconnect!)
+      rescue => e
+        warn "[Apartment::PoolManager] Failed to disconnect pool '#{key}': #{e.class}: #{e.message}"
+      end
       @pools.clear
       @timestamps.clear
     end

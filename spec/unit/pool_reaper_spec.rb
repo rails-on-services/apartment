@@ -23,6 +23,23 @@ RSpec.describe Apartment::PoolReaper do
     end
   end
 
+  describe '.start argument validation' do
+    it 'raises ArgumentError for zero interval' do
+      expect { described_class.start(pool_manager: pool_manager, interval: 0, idle_timeout: 1) }
+        .to raise_error(ArgumentError, /interval/)
+    end
+
+    it 'raises ArgumentError for negative idle_timeout' do
+      expect { described_class.start(pool_manager: pool_manager, interval: 1, idle_timeout: -1) }
+        .to raise_error(ArgumentError, /idle_timeout/)
+    end
+
+    it 'raises ArgumentError for non-positive max_total' do
+      expect { described_class.start(pool_manager: pool_manager, interval: 1, idle_timeout: 1, max_total: 0) }
+        .to raise_error(ArgumentError, /max_total/)
+    end
+  end
+
   describe 'idle eviction' do
     it 'evicts pools idle beyond timeout' do
       pool_manager.fetch_or_create('stale') { 'pool_stale' }

@@ -26,6 +26,14 @@ RSpec.describe Apartment::PoolManager do
     end
   end
 
+  describe '#fetch_or_create when block raises' do
+    it 'does not store a value and re-raises' do
+      expect { manager.fetch_or_create('bad') { raise 'pool creation failed' } }
+        .to raise_error(RuntimeError, 'pool creation failed')
+      expect(manager.tracked?('bad')).to be false
+    end
+  end
+
   describe '#get' do
     it 'returns the pool for an existing tenant' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }

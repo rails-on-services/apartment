@@ -9,10 +9,12 @@ module Apartment
       include ActiveSupport::Callbacks
       define_callbacks :create, :switch
 
-      attr_reader :config
+      # The raw database connection configuration hash (from ActiveRecord).
+      # Not to be confused with Apartment.config (the Apartment::Config object).
+      attr_reader :connection_config
 
-      def initialize(config)
-        @config = config
+      def initialize(connection_config)
+        @connection_config = connection_config
       end
 
       # Resolve a tenant-specific connection config hash.

@@ -59,12 +59,19 @@ module Apartment
     def configure
       raise ConfigurationError, 'Apartment.configure requires a block' unless block_given?
 
+      # Prepare-then-swap: build and validate new config before tearing down
+      # old state. If the block or validate! raises, the previous working
+      # configuration is preserved.
+      new_config = Config.new
+      yield new_config
+      new_config.validate!
+      new_config.freeze!
+
+      # Validation passed — tear down old state and swap in new.
       PoolReaper.stop
       @pool_manager&.clear
       @adapter = nil
-      @config = Config.new
-      yield @config
-      @config.validate!
+      @config = new_config
       @pool_manager = PoolManager.new
       @config
     end

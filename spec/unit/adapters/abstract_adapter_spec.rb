@@ -47,8 +47,8 @@ unless defined?(ActiveRecord::Base)
 end
 
 RSpec.describe Apartment::Adapters::AbstractAdapter do
-  let(:config) { instance_double(Apartment::Config) }
-  let(:adapter) { TestAdapter.new(config) }
+  let(:connection_config) { { adapter: 'postgresql', host: 'localhost' } }
+  let(:adapter) { TestAdapter.new(connection_config) }
 
   before do
     Apartment.configure do |c|
@@ -58,15 +58,26 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
     end
   end
 
+  # Helper: reconfigure Apartment with overrides (Config is frozen after configure,
+  # so we must reconfigure rather than stub individual accessors).
+  def reconfigure(**overrides)
+    Apartment.configure do |c|
+      c.tenant_strategy = :schema
+      c.tenants_provider = -> { %w[t1 t2] }
+      c.default_tenant = 'public'
+      overrides.each { |key, val| c.send(:"#{key}=", val) }
+    end
+  end
+
   describe '#initialize' do
-    it 'stores the config' do
-      expect(adapter.config).to eq(config)
+    it 'stores the connection_config' do
+      expect(adapter.connection_config).to eq(connection_config)
     end
   end
 
   describe '#resolve_connection_config' do
     it 'raises NotImplementedError on the abstract class' do
-      abstract = described_class.new(config)
+      abstract = described_class.new(connection_config)
       expect { abstract.resolve_connection_config('t1') }.to raise_error(NotImplementedError)
     end
 
@@ -143,6 +154,18 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
   end
 
   describe '#migrate' do
+    it 'sets Current.tenant during the migration block' do
+      tenant_during_migrate = nil
+      migration_context = double('MigrationContext')
+      connection_pool = double('ConnectionPool', migration_context: migration_context)
+
+      allow(ActiveRecord::Base).to receive(:connection_pool).and_return(connection_pool)
+      allow(migration_context).to receive(:migrate) { tenant_during_migrate = Apartment::Current.tenant }
+
+      adapter.migrate('acme')
+      expect(tenant_during_migrate).to eq('acme')
+    end
+
     it 'switches tenant and runs migrations' do
       migration_context = double('MigrationContext')
       connection_pool = double('ConnectionPool', migration_context: migration_context)
@@ -175,8 +198,18 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
   end
 
   describe '#seed' do
+    it 'sets Current.tenant during the seed block' do
+      tenant_during_seed = nil
+      reconfigure(seed_data_file: '/tmp/seeds.rb')
+      allow(File).to receive(:exist?).with('/tmp/seeds.rb').and_return(true)
+      allow(adapter).to receive(:load) { tenant_during_seed = Apartment::Current.tenant }
+
+      adapter.seed('acme')
+      expect(tenant_during_seed).to eq('acme')
+    end
+
     it 'switches tenant and loads the seed file' do
-      allow(Apartment.config).to receive(:seed_data_file).and_return('/tmp/seeds.rb')
+      reconfigure(seed_data_file: '/tmp/seeds.rb')
       allow(File).to receive(:exist?).with('/tmp/seeds.rb').and_return(true)
       expect(adapter).to receive(:load).with('/tmp/seeds.rb')
 
@@ -184,14 +217,14 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
     end
 
     it 'does nothing when seed_data_file is nil' do
-      allow(Apartment.config).to receive(:seed_data_file).and_return(nil)
+      # Default config has seed_data_file = nil
       expect(adapter).not_to receive(:load)
 
       adapter.seed('acme')
     end
 
     it 'does nothing when seed file does not exist' do
-      allow(Apartment.config).to receive(:seed_data_file).and_return('/tmp/missing.rb')
+      reconfigure(seed_data_file: '/tmp/missing.rb')
       allow(File).to receive(:exist?).with('/tmp/missing.rb').and_return(false)
       expect(adapter).not_to receive(:load)
 
@@ -204,8 +237,7 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
       model_class = Class.new
       stub_const('GlobalUser', model_class)
 
-      allow(Apartment.config).to receive(:excluded_models).and_return(['GlobalUser'])
-      allow(Apartment.config).to receive(:default_tenant).and_return('public')
+      reconfigure(excluded_models: ['GlobalUser'])
 
       expected_config = { adapter: 'postgresql', database: 'public' }
       expect(model_class).to receive(:establish_connection) do |arg|
@@ -221,8 +253,7 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
       stub_const('GlobalUser', user_class)
       stub_const('GlobalCompany', company_class)
 
-      allow(Apartment.config).to receive(:excluded_models).and_return(%w[GlobalUser GlobalCompany])
-      allow(Apartment.config).to receive(:default_tenant).and_return('public')
+      reconfigure(excluded_models: %w[GlobalUser GlobalCompany])
 
       expect(user_class).to receive(:establish_connection)
       expect(company_class).to receive(:establish_connection)
@@ -231,38 +262,39 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
     end
 
     it 'does nothing when excluded_models is empty' do
-      allow(Apartment.config).to receive(:excluded_models).and_return([])
-      allow(Apartment.config).to receive(:default_tenant).and_return('public')
-
+      # Default config has excluded_models = []
       # Should not raise
       adapter.process_excluded_models
+    end
+
+    it 'raises NameError when excluded model class does not exist' do
+      reconfigure(excluded_models: ['NonExistentModel'])
+      expect { adapter.process_excluded_models }.to raise_error(NameError, /NonExistentModel/)
     end
   end
 
   describe '#environmentify' do
     it 'prepends the environment when strategy is :prepend' do
-      allow(Apartment.config).to receive(:environmentify_strategy).and_return(:prepend)
+      reconfigure(environmentify_strategy: :prepend)
       expect(adapter.environmentify('acme')).to eq('test_acme')
     end
 
     it 'appends the environment when strategy is :append' do
-      allow(Apartment.config).to receive(:environmentify_strategy).and_return(:append)
+      reconfigure(environmentify_strategy: :append)
       expect(adapter.environmentify('acme')).to eq('acme_test')
     end
 
     it 'returns tenant as string when strategy is nil' do
-      allow(Apartment.config).to receive(:environmentify_strategy).and_return(nil)
+      # Default config has environmentify_strategy = nil
       expect(adapter.environmentify('acme')).to eq('acme')
     end
 
     it 'converts symbols to string when strategy is nil' do
-      allow(Apartment.config).to receive(:environmentify_strategy).and_return(nil)
       expect(adapter.environmentify(:acme)).to eq('acme')
     end
 
     it 'calls the strategy when it is callable' do
-      strategy = ->(tenant) { "custom_#{tenant}" }
-      allow(Apartment.config).to receive(:environmentify_strategy).and_return(strategy)
+      reconfigure(environmentify_strategy: ->(tenant) { "custom_#{tenant}" })
       expect(adapter.environmentify('acme')).to eq('custom_acme')
     end
   end
@@ -275,12 +307,12 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
 
   describe 'protected abstract methods' do
     it 'create_tenant raises NotImplementedError on the abstract class' do
-      abstract = described_class.new(config)
+      abstract = described_class.new(connection_config)
       expect { abstract.send(:create_tenant, 't1') }.to raise_error(NotImplementedError)
     end
 
     it 'drop_tenant raises NotImplementedError on the abstract class' do
-      abstract = described_class.new(config)
+      abstract = described_class.new(connection_config)
       expect { abstract.send(:drop_tenant, 't1') }.to raise_error(NotImplementedError)
     end
   end

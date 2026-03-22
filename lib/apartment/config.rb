@@ -86,6 +86,16 @@ module Apartment
       @mysql_config
     end
 
+    # Deep-freeze the config after validation to prevent post-boot mutation.
+    # Freezes mutable collections and sub-configs, then freezes self.
+    def freeze!
+      @excluded_models.freeze
+      @elevator_options.freeze
+      @postgres_config&.freeze!
+      @mysql_config&.freeze
+      freeze
+    end
+
     # Validate configuration completeness and consistency.
     # Raises ConfigurationError on invalid state.
     def validate!
