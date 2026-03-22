@@ -40,7 +40,13 @@ require_relative 'apartment/errors'
 module Apartment
   class << self
     attr_reader :config, :pool_manager
-    attr_accessor :adapter
+    attr_writer :adapter
+
+    # Lazy-loading adapter. Built on first access via build_adapter.
+    # Can be set manually (e.g., in tests) via Apartment.adapter=.
+    def adapter
+      @adapter ||= build_adapter
+    end
 
     # Configure Apartment v4. Yields a Config instance, validates it,
     # and prepares the module for use.
@@ -55,6 +61,7 @@ module Apartment
 
       PoolReaper.stop
       @pool_manager&.clear
+      @adapter = nil
       @config = Config.new
       yield @config
       @config.validate!
@@ -69,6 +76,47 @@ module Apartment
       @config = nil
       @pool_manager = nil
       @adapter = nil
+    end
+
+    private
+
+    # Factory: resolve the correct adapter class based on strategy and database adapter.
+    def build_adapter
+      raise ConfigurationError, 'Apartment not configured. Call Apartment.configure first.' unless @config
+
+      strategy = config.tenant_strategy
+      db_adapter = detect_database_adapter
+
+      klass = case strategy
+              when :schema
+                require_relative 'apartment/adapters/postgresql_schema_adapter'
+                Adapters::PostgreSQLSchemaAdapter
+              when :database_name
+                case db_adapter
+                when /postgresql/, /postgis/
+                  require_relative 'apartment/adapters/postgresql_database_adapter'
+                  Adapters::PostgreSQLDatabaseAdapter
+                when /mysql2/
+                  require_relative 'apartment/adapters/mysql2_adapter'
+                  Adapters::MySQL2Adapter
+                when /trilogy/
+                  require_relative 'apartment/adapters/trilogy_adapter'
+                  Adapters::TrilogyAdapter
+                when /sqlite/
+                  require_relative 'apartment/adapters/sqlite3_adapter'
+                  Adapters::SQLite3Adapter
+                else
+                  raise AdapterNotFound, "No adapter for database: #{db_adapter}"
+                end
+              else
+                raise AdapterNotFound, "Strategy #{strategy} not yet implemented"
+              end
+
+      klass.new(ActiveRecord::Base.connection_db_config.configuration_hash)
+    end
+
+    def detect_database_adapter
+      ActiveRecord::Base.connection_db_config.adapter
     end
   end
 end

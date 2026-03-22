@@ -152,7 +152,7 @@ RSpec.describe Apartment::Tenant do
 
   describe 'adapter guard' do
     it 'raises ConfigurationError when adapter is not configured' do
-      Apartment.adapter = nil
+      Apartment.clear_config
       expect { described_class.create('tenant1') }.to raise_error(
         Apartment::ConfigurationError, /not configured/
       )
