@@ -113,7 +113,7 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
 
     it 'removes the pool from PoolManager' do
       allow(Apartment::Instrumentation).to receive(:instrument)
-      expect(pool_manager).to receive(:remove).with('ActiveRecord::Base[acme]').and_return(nil)
+      expect(pool_manager).to receive(:remove).with('acme').and_return(nil)
       adapter.drop('acme')
     end
 
