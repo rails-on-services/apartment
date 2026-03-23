@@ -171,6 +171,31 @@ RSpec.describe 'Apartment.configure' do
   it 'raises without a block' do
     expect { Apartment.configure }.to raise_error(Apartment::ConfigurationError, /requires a block/)
   end
+
+  it 'freezes the config after validation' do
+    Apartment.configure do |config|
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+    end
+
+    expect(Apartment.config).to be_frozen
+    expect(Apartment.config.excluded_models).to be_frozen
+    expect { Apartment.config.default_tenant = 'x' }.to raise_error(FrozenError)
+  end
+
+  it 'preserves previous config when reconfigure fails' do
+    Apartment.configure do |config|
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.default_tenant = 'original'
+    end
+
+    expect {
+      Apartment.configure { |c| } # no strategy — will fail validation
+    }.to raise_error(Apartment::ConfigurationError)
+
+    expect(Apartment.config.default_tenant).to eq('original')
+  end
 end
 
 RSpec.describe 'Apartment.clear_config' do

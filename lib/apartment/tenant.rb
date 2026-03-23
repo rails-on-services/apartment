@@ -37,7 +37,7 @@ module Apartment
         switch!(Apartment.config&.default_tenant)
       end
 
-      # Initialize: process excluded models, set up default tenant.
+      # Initialize: process excluded models so they bypass tenant switching.
       def init
         adapter.process_excluded_models
       end

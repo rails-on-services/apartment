@@ -92,7 +92,7 @@ module Apartment
       @excluded_models.freeze
       @elevator_options.freeze
       @postgres_config&.freeze!
-      @mysql_config&.freeze
+      @mysql_config&.freeze!
       freeze
     end
 

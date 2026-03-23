@@ -8,6 +8,12 @@ module Apartment
       def initialize
         # No MySQL-specific options yet.
       end
+
+      # Freeze mutable collections (none yet), then freeze self.
+      # Symmetric with PostgreSQLConfig#freeze! for consistency.
+      def freeze!
+        freeze
+      end
     end
   end
 end
