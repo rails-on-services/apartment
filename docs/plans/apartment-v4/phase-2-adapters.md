@@ -1040,7 +1040,43 @@ Phase 2.2 and 2.3 are independent and can be done in either order. Phase 2.3 is 
 
 These items were flagged during Phase 1 review and should be addressed during this phase:
 
-- [ ] Freeze Config after validate! (now that adapters consume it) — address in Phase 2.1
+- [x] Freeze Config after validate! (now that adapters consume it) — done in Phase 2.1
 - [ ] Consider converting PoolReaper from class singleton to instance — address in Phase 2.3
-- [ ] Add switch/reset methods to Current (encapsulate tenant/previous_tenant relationship) — address in Phase 2.1
+- [x] Add switch/reset methods to Current — decided against: Tenant.switch/reset use Current attributes directly; Current stays thin (just attributes)
 - [ ] Resolve any remaining persistent_schemas usage (now only on PostgreSQLConfig) — address in Phase 2.2
+
+## Notes from Phase 2.1 review (deferred to later sub-phases)
+
+Flagged during comprehensive PR review of Phase 2.1. Categorized by target sub-phase.
+
+### Phase 2.2 (Database Adapters)
+
+- [ ] Adapter factory routing tests assert LoadError/NameError for missing v4 files — rewrite to use stub pattern when concrete adapters land
+- [ ] `environmentify` does not guard against `Rails` being undefined — relevant when concrete adapters call it outside Rails context
+
+### Phase 2.3 (Connection Handling & Pool Wiring)
+
+- [ ] PoolReaper evict_idle/evict_lru do not call `disconnect!` on evicted pools — pools rely on GC. Add explicit disconnect when pool wiring is implemented
+- [ ] `configure` teardown sequence not protected — if `PoolReaper.stop` raises after validation passes, system is half-torn-down. Wrap in begin/rescue
+
+### Phase 2.4 (Excluded Models & Integration)
+
+- [ ] `process_excluded_models` — wrap `constantize` NameError with `ConfigurationError` for clear boot-time error messages
+- [ ] `seed` method — raise when configured seed file doesn't exist instead of silent no-op
+- [ ] `AbstractAdapter#drop` — rescue around `disconnect!` so pool cleanup failure doesn't mask successful tenant drop
+
+### General (address when touched)
+
+- [ ] PoolReaper broad `rescue => e` in reap — consider narrowing to `ApartmentError` + `ActiveRecord::ActiveRecordError` in inner rescue loops
+- [ ] `warn` calls in PoolReaper and PoolManager — migrate to `Rails.logger.error` when logging abstraction is built
+- [ ] `define_callbacks :switch` is declared but never used — document as reserved or remove
+- [ ] `Tenant.current` returns nil when unconfigured — consider raising `ConfigurationError` for fail-fast
+- [ ] `Tenant.switch(nil)` silently sets tenant to nil — consider guarding with `ArgumentError`
+
+### Test gaps (criticality 5-6, pick up opportunistically)
+
+- [ ] `drop` partial failure when `drop_tenant` raises — document whether pool cleanup occurs
+- [ ] LRU eviction default-tenant protection — direct test for LRU path (idle path tested)
+- [ ] Fiber isolation for `Current` — validate the core v4 design claim with a fiber test
+- [ ] `PoolManager#clear` disconnect verification — assert `disconnect!` called, not just count drops
+- [ ] Concurrent `remove` + `get` race — document `Concurrent::Map` guarantees with a test
