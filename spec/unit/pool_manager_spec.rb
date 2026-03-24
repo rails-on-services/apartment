@@ -2,58 +2,61 @@
 
 require 'spec_helper'
 
-RSpec.describe Apartment::PoolManager do
+RSpec.describe(Apartment::PoolManager) do
   subject(:manager) { described_class.new }
 
   describe '#fetch_or_create' do
     it 'creates and caches a new entry' do
       result = manager.fetch_or_create('tenant_a') { 'pool_a' }
-      expect(result).to eq('pool_a')
+      expect(result).to(eq('pool_a'))
     end
 
     it 'returns cached entry on subsequent calls' do
       call_count = 0
       2.times do
-        manager.fetch_or_create('tenant_a') { call_count += 1; "pool_#{call_count}" }
+        manager.fetch_or_create('tenant_a') do
+          call_count += 1
+          "pool_#{call_count}"
+        end
       end
-      expect(manager.fetch_or_create('tenant_a') { 'new' }).to eq('pool_1')
+      expect(manager.fetch_or_create('tenant_a') { 'new' }).to(eq('pool_1'))
     end
 
     it 'tracks seconds_idle for the pool' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
       stats = manager.stats_for('tenant_a')
-      expect(stats[:seconds_idle]).to be_within(1).of(0)
+      expect(stats[:seconds_idle]).to(be_within(1).of(0))
     end
   end
 
   describe '#fetch_or_create when block raises' do
     it 'does not store a value and re-raises' do
-      expect { manager.fetch_or_create('bad') { raise 'pool creation failed' } }
-        .to raise_error(RuntimeError, 'pool creation failed')
-      expect(manager.tracked?('bad')).to be false
+      expect { manager.fetch_or_create('bad') { raise('pool creation failed') } }
+        .to(raise_error(RuntimeError, 'pool creation failed'))
+      expect(manager.tracked?('bad')).to(be(false))
     end
   end
 
   describe '#get' do
     it 'returns the pool for an existing tenant' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
-      expect(manager.get('tenant_a')).to eq('pool_a')
+      expect(manager.get('tenant_a')).to(eq('pool_a'))
     end
 
     it 'returns nil for unknown tenants' do
-      expect(manager.get('unknown')).to be_nil
+      expect(manager.get('unknown')).to(be_nil)
     end
 
     it 'resets seconds_idle on access' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
       manager.instance_variable_get(:@timestamps)['tenant_a'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 600
       manager.get('tenant_a')
-      expect(manager.stats_for('tenant_a')[:seconds_idle]).to be_within(1).of(0)
+      expect(manager.stats_for('tenant_a')[:seconds_idle]).to(be_within(1).of(0))
     end
 
     it 'does not create timestamps for unknown tenants' do
       manager.get('unknown')
-      expect(manager.stats_for('unknown')).to be_nil
+      expect(manager.stats_for('unknown')).to(be_nil)
     end
   end
 
@@ -61,16 +64,16 @@ RSpec.describe Apartment::PoolManager do
     it 'removes a tracked pool' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
       manager.remove('tenant_a')
-      expect(manager.tracked?('tenant_a')).to be false
+      expect(manager.tracked?('tenant_a')).to(be(false))
     end
 
     it 'returns the removed value' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
-      expect(manager.remove('tenant_a')).to eq('pool_a')
+      expect(manager.remove('tenant_a')).to(eq('pool_a'))
     end
 
     it 'returns nil for unknown tenants' do
-      expect(manager.remove('unknown')).to be_nil
+      expect(manager.remove('unknown')).to(be_nil)
     end
   end
 
@@ -81,8 +84,8 @@ RSpec.describe Apartment::PoolManager do
       manager.fetch_or_create('recent') { 'pool_recent' }
 
       idle = manager.idle_tenants(timeout: 300)
-      expect(idle).to include('old')
-      expect(idle).not_to include('recent')
+      expect(idle).to(include('old'))
+      expect(idle).not_to(include('recent'))
     end
   end
 
@@ -95,7 +98,7 @@ RSpec.describe Apartment::PoolManager do
       manager.fetch_or_create('c') { 'pool_c' }
 
       lru = manager.lru_tenants(count: 2)
-      expect(lru).to eq(%w[a b])
+      expect(lru).to(eq(%w[a b]))
     end
   end
 
@@ -105,8 +108,8 @@ RSpec.describe Apartment::PoolManager do
       manager.fetch_or_create('b') { 'pool_b' }
 
       stats = manager.stats
-      expect(stats[:total_pools]).to eq(2)
-      expect(stats[:tenants]).to contain_exactly('a', 'b')
+      expect(stats[:total_pools]).to(eq(2))
+      expect(stats[:tenants]).to(contain_exactly('a', 'b'))
     end
   end
 
@@ -115,19 +118,19 @@ RSpec.describe Apartment::PoolManager do
       manager.fetch_or_create('a') { 'pool_a' }
       manager.fetch_or_create('b') { 'pool_b' }
       manager.clear
-      expect(manager.stats[:total_pools]).to eq(0)
+      expect(manager.stats[:total_pools]).to(eq(0))
     end
   end
 
   describe 'thread safety' do
     it 'handles concurrent fetch_or_create without duplicates' do
       results = Concurrent::Array.new
-      threads = 10.times.map do
+      threads = Array.new(10) do
         Thread.new { results << manager.fetch_or_create('shared') { SecureRandom.hex } }
       end
       threads.each(&:join)
 
-      expect(results.uniq.size).to eq(1)
+      expect(results.uniq.size).to(eq(1))
     end
   end
 end

@@ -12,9 +12,15 @@ module Apartment
     VALID_PARALLEL_STRATEGIES = %i[auto threads processes].freeze
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
-    attr_reader :tenant_strategy, :postgres_config, :mysql_config
-    attr_accessor :tenants_provider, :default_tenant, :excluded_models, :tenant_pool_size, :pool_idle_timeout,
-                  :max_total_connections, :seed_after_create, :seed_data_file, :parallel_migration_threads, :parallel_strategy, :environmentify_strategy, :elevator, :elevator_options, :tenant_not_found_handler, :active_record_log
+    attr_reader :tenant_strategy, :postgres_config, :mysql_config,
+                :parallel_strategy, :environmentify_strategy
+
+    attr_accessor :tenants_provider, :default_tenant, :excluded_models,
+                  :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
+                  :seed_after_create, :seed_data_file,
+                  :parallel_migration_threads,
+                  :elevator, :elevator_options,
+                  :tenant_not_found_handler, :active_record_log
 
     def initialize
       @tenant_strategy = nil

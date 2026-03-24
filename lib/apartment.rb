@@ -57,13 +57,13 @@ module Apartment
     #   end
     #
     def configure
-      raise ConfigurationError, 'Apartment.configure requires a block' unless block_given?
+      raise(ConfigurationError, 'Apartment.configure requires a block') unless block_given?
 
       # Prepare-then-swap: build and validate new config before tearing down
       # old state. If the block or validate! raises, the previous working
       # configuration is preserved.
       new_config = Config.new
-      yield new_config
+      yield(new_config)
       new_config.validate!
       new_config.freeze!
 
@@ -89,34 +89,34 @@ module Apartment
 
     # Factory: resolve the correct adapter class based on strategy and database adapter.
     def build_adapter
-      raise ConfigurationError, 'Apartment not configured. Call Apartment.configure first.' unless @config
+      raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.') unless @config
 
       strategy = config.tenant_strategy
       db_adapter = detect_database_adapter
 
       klass = case strategy
               when :schema
-                require_relative 'apartment/adapters/postgresql_schema_adapter'
+                require_relative('apartment/adapters/postgresql_schema_adapter')
                 Adapters::PostgreSQLSchemaAdapter
               when :database_name
                 case db_adapter
                 when /postgresql/, /postgis/
-                  require_relative 'apartment/adapters/postgresql_database_adapter'
+                  require_relative('apartment/adapters/postgresql_database_adapter')
                   Adapters::PostgreSQLDatabaseAdapter
                 when /mysql2/
-                  require_relative 'apartment/adapters/mysql2_adapter'
+                  require_relative('apartment/adapters/mysql2_adapter')
                   Adapters::MySQL2Adapter
                 when /trilogy/
-                  require_relative 'apartment/adapters/trilogy_adapter'
+                  require_relative('apartment/adapters/trilogy_adapter')
                   Adapters::TrilogyAdapter
                 when /sqlite/
-                  require_relative 'apartment/adapters/sqlite3_adapter'
+                  require_relative('apartment/adapters/sqlite3_adapter')
                   Adapters::SQLite3Adapter
                 else
-                  raise AdapterNotFound, "No adapter for database: #{db_adapter}"
+                  raise(AdapterNotFound, "No adapter for database: #{db_adapter}")
                 end
               else
-                raise AdapterNotFound, "Strategy #{strategy} not yet implemented"
+                raise(AdapterNotFound, "Strategy #{strategy} not yet implemented")
               end
 
       klass.new(ActiveRecord::Base.connection_db_config.configuration_hash)

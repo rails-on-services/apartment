@@ -3,6 +3,7 @@ AllCops:
   Exclude:
     - vendor/bundle/**/*
     - gemfiles/**/*.gemfile
+    - spec/dummy_engine/**/*
     - gemfiles/vendor/**/*
     - spec/dummy_engine/dummy_engine.gemspec
     - spec/schemas/**/*.rb
@@ -32,19 +33,44 @@ Metrics/MethodLength:
   Max: 15
   Exclude:
     - spec/**/*.rb
+    - lib/apartment.rb
     - lib/apartment/tenant.rb
     - lib/apartment/migrator.rb
+    - lib/apartment/config.rb
+    - lib/apartment/pool_reaper.rb
 
 Metrics/ModuleLength:
   Max: 150
   Exclude:
     - spec/**/*.rb
 
+Metrics/CyclomaticComplexity:
+  Exclude:
+    - lib/apartment.rb
+    - lib/apartment/config.rb
+    - lib/apartment/pool_reaper.rb
+
+Metrics/PerceivedComplexity:
+  Exclude:
+    - lib/apartment/config.rb
+
+Metrics/ParameterLists:
+  Exclude:
+    - lib/apartment/pool_reaper.rb
+
+Style/OneClassPerFile:
+  Exclude:
+    - lib/apartment/active_record/postgresql_adapter.rb
+
 Metrics/AbcSize:
   Max: 20
   Exclude:
     - spec/**/*.rb
     - lib/apartment/adapters/postgresql_adapter.rb
+
+Rails/SkipsModelValidations:
+  Exclude:
+    - lib/apartment/pool_manager.rb
 
 Metrics/ClassLength:
   Max: 155
@@ -63,6 +89,11 @@ Rails/ApplicationRecord:
 
 Rails/Output:
   Enabled: false
+
+Lint/EmptyBlock:
+  Exclude:
+    - spec/**/*.rb
+    - lib/apartment/instrumentation.rb
 
 Style/Documentation:
   Enabled: false
@@ -151,6 +182,15 @@ RSpec/LeakyConstantDeclaration:
 RSpec/VerifiedDoubles:
   Enabled: false
 
+RSpec/VerifiedDoubleReference:
+  Enabled: false
+
+RSpec/StubbedMock:
+  Enabled: false
+
+RSpec/MultipleDescribes:
+  Enabled: false
+
 RSpec/NoExpectationExample:
   Enabled: false
 
@@ -159,6 +199,7 @@ ThreadSafety/ClassInstanceVariable:
   Exclude:
     - lib/apartment.rb
     - lib/apartment/model.rb
+    - lib/apartment/pool_reaper.rb
     - lib/apartment/elevators/*.rb
     - spec/support/config.rb
 
@@ -174,6 +215,7 @@ ThreadSafety/DirChdir:
 ThreadSafety/NewThread:
   Exclude:
     - spec/tenant_spec.rb
+    - spec/unit/**/*.rb
 
 # Rake cops
 Rake/DuplicateTask:

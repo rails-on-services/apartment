@@ -52,7 +52,7 @@ module Apartment
   module TaskHelper
     # Captures outcome per tenant for aggregated reporting. Allows migrations
     # to continue for remaining tenants even when one fails.
-    Result = Struct.new(:tenant, :success, :error, keyword_init: true)
+    Result = Struct.new(:tenant, :success, :error)
 
     class << self
       # Primary entry point for tenant iteration. Automatically selects

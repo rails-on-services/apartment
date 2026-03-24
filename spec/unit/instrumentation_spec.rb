@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Apartment::Instrumentation do
+RSpec.describe(Apartment::Instrumentation) do
   describe '.instrument' do
     it 'publishes switch.apartment events' do
       events = []
@@ -10,8 +10,8 @@ RSpec.describe Apartment::Instrumentation do
 
       described_class.instrument(:switch, tenant: 'acme', previous_tenant: 'public')
 
-      expect(events.size).to eq(1)
-      expect(events.first.payload).to include(tenant: 'acme', previous_tenant: 'public')
+      expect(events.size).to(eq(1))
+      expect(events.first.payload).to(include(tenant: 'acme', previous_tenant: 'public'))
     ensure
       ActiveSupport::Notifications.unsubscribe('switch.apartment')
     end
@@ -22,8 +22,8 @@ RSpec.describe Apartment::Instrumentation do
 
       described_class.instrument(:create, tenant: 'new_tenant')
 
-      expect(events.size).to eq(1)
-      expect(events.first.payload[:tenant]).to eq('new_tenant')
+      expect(events.size).to(eq(1))
+      expect(events.first.payload[:tenant]).to(eq('new_tenant'))
     ensure
       ActiveSupport::Notifications.unsubscribe('create.apartment')
     end
@@ -34,8 +34,8 @@ RSpec.describe Apartment::Instrumentation do
 
       result = described_class.instrument(:switch, tenant: 'acme') { 'block_result' }
 
-      expect(result).to eq('block_result')
-      expect(events.size).to eq(1)
+      expect(result).to(eq('block_result'))
+      expect(events.size).to(eq(1))
     ensure
       ActiveSupport::Notifications.unsubscribe('switch.apartment')
     end
@@ -46,7 +46,7 @@ RSpec.describe Apartment::Instrumentation do
 
       described_class.instrument(:evict, tenant: 'old', reason: :idle)
 
-      expect(events.first.payload).to include(tenant: 'old', reason: :idle)
+      expect(events.first.payload).to(include(tenant: 'old', reason: :idle))
     ensure
       ActiveSupport::Notifications.unsubscribe('evict.apartment')
     end

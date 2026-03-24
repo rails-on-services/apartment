@@ -12,9 +12,15 @@ module Apartment
 
     class << self
       def start(pool_manager:, interval:, idle_timeout:, max_total: nil, default_tenant: nil, on_evict: nil)
-        raise ArgumentError, "interval must be a positive number" unless interval.is_a?(Numeric) && interval > 0
-        raise ArgumentError, "idle_timeout must be a positive number" unless idle_timeout.is_a?(Numeric) && idle_timeout > 0
-        raise ArgumentError, "max_total must be a positive integer or nil" if max_total && (!max_total.is_a?(Integer) || max_total < 1)
+        raise(ArgumentError, 'interval must be a positive number') unless interval.is_a?(Numeric) && interval.positive?
+        unless idle_timeout.is_a?(Numeric) && idle_timeout.positive?
+          raise(ArgumentError,
+                'idle_timeout must be a positive number')
+        end
+        if max_total && (!max_total.is_a?(Integer) || max_total < 1)
+          raise(ArgumentError,
+                'max_total must be a positive integer or nil')
+        end
 
         @mutex.synchronize do
           stop_internal
@@ -41,11 +47,11 @@ module Apartment
       private
 
       def stop_internal
-        if @timer
-          @timer.shutdown
-          @timer.wait_for_termination(5)
-          @timer = nil
-        end
+        return unless @timer
+
+        @timer.shutdown
+        @timer.wait_for_termination(5)
+        @timer = nil
       end
 
       def reap
@@ -53,7 +59,7 @@ module Apartment
         evict_lru if @max_total
       rescue Apartment::ApartmentError => e
         warn "[Apartment::PoolReaper] #{e.class}: #{e.message}"
-      rescue => e
+      rescue StandardError => e
         warn "[Apartment::PoolReaper] Unexpected error: #{e.class}: #{e.message}"
         warn e.backtrace&.first(5)&.join("\n") if e.backtrace
       end
@@ -65,7 +71,7 @@ module Apartment
           pool = @pool_manager.remove(tenant)
           Instrumentation.instrument(:evict, tenant: tenant, reason: :idle)
           @on_evict&.call(tenant, pool)
-        rescue => e
+        rescue StandardError => e
           warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
         end
       end
@@ -84,7 +90,7 @@ module Apartment
           Instrumentation.instrument(:evict, tenant: tenant, reason: :lru)
           @on_evict&.call(tenant, pool)
           evicted += 1
-        rescue => e
+        rescue StandardError => e
           warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
         end
       end

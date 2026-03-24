@@ -156,9 +156,9 @@ RSpec.describe(Apartment) do
 
         it 'raises AdapterNotFound for unknown database adapter' do
           allow(db_config).to(receive(:adapter).and_return('oracle'))
-          expect { described_class.send(:build_adapter) }.to(raise_error(
-                                                               Apartment::AdapterNotFound, /No adapter for database: oracle/
-                                                             ))
+          expect { described_class.send(:build_adapter) }.to(
+            raise_error(Apartment::AdapterNotFound, /No adapter for database: oracle/)
+          )
         end
       end
 
@@ -168,9 +168,9 @@ RSpec.describe(Apartment) do
             config.tenant_strategy = :shard
             config.tenants_provider = -> { [] }
           end
-          expect { described_class.send(:build_adapter) }.to(raise_error(
-                                                               Apartment::AdapterNotFound, /Strategy shard not yet implemented/
-                                                             ))
+          expect { described_class.send(:build_adapter) }.to(
+            raise_error(Apartment::AdapterNotFound, /Strategy shard not yet implemented/)
+          )
         end
 
         it 'raises AdapterNotFound for :database_config strategy' do
@@ -178,9 +178,9 @@ RSpec.describe(Apartment) do
             config.tenant_strategy = :database_config
             config.tenants_provider = -> { [] }
           end
-          expect { described_class.send(:build_adapter) }.to(raise_error(
-                                                               Apartment::AdapterNotFound, /Strategy database_config not yet implemented/
-                                                             ))
+          expect { described_class.send(:build_adapter) }.to(
+            raise_error(Apartment::AdapterNotFound, /Strategy database_config not yet implemented/)
+          )
         end
       end
     end
@@ -188,7 +188,7 @@ RSpec.describe(Apartment) do
     context 'with a concrete adapter class available' do
       let(:db_config) { double('db_config', adapter: 'postgresql', configuration_hash: { adapter: 'postgresql' }) }
       let(:fake_adapter_instance) { double('adapter_instance') }
-      let(:fake_adapter_class) { class_double('Apartment::Adapters::PostgreSQLSchemaAdapter').as_stubbed_const } # rubocop:disable RSpec/VerifiedDoubles
+      let(:fake_adapter_class) { class_double('Apartment::Adapters::PostgreSQLSchemaAdapter').as_stubbed_const }
 
       before do
         allow(ActiveRecord::Base).to(receive(:connection_db_config).and_return(db_config))
