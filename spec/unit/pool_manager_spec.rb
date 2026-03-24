@@ -19,10 +19,10 @@ RSpec.describe Apartment::PoolManager do
       expect(manager.fetch_or_create('tenant_a') { 'new' }).to eq('pool_1')
     end
 
-    it 'updates last_accessed timestamp' do
+    it 'tracks seconds_idle for the pool' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
       stats = manager.stats_for('tenant_a')
-      expect(stats[:last_accessed]).to be_within(1).of(Process.clock_gettime(Process::CLOCK_MONOTONIC))
+      expect(stats[:seconds_idle]).to be_within(1).of(0)
     end
   end
 
@@ -44,11 +44,11 @@ RSpec.describe Apartment::PoolManager do
       expect(manager.get('unknown')).to be_nil
     end
 
-    it 'updates last_accessed for existing tenants' do
+    it 'resets seconds_idle on access' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
       manager.instance_variable_get(:@timestamps)['tenant_a'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 600
       manager.get('tenant_a')
-      expect(manager.stats_for('tenant_a')[:last_accessed]).to be_within(1).of(Process.clock_gettime(Process::CLOCK_MONOTONIC))
+      expect(manager.stats_for('tenant_a')[:seconds_idle]).to be_within(1).of(0)
     end
 
     it 'does not create timestamps for unknown tenants' do

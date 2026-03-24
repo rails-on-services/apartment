@@ -35,10 +35,13 @@ module Apartment
       @pools.key?(tenant_key)
     end
 
+    # Returns stats for a tenant pool. Follows ActiveRecord's convention of
+    # exposing computed durations (seconds_idle) rather than raw monotonic
+    # timestamps, which are meaningless outside the process.
     def stats_for(tenant_key)
       return nil unless tracked?(tenant_key)
 
-      { last_accessed: @timestamps[tenant_key] }
+      { seconds_idle: monotonic_now - @timestamps[tenant_key] }
     end
 
     def idle_tenants(timeout:)
