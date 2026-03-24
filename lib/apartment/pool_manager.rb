@@ -42,7 +42,7 @@ module Apartment
     end
 
     def idle_tenants(timeout:)
-      cutoff = Time.now - timeout
+      cutoff = monotonic_now - timeout
       @timestamps.each_pair.filter_map { |key, ts| key if ts < cutoff }
     end
 
@@ -78,7 +78,11 @@ module Apartment
     private
 
     def touch(tenant_key)
-      @timestamps[tenant_key] = Time.now
+      @timestamps[tenant_key] = monotonic_now
+    end
+
+    def monotonic_now
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
   end
 end

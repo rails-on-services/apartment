@@ -22,7 +22,7 @@ RSpec.describe Apartment::PoolManager do
     it 'updates last_accessed timestamp' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
       stats = manager.stats_for('tenant_a')
-      expect(stats[:last_accessed]).to be_within(1).of(Time.now)
+      expect(stats[:last_accessed]).to be_within(1).of(Process.clock_gettime(Process::CLOCK_MONOTONIC))
     end
   end
 
@@ -46,9 +46,9 @@ RSpec.describe Apartment::PoolManager do
 
     it 'updates last_accessed for existing tenants' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }
-      manager.instance_variable_get(:@timestamps)['tenant_a'] = Time.now - 600
+      manager.instance_variable_get(:@timestamps)['tenant_a'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 600
       manager.get('tenant_a')
-      expect(manager.stats_for('tenant_a')[:last_accessed]).to be_within(1).of(Time.now)
+      expect(manager.stats_for('tenant_a')[:last_accessed]).to be_within(1).of(Process.clock_gettime(Process::CLOCK_MONOTONIC))
     end
 
     it 'does not create timestamps for unknown tenants' do
@@ -77,7 +77,7 @@ RSpec.describe Apartment::PoolManager do
   describe '#idle_tenants' do
     it 'returns tenants idle beyond threshold' do
       manager.fetch_or_create('old') { 'pool_old' }
-      manager.instance_variable_get(:@timestamps)['old'] = Time.now - 600
+      manager.instance_variable_get(:@timestamps)['old'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 600
       manager.fetch_or_create('recent') { 'pool_recent' }
 
       idle = manager.idle_tenants(timeout: 300)
@@ -89,9 +89,9 @@ RSpec.describe Apartment::PoolManager do
   describe '#lru_tenants' do
     it 'returns tenants sorted by least recently accessed' do
       manager.fetch_or_create('a') { 'pool_a' }
-      manager.instance_variable_get(:@timestamps)['a'] = Time.now - 300
+      manager.instance_variable_get(:@timestamps)['a'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 300
       manager.fetch_or_create('b') { 'pool_b' }
-      manager.instance_variable_get(:@timestamps)['b'] = Time.now - 200
+      manager.instance_variable_get(:@timestamps)['b'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 200
       manager.fetch_or_create('c') { 'pool_c' }
 
       lru = manager.lru_tenants(count: 2)

@@ -43,7 +43,7 @@ RSpec.describe Apartment::PoolReaper do
   describe 'idle eviction' do
     it 'evicts pools idle beyond timeout' do
       pool_manager.fetch_or_create('stale') { 'pool_stale' }
-      pool_manager.instance_variable_get(:@timestamps)['stale'] = Time.now - 10
+      pool_manager.instance_variable_get(:@timestamps)['stale'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
 
       pool_manager.fetch_or_create('fresh') { 'pool_fresh' }
 
@@ -66,7 +66,7 @@ RSpec.describe Apartment::PoolReaper do
     it 'evicts LRU pools when over max' do
       3.times do |i|
         pool_manager.fetch_or_create("tenant_#{i}") { "pool_#{i}" }
-        pool_manager.instance_variable_get(:@timestamps)["tenant_#{i}"] = Time.now - (300 - i * 100)
+        pool_manager.instance_variable_get(:@timestamps)["tenant_#{i}"] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - (300 - i * 100)
       end
 
       described_class.start(
@@ -87,7 +87,7 @@ RSpec.describe Apartment::PoolReaper do
   describe 'protected tenants' do
     it 'never evicts the default tenant' do
       pool_manager.fetch_or_create('public') { 'pool_default' }
-      pool_manager.instance_variable_get(:@timestamps)['public'] = Time.now - 9999
+      pool_manager.instance_variable_get(:@timestamps)['public'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 9999
 
       described_class.start(
         pool_manager: pool_manager,
@@ -132,9 +132,9 @@ RSpec.describe Apartment::PoolReaper do
       bad_callback = ->(_tenant, _pool) { raise 'callback explosion' }
 
       pool_manager.fetch_or_create('tenant_a') { 'pool_a' }
-      pool_manager.instance_variable_get(:@timestamps)['tenant_a'] = Time.now - 10
+      pool_manager.instance_variable_get(:@timestamps)['tenant_a'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
       pool_manager.fetch_or_create('tenant_b') { 'pool_b' }
-      pool_manager.instance_variable_get(:@timestamps)['tenant_b'] = Time.now - 10
+      pool_manager.instance_variable_get(:@timestamps)['tenant_b'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
 
       described_class.start(
         pool_manager: pool_manager,
@@ -160,7 +160,7 @@ RSpec.describe Apartment::PoolReaper do
       ActiveSupport::Notifications.subscribe('evict.apartment') { |event| events << event }
 
       pool_manager.fetch_or_create('stale') { 'pool_stale' }
-      pool_manager.instance_variable_get(:@timestamps)['stale'] = Time.now - 10
+      pool_manager.instance_variable_get(:@timestamps)['stale'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
 
       described_class.start(
         pool_manager: pool_manager,
