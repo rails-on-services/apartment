@@ -6,7 +6,7 @@
 
 **Architecture:** v4 eliminates v3's adapter-per-thread pattern. Instead, database differences are expressed as configuration strategies (how to build a tenant-specific connection config). The `Tenant` module sets `Current.tenant`, and `ConnectionHandling` patches resolve the right pool. Adapters handle lifecycle operations (create/drop schema or database) but not switching — switching is a pool lookup.
 
-**Tech Stack:** Ruby 3.3+, ActiveRecord 7.2+, PostgreSQL 12+, MySQL 5.7+/8.0+, SQLite3, RSpec
+**Tech Stack:** Ruby 3.3+, ActiveRecord 7.2+, PostgreSQL 14+, MySQL 8.4+, SQLite3, RSpec
 
 **Spec:** [`docs/designs/apartment-v4.md`](../../designs/apartment-v4.md)
 
