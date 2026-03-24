@@ -11,7 +11,7 @@ module Apartment
       if block
         ActiveSupport::Notifications.instrument(event_name, payload, &block)
       else
-        ActiveSupport::Notifications.instrument(event_name, payload) { }
+        ActiveSupport::Notifications.instrument(event_name, payload) {}
       end
     end
   end

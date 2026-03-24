@@ -10,7 +10,7 @@ module Apartment
       # for the current switch scope. It is not stacked across nesting levels —
       # after an inner switch completes, previous_tenant resets to nil.
       def switch(tenant)
-        raise ArgumentError, 'Apartment::Tenant.switch requires a block' unless block_given?
+        raise(ArgumentError, 'Apartment::Tenant.switch requires a block') unless block_given?
 
         previous = Current.tenant
         Current.tenant = tenant
@@ -68,7 +68,7 @@ module Apartment
 
       def adapter
         Apartment.adapter or
-          raise ConfigurationError, 'Apartment adapter not configured. Call Apartment.configure first.'
+          raise(ConfigurationError, 'Apartment adapter not configured. Call Apartment.configure first.')
       end
     end
   end

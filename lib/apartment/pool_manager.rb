@@ -11,8 +11,8 @@ module Apartment
 
     # Fetch an existing pool or create one via the block.
     # Timestamp is updated after pool creation to avoid orphaned timestamps if the block raises.
-    def fetch_or_create(tenant_key)
-      pool = @pools.compute_if_absent(tenant_key) { yield }
+    def fetch_or_create(tenant_key, &)
+      pool = @pools.compute_if_absent(tenant_key, &)
       touch(tenant_key)
       pool
     end
@@ -37,6 +37,7 @@ module Apartment
 
     def stats_for(tenant_key)
       return nil unless tracked?(tenant_key)
+
       { last_accessed: @timestamps[tenant_key] }
     end
 
@@ -47,9 +48,9 @@ module Apartment
 
     def lru_tenants(count:)
       @timestamps.each_pair
-                  .sort_by { |_, ts| ts }
-                  .first(count)
-                  .map(&:first)
+        .sort_by { |_, ts| ts }
+        .first(count)
+        .map(&:first)
     end
 
     # Phase 1: basic stats. Full observability (per-tenant breakdown,
@@ -67,7 +68,7 @@ module Apartment
     def clear
       @pools.each_pair do |key, pool|
         pool.disconnect! if pool.respond_to?(:disconnect!)
-      rescue => e
+      rescue StandardError => e
         warn "[Apartment::PoolManager] Failed to disconnect pool '#{key}': #{e.class}: #{e.message}"
       end
       @pools.clear

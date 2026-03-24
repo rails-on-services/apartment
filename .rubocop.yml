@@ -51,6 +51,14 @@ Metrics/ClassLength:
   Exclude:
     - spec/**/*.rb
 
+Rails/TimeZone:
+  Exclude:
+    - lib/apartment/pool_manager.rb
+
+Rails/Delegate:
+  Exclude:
+    - lib/apartment/tenant.rb
+
 Rails/RakeEnvironment:
   Enabled: false
 

@@ -29,24 +29,26 @@ class TestAdapter < Apartment::Adapters::AbstractAdapter
 end
 
 # Minimal Rails stub for environmentify tests.
-module Rails
-  def self.env
-    'test'
+unless defined?(Rails)
+  module Rails
+    def self.env
+      'test'
+    end
   end
-end unless defined?(Rails)
+end
 
 # Minimal ActiveRecord stub for migrate tests.
 unless defined?(ActiveRecord::Base)
   module ActiveRecord
     class Base
       def self.connection_pool
-        raise 'stub: override with allow in tests'
+        raise('stub: override with allow in tests')
       end
     end
   end
 end
 
-RSpec.describe Apartment::Adapters::AbstractAdapter do
+RSpec.describe(Apartment::Adapters::AbstractAdapter) do
   let(:connection_config) { { adapter: 'postgresql', host: 'localhost' } }
   let(:adapter) { TestAdapter.new(connection_config) }
 
@@ -71,30 +73,30 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
 
   describe '#initialize' do
     it 'stores the connection_config' do
-      expect(adapter.connection_config).to eq(connection_config)
+      expect(adapter.connection_config).to(eq(connection_config))
     end
   end
 
   describe '#resolve_connection_config' do
     it 'raises NotImplementedError on the abstract class' do
       abstract = described_class.new(connection_config)
-      expect { abstract.resolve_connection_config('t1') }.to raise_error(NotImplementedError)
+      expect { abstract.resolve_connection_config('t1') }.to(raise_error(NotImplementedError))
     end
 
     it 'returns a config hash in the concrete subclass' do
-      expect(adapter.resolve_connection_config('t1')).to eq(adapter: 'postgresql', database: 't1')
+      expect(adapter.resolve_connection_config('t1')).to(eq(adapter: 'postgresql', database: 't1'))
     end
   end
 
   describe '#create' do
     it 'delegates to create_tenant' do
-      allow(Apartment::Instrumentation).to receive(:instrument)
+      allow(Apartment::Instrumentation).to(receive(:instrument))
       adapter.create('acme')
-      expect(adapter.created_tenants).to eq(['acme'])
+      expect(adapter.created_tenants).to(eq(['acme']))
     end
 
     it 'instruments the create event' do
-      expect(Apartment::Instrumentation).to receive(:instrument).with(:create, tenant: 'acme')
+      expect(Apartment::Instrumentation).to(receive(:instrument).with(:create, tenant: 'acme'))
       adapter.create('acme')
     end
 
@@ -104,10 +106,10 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
       TestAdapter.set_callback(:create, :before) { callback_log << :before }
       TestAdapter.set_callback(:create, :after) { callback_log << :after }
 
-      allow(Apartment::Instrumentation).to receive(:instrument)
+      allow(Apartment::Instrumentation).to(receive(:instrument))
       adapter.create('acme')
 
-      expect(callback_log).to eq(%i[before after])
+      expect(callback_log).to(eq(%i[before after]))
     ensure
       TestAdapter.reset_callbacks(:create)
     end
@@ -117,38 +119,38 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
     let(:pool_manager) { Apartment.pool_manager }
 
     it 'delegates to drop_tenant' do
-      allow(Apartment::Instrumentation).to receive(:instrument)
+      allow(Apartment::Instrumentation).to(receive(:instrument))
       adapter.drop('acme')
-      expect(adapter.dropped_tenants).to eq(['acme'])
+      expect(adapter.dropped_tenants).to(eq(['acme']))
     end
 
     it 'removes the pool from PoolManager' do
-      allow(Apartment::Instrumentation).to receive(:instrument)
-      expect(pool_manager).to receive(:remove).with('acme').and_return(nil)
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      expect(pool_manager).to(receive(:remove).with('acme').and_return(nil))
       adapter.drop('acme')
     end
 
     it 'disconnects the pool if it responds to disconnect!' do
       mock_pool = double('Pool', disconnect!: true)
-      allow(pool_manager).to receive(:remove).and_return(mock_pool)
-      allow(Apartment::Instrumentation).to receive(:instrument)
+      allow(pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
 
-      expect(mock_pool).to receive(:disconnect!)
+      expect(mock_pool).to(receive(:disconnect!))
       adapter.drop('acme')
     end
 
     it 'does not call disconnect! if pool does not respond to it' do
       mock_pool = double('Pool')
-      allow(pool_manager).to receive(:remove).and_return(mock_pool)
-      allow(Apartment::Instrumentation).to receive(:instrument)
+      allow(pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
 
       # Should not raise
       adapter.drop('acme')
     end
 
     it 'instruments the drop event' do
-      allow(pool_manager).to receive(:remove).and_return(nil)
-      expect(Apartment::Instrumentation).to receive(:instrument).with(:drop, tenant: 'acme')
+      allow(pool_manager).to(receive(:remove).and_return(nil))
+      expect(Apartment::Instrumentation).to(receive(:instrument).with(:drop, tenant: 'acme'))
       adapter.drop('acme')
     end
   end
@@ -159,19 +161,19 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
       migration_context = double('MigrationContext')
       connection_pool = double('ConnectionPool', migration_context: migration_context)
 
-      allow(ActiveRecord::Base).to receive(:connection_pool).and_return(connection_pool)
-      allow(migration_context).to receive(:migrate) { tenant_during_migrate = Apartment::Current.tenant }
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(connection_pool))
+      allow(migration_context).to(receive(:migrate) { tenant_during_migrate = Apartment::Current.tenant })
 
       adapter.migrate('acme')
-      expect(tenant_during_migrate).to eq('acme')
+      expect(tenant_during_migrate).to(eq('acme'))
     end
 
     it 'switches tenant and runs migrations' do
       migration_context = double('MigrationContext')
       connection_pool = double('ConnectionPool', migration_context: migration_context)
 
-      allow(ActiveRecord::Base).to receive(:connection_pool).and_return(connection_pool)
-      expect(migration_context).to receive(:migrate).with(nil)
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(connection_pool))
+      expect(migration_context).to(receive(:migrate).with(nil))
 
       adapter.migrate('acme')
     end
@@ -180,8 +182,8 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
       migration_context = double('MigrationContext')
       connection_pool = double('ConnectionPool', migration_context: migration_context)
 
-      allow(ActiveRecord::Base).to receive(:connection_pool).and_return(connection_pool)
-      expect(migration_context).to receive(:migrate).with(20_260_101_000_000)
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(connection_pool))
+      expect(migration_context).to(receive(:migrate).with(20_260_101_000_000))
 
       adapter.migrate('acme', 20_260_101_000_000)
     end
@@ -189,11 +191,11 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
     it 'restores tenant context after migration' do
       migration_context = double('MigrationContext', migrate: true)
       connection_pool = double('ConnectionPool', migration_context: migration_context)
-      allow(ActiveRecord::Base).to receive(:connection_pool).and_return(connection_pool)
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(connection_pool))
 
       Apartment::Current.tenant = 'original'
       adapter.migrate('acme')
-      expect(Apartment::Current.tenant).to eq('original')
+      expect(Apartment::Current.tenant).to(eq('original'))
     end
   end
 
@@ -201,32 +203,32 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
     it 'sets Current.tenant during the seed block' do
       tenant_during_seed = nil
       reconfigure(seed_data_file: '/tmp/seeds.rb')
-      allow(File).to receive(:exist?).with('/tmp/seeds.rb').and_return(true)
-      allow(adapter).to receive(:load) { tenant_during_seed = Apartment::Current.tenant }
+      allow(File).to(receive(:exist?).with('/tmp/seeds.rb').and_return(true))
+      allow(adapter).to(receive(:load) { tenant_during_seed = Apartment::Current.tenant })
 
       adapter.seed('acme')
-      expect(tenant_during_seed).to eq('acme')
+      expect(tenant_during_seed).to(eq('acme'))
     end
 
     it 'switches tenant and loads the seed file' do
       reconfigure(seed_data_file: '/tmp/seeds.rb')
-      allow(File).to receive(:exist?).with('/tmp/seeds.rb').and_return(true)
-      expect(adapter).to receive(:load).with('/tmp/seeds.rb')
+      allow(File).to(receive(:exist?).with('/tmp/seeds.rb').and_return(true))
+      expect(adapter).to(receive(:load).with('/tmp/seeds.rb'))
 
       adapter.seed('acme')
     end
 
     it 'does nothing when seed_data_file is nil' do
       # Default config has seed_data_file = nil
-      expect(adapter).not_to receive(:load)
+      expect(adapter).not_to(receive(:load))
 
       adapter.seed('acme')
     end
 
     it 'does nothing when seed file does not exist' do
       reconfigure(seed_data_file: '/tmp/missing.rb')
-      allow(File).to receive(:exist?).with('/tmp/missing.rb').and_return(false)
-      expect(adapter).not_to receive(:load)
+      allow(File).to(receive(:exist?).with('/tmp/missing.rb').and_return(false))
+      expect(adapter).not_to(receive(:load))
 
       adapter.seed('acme')
     end
@@ -240,8 +242,8 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
       reconfigure(excluded_models: ['GlobalUser'])
 
       expected_config = { adapter: 'postgresql', database: 'public' }
-      expect(model_class).to receive(:establish_connection) do |arg|
-        expect(arg).to eq(expected_config)
+      expect(model_class).to(receive(:establish_connection)) do |arg|
+        expect(arg).to(eq(expected_config))
       end
 
       adapter.process_excluded_models
@@ -255,8 +257,8 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
 
       reconfigure(excluded_models: %w[GlobalUser GlobalCompany])
 
-      expect(user_class).to receive(:establish_connection)
-      expect(company_class).to receive(:establish_connection)
+      expect(user_class).to(receive(:establish_connection))
+      expect(company_class).to(receive(:establish_connection))
 
       adapter.process_excluded_models
     end
@@ -269,51 +271,51 @@ RSpec.describe Apartment::Adapters::AbstractAdapter do
 
     it 'raises NameError when excluded model class does not exist' do
       reconfigure(excluded_models: ['NonExistentModel'])
-      expect { adapter.process_excluded_models }.to raise_error(NameError, /NonExistentModel/)
+      expect { adapter.process_excluded_models }.to(raise_error(NameError, /NonExistentModel/))
     end
   end
 
   describe '#environmentify' do
     it 'prepends the environment when strategy is :prepend' do
       reconfigure(environmentify_strategy: :prepend)
-      expect(adapter.environmentify('acme')).to eq('test_acme')
+      expect(adapter.environmentify('acme')).to(eq('test_acme'))
     end
 
     it 'appends the environment when strategy is :append' do
       reconfigure(environmentify_strategy: :append)
-      expect(adapter.environmentify('acme')).to eq('acme_test')
+      expect(adapter.environmentify('acme')).to(eq('acme_test'))
     end
 
     it 'returns tenant as string when strategy is nil' do
       # Default config has environmentify_strategy = nil
-      expect(adapter.environmentify('acme')).to eq('acme')
+      expect(adapter.environmentify('acme')).to(eq('acme'))
     end
 
     it 'converts symbols to string when strategy is nil' do
-      expect(adapter.environmentify(:acme)).to eq('acme')
+      expect(adapter.environmentify(:acme)).to(eq('acme'))
     end
 
     it 'calls the strategy when it is callable' do
       reconfigure(environmentify_strategy: ->(tenant) { "custom_#{tenant}" })
-      expect(adapter.environmentify('acme')).to eq('custom_acme')
+      expect(adapter.environmentify('acme')).to(eq('custom_acme'))
     end
   end
 
   describe '#default_tenant' do
     it 'delegates to Apartment.config.default_tenant' do
-      expect(adapter.default_tenant).to eq('public')
+      expect(adapter.default_tenant).to(eq('public'))
     end
   end
 
   describe 'protected abstract methods' do
     it 'create_tenant raises NotImplementedError on the abstract class' do
       abstract = described_class.new(connection_config)
-      expect { abstract.send(:create_tenant, 't1') }.to raise_error(NotImplementedError)
+      expect { abstract.send(:create_tenant, 't1') }.to(raise_error(NotImplementedError))
     end
 
     it 'drop_tenant raises NotImplementedError on the abstract class' do
       abstract = described_class.new(connection_config)
-      expect { abstract.send(:drop_tenant, 't1') }.to raise_error(NotImplementedError)
+      expect { abstract.send(:drop_tenant, 't1') }.to(raise_error(NotImplementedError))
     end
   end
 end

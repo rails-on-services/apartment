@@ -7,6 +7,7 @@ module Apartment
   module Adapters
     class AbstractAdapter
       include ActiveSupport::Callbacks
+
       define_callbacks :create, :switch
 
       # The raw database connection configuration hash (from ActiveRecord).
@@ -20,12 +21,12 @@ module Apartment
       # Resolve a tenant-specific connection config hash.
       # Subclasses override to set strategy-specific keys.
       def resolve_connection_config(tenant)
-        raise NotImplementedError
+        raise(NotImplementedError)
       end
 
       # Create a new tenant (schema or database).
       def create(tenant)
-        run_callbacks :create do
+        run_callbacks(:create) do
           create_tenant(tenant)
           Instrumentation.instrument(:create, tenant: tenant)
         end
@@ -91,11 +92,11 @@ module Apartment
       protected
 
       def create_tenant(tenant)
-        raise NotImplementedError
+        raise(NotImplementedError)
       end
 
       def drop_tenant(tenant)
-        raise NotImplementedError
+        raise(NotImplementedError)
       end
     end
   end

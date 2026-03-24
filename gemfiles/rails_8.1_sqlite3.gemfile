@@ -7,4 +7,13 @@ gem "rspec", "~> 3.10"
 gem "rails", "~> 8.1.0"
 gem "sqlite3", "~> 2.8"
 
+group :development do
+  gem "rubocop", require: false
+  gem "rubocop-performance", require: false
+  gem "rubocop-rails", require: false
+  gem "rubocop-rake", require: false
+  gem "rubocop-rspec", require: false
+  gem "rubocop-thread_safety", require: false
+end
+
 gemspec path: "../"
