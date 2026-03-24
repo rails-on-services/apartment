@@ -22,7 +22,7 @@ end
 
 appraise 'rails-7.2-trilogy' do
   gem 'rails', '~> 7.2.0'
-  gem 'trilogy', '~> 2.9'
+  gem 'trilogy', '>= 2.9'
 end
 
 appraise 'rails-7.2-sqlite3' do
@@ -44,7 +44,7 @@ end
 
 appraise 'rails-8.0-trilogy' do
   gem 'rails', '~> 8.0.0'
-  gem 'trilogy', '~> 2.9'
+  gem 'trilogy', '>= 2.9'
 end
 
 appraise 'rails-8.0-sqlite3' do
@@ -66,7 +66,7 @@ end
 
 appraise 'rails-8.1-trilogy' do
   gem 'rails', '~> 8.1.0'
-  gem 'trilogy', '~> 2.9'
+  gem 'trilogy', '>= 2.9'
 end
 
 appraise 'rails-8.1-sqlite3' do
