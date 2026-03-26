@@ -77,7 +77,7 @@ v4 unit tests are in `spec/unit/` and require no database. See `spec/CLAUDE.md` 
 
 **Major changes**: Pool-per-tenant (vs thread-local switching), fiber-safe via `CurrentAttributes`, immutable connection config per pool, `Config#freeze!` after validation
 
-**Why v4**: Eliminates thread-local tenant leakage (e.g., ActionCable shared thread pool bugs), true fiber safety, PgBouncer/RDS Proxy compatibility, simpler mental model
+**Why v4**: Fixes thread-local tenant leakage (e.g., ActionCable shared thread pool bugs). Adds fiber safety, PgBouncer/RDS Proxy transaction mode compatibility, and a simpler mental model.
 
 **Status**: Phase 1 (foundation) and Phase 2.1 (Tenant API, AbstractAdapter, adapter factory) merged. See `docs/plans/apartment-v4/` for full plan and deferred items.
 
