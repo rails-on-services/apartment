@@ -1,0 +1,162 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+require_relative '../../../lib/apartment/adapters/postgresql_schema_adapter'
+
+# Minimal ActiveRecord stubs for SQL execution tests.
+unless defined?(ActiveRecord::Base)
+  module ActiveRecord
+    class Base
+      def self.connection
+        raise('stub: override with allow in tests')
+      end
+    end
+  end
+end
+
+RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
+  let(:connection_config) { { adapter: 'postgresql', host: 'localhost', database: 'myapp' } }
+  let(:adapter) { described_class.new(connection_config) }
+
+  before do
+    Apartment.configure do |c|
+      c.tenant_strategy = :schema
+      c.tenants_provider = -> { %w[t1 t2] }
+      c.default_tenant = 'public'
+    end
+  end
+
+  # Helper: reconfigure Apartment with overrides (Config is frozen after configure,
+  # so we must reconfigure rather than stub individual accessors).
+  def reconfigure(**overrides, &block)
+    Apartment.configure do |c|
+      c.tenant_strategy = :schema
+      c.tenants_provider = -> { %w[t1 t2] }
+      c.default_tenant = 'public'
+      overrides.each { |key, val| c.send(:"#{key}=", val) }
+      block&.call(c)
+    end
+  end
+
+  describe 'inheritance' do
+    it 'is a subclass of AbstractAdapter' do
+      expect(described_class).to(be < Apartment::Adapters::AbstractAdapter)
+    end
+  end
+
+  describe '#resolve_connection_config' do
+    it 'returns config with schema_search_path set to tenant name' do
+      result = adapter.resolve_connection_config('acme')
+
+      expect(result['schema_search_path']).to(eq('acme'))
+    end
+
+    it 'stringifies all config keys' do
+      result = adapter.resolve_connection_config('acme')
+
+      expect(result.keys).to(all(be_a(String)))
+      expect(result['adapter']).to(eq('postgresql'))
+      expect(result['host']).to(eq('localhost'))
+      expect(result['database']).to(eq('myapp'))
+    end
+
+    it 'includes persistent_schemas when postgres_config is set' do
+      reconfigure do |c|
+        c.configure_postgres do |pg|
+          pg.persistent_schemas = %w[shared extensions]
+        end
+      end
+
+      result = adapter.resolve_connection_config('acme')
+
+      expect(result['schema_search_path']).to(eq('acme,shared,extensions'))
+    end
+
+    it 'works when no postgres_config is set (nil persistent schemas)' do
+      # Default config has postgres_config = nil
+      expect(Apartment.config.postgres_config).to(be_nil)
+
+      result = adapter.resolve_connection_config('acme')
+
+      expect(result['schema_search_path']).to(eq('acme'))
+    end
+
+    it 'works when postgres_config exists but persistent_schemas is empty' do
+      reconfigure do |c|
+        c.configure_postgres do |pg|
+          pg.persistent_schemas = []
+        end
+      end
+
+      result = adapter.resolve_connection_config('acme')
+
+      expect(result['schema_search_path']).to(eq('acme'))
+    end
+
+    it 'preserves all original connection config keys' do
+      config = { adapter: 'postgresql', host: 'db.example.com', database: 'app', port: 5432, pool: 10 }
+      local_adapter = described_class.new(config)
+
+      result = local_adapter.resolve_connection_config('tenant1')
+
+      expect(result['port']).to(eq(5432))
+      expect(result['pool']).to(eq(10))
+    end
+
+    it 'does not mutate the original connection_config' do
+      adapter.resolve_connection_config('acme')
+
+      expect(adapter.connection_config).to(eq(connection_config))
+      expect(adapter.connection_config).not_to(have_key('schema_search_path'))
+      expect(adapter.connection_config).not_to(have_key(:schema_search_path))
+    end
+  end
+
+  describe '#create (via create_tenant)' do
+    let(:connection) { double('Connection') }
+
+    before do
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+    end
+
+    it 'executes CREATE SCHEMA with quoted tenant name' do
+      allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
+      expect(connection).to(receive(:execute).with('CREATE SCHEMA "acme"'))
+
+      adapter.create('acme')
+    end
+
+    it 'quotes tenant names that need escaping' do
+      allow(connection).to(receive(:quote_table_name).with('my-tenant').and_return('"my-tenant"'))
+      expect(connection).to(receive(:execute).with('CREATE SCHEMA "my-tenant"'))
+
+      adapter.create('my-tenant')
+    end
+  end
+
+  describe '#drop (via drop_tenant)' do
+    let(:connection) { double('Connection') }
+    let(:pool_manager) { Apartment.pool_manager }
+
+    before do
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(pool_manager).to(receive(:remove).and_return(nil))
+    end
+
+    it 'executes DROP SCHEMA CASCADE with quoted tenant name' do
+      allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
+      expect(connection).to(receive(:execute).with('DROP SCHEMA "acme" CASCADE'))
+
+      adapter.drop('acme')
+    end
+
+    it 'quotes tenant names that need escaping' do
+      allow(connection).to(receive(:quote_table_name).with('my-tenant').and_return('"my-tenant"'))
+      expect(connection).to(receive(:execute).with('DROP SCHEMA "my-tenant" CASCADE'))
+
+      adapter.drop('my-tenant')
+    end
+  end
+end

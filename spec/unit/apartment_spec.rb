@@ -105,8 +105,8 @@ RSpec.describe(Apartment) do
       end
 
       it 'requires postgresql_schema_adapter for :schema strategy' do
-        # The file doesn't exist yet, so require_relative will raise LoadError
-        expect { described_class.send(:build_adapter) }.to(raise_error(LoadError, /postgresql_schema_adapter/))
+        adapter = described_class.send(:build_adapter)
+        expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLSchemaAdapter))
       end
 
       context 'with :database_name strategy' do
