@@ -24,7 +24,7 @@ module Apartment
       private
 
       def database_file(tenant)
-        db_dir = File.dirname(base_config['database'] || "db/#{tenant}.sqlite3")
+        db_dir = base_config['database'] ? File.dirname(base_config['database']) : 'db'
         File.join(db_dir, "#{environmentify(tenant)}.sqlite3")
       end
     end
