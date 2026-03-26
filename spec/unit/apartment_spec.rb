@@ -145,10 +145,11 @@ RSpec.describe(Apartment) do
           expect(adapter).to(be_a(Apartment::Adapters::TrilogyAdapter))
         end
 
-        it 'attempts to load sqlite3_adapter for sqlite3' do
-          allow(db_config).to(receive(:adapter).and_return('sqlite3'))
-          # V3 file exists but v4 constant (SQLite3Adapter) doesn't — raises NameError
-          expect { described_class.send(:build_adapter) }.to(raise_error(NameError, /SQLite3Adapter/))
+        it 'instantiates SQLite3Adapter for sqlite3' do
+          allow(db_config).to(receive_messages(adapter: 'sqlite3', configuration_hash: { adapter: 'sqlite3' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::SQLite3Adapter))
         end
 
         it 'raises AdapterNotFound for unknown database adapter' do
