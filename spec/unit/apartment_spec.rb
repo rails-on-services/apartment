@@ -117,14 +117,18 @@ RSpec.describe(Apartment) do
           end
         end
 
-        it 'requires postgresql_database_adapter for postgresql' do
-          allow(db_config).to(receive(:adapter).and_return('postgresql'))
-          expect { described_class.send(:build_adapter) }.to(raise_error(LoadError, /postgresql_database_adapter/))
+        it 'instantiates PostgreSQLDatabaseAdapter for postgresql' do
+          allow(db_config).to(receive_messages(adapter: 'postgresql', configuration_hash: { adapter: 'postgresql' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLDatabaseAdapter))
         end
 
-        it 'requires postgresql_database_adapter for postgis' do
-          allow(db_config).to(receive(:adapter).and_return('postgis'))
-          expect { described_class.send(:build_adapter) }.to(raise_error(LoadError, /postgresql_database_adapter/))
+        it 'instantiates PostgreSQLDatabaseAdapter for postgis' do
+          allow(db_config).to(receive_messages(adapter: 'postgis', configuration_hash: { adapter: 'postgis' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLDatabaseAdapter))
         end
 
         it 'attempts to load mysql2_adapter for mysql2' do
