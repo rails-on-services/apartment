@@ -7,8 +7,10 @@ module Apartment
     # v4 PostgreSQL adapter using schema-based tenant isolation.
     #
     # Resolves tenant-specific connection configs by setting `schema_search_path`
-    # to the tenant schema plus any persistent schemas from PostgreSQLConfig.
-    # Lifecycle operations (create/drop) execute DDL against the default connection.
+    # to the raw tenant name (not environmentified — schemas are named directly,
+    # unlike database-per-tenant adapters) plus any persistent schemas from
+    # Apartment.config.postgres_config. Lifecycle operations (create/drop)
+    # execute DDL against the default connection.
     class PostgreSQLSchemaAdapter < AbstractAdapter
       def resolve_connection_config(tenant)
         persistent = Apartment.config.postgres_config&.persistent_schemas || []
@@ -26,7 +28,7 @@ module Apartment
 
       def drop_tenant(tenant)
         conn = ActiveRecord::Base.connection
-        conn.execute("DROP SCHEMA #{conn.quote_table_name(tenant)} CASCADE")
+        conn.execute("DROP SCHEMA IF EXISTS #{conn.quote_table_name(tenant)} CASCADE")
       end
     end
   end

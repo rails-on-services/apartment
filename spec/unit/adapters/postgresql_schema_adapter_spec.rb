@@ -127,6 +127,16 @@ RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
       adapter.create('acme')
     end
 
+    it 'uses raw tenant name, not environmentified (schemas are named directly)' do
+      reconfigure(environmentify_strategy: :prepend)
+      # Schema names are NOT environmentified — unlike database-per-tenant adapters.
+      # The schema lives inside an already-environment-specific database.
+      allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
+      expect(connection).to(receive(:execute).with('CREATE SCHEMA "acme"'))
+
+      adapter.create('acme')
+    end
+
     it 'quotes tenant names that need escaping' do
       allow(connection).to(receive(:quote_table_name).with('my-tenant').and_return('"my-tenant"'))
       expect(connection).to(receive(:execute).with('CREATE SCHEMA "my-tenant"'))
@@ -145,18 +155,26 @@ RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
       allow(pool_manager).to(receive(:remove).and_return(nil))
     end
 
-    it 'executes DROP SCHEMA CASCADE with quoted tenant name' do
+    it 'executes DROP SCHEMA IF EXISTS CASCADE with quoted tenant name' do
       allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
-      expect(connection).to(receive(:execute).with('DROP SCHEMA "acme" CASCADE'))
+      expect(connection).to(receive(:execute).with('DROP SCHEMA IF EXISTS "acme" CASCADE'))
 
       adapter.drop('acme')
     end
 
     it 'quotes tenant names that need escaping' do
       allow(connection).to(receive(:quote_table_name).with('my-tenant').and_return('"my-tenant"'))
-      expect(connection).to(receive(:execute).with('DROP SCHEMA "my-tenant" CASCADE'))
+      expect(connection).to(receive(:execute).with('DROP SCHEMA IF EXISTS "my-tenant" CASCADE'))
 
       adapter.drop('my-tenant')
+    end
+
+    it 'uses raw tenant name, not environmentified' do
+      reconfigure(environmentify_strategy: :prepend)
+      allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
+      expect(connection).to(receive(:execute).with('DROP SCHEMA IF EXISTS "acme" CASCADE'))
+
+      adapter.drop('acme')
     end
   end
 end

@@ -5,6 +5,12 @@ require_relative 'abstract_adapter'
 
 module Apartment
   module Adapters
+    # v4 SQLite3 adapter using file-per-tenant isolation.
+    #
+    # Resolves tenant-specific connection configs by constructing a database
+    # file path from the base config's directory and the environmentified
+    # tenant name. SQLite creates the file on first connection, so create_tenant
+    # only ensures the directory exists.
     class SQLite3Adapter < AbstractAdapter
       def resolve_connection_config(tenant)
         base_config.merge('database' => database_file(tenant))

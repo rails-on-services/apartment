@@ -4,6 +4,11 @@ require_relative 'abstract_adapter'
 
 module Apartment
   module Adapters
+    # v4 MySQL adapter using database-per-tenant isolation (mysql2 driver).
+    #
+    # Resolves tenant-specific connection configs by setting the `database` key
+    # to the environmentified tenant name. Lifecycle operations (create/drop)
+    # execute DDL against the default connection.
     class MySQL2Adapter < AbstractAdapter
       def resolve_connection_config(tenant)
         base_config.merge('database' => environmentify(tenant))
