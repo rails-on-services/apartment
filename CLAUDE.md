@@ -65,7 +65,7 @@ See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strat
 ## Testing
 
 ```bash
-bundle exec rspec spec/unit/                    # v4 unit tests (161 specs)
+bundle exec rspec spec/unit/                    # v4 unit tests (231 specs)
 bundle exec appraisal rspec spec/unit/          # across all Rails versions
 ```
 
@@ -79,7 +79,7 @@ v4 unit tests are in `spec/unit/` and require no database. See `spec/CLAUDE.md` 
 
 **Why v4**: Fixes thread-local tenant leakage (e.g., ActionCable shared thread pool bugs). Adds fiber safety, PgBouncer/RDS Proxy transaction mode compatibility, and a simpler mental model.
 
-**Status**: Phase 1 (foundation) and Phase 2.1 (Tenant API, AbstractAdapter, adapter factory) merged. See `docs/plans/apartment-v4/` for full plan and deferred items.
+**Status**: Phase 1 (foundation), Phase 2.1 (Tenant API, AbstractAdapter, adapter factory), and Phase 2.2 (concrete adapters) merged. See `docs/plans/apartment-v4/` for full plan and deferred items.
 
 ## Gotchas
 

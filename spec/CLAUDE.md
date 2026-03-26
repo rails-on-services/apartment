@@ -1,6 +1,6 @@
 # spec/ - Apartment Test Suite
 
-> **Note**: This file primarily describes the v3 test suite. On the `man/v4-adapters` branch, v4 unit tests live in `spec/unit/` (161 specs covering Config, Current, PoolManager, PoolReaper, Tenant, AbstractAdapter, adapter factory). Run with `bundle exec rspec spec/unit/`. v3 specs in other directories remain for v3 code that hasn't been replaced yet.
+> **Note**: This file primarily describes the v3 test suite. v4 unit tests live in `spec/unit/` (231 specs covering Config, Current, PoolManager, PoolReaper, Tenant, AbstractAdapter, adapter factory, and all concrete adapters: PostgreSQLSchemaAdapter, PostgreSQLDatabaseAdapter, MySQL2Adapter, TrilogyAdapter, SQLite3Adapter). Run with `bundle exec rspec spec/unit/`. v3 specs in other directories remain for v3 code that hasn't been replaced yet.
 
 This directory contains the test suite for Apartment, covering adapters, elevators, configuration, and integration scenarios.
 
