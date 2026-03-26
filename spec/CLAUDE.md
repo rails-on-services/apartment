@@ -1,6 +1,8 @@
 # spec/ - Apartment Test Suite
 
-This directory contains the test suite for Apartment v3, covering adapters, elevators, configuration, and integration scenarios.
+> **Note**: This file primarily describes the v3 test suite. On the `man/v4-adapters` branch, v4 unit tests live in `spec/unit/` (161 specs covering Config, Current, PoolManager, PoolReaper, Tenant, AbstractAdapter, adapter factory). Run with `bundle exec rspec spec/unit/`. v3 specs in other directories remain for v3 code that hasn't been replaced yet.
+
+This directory contains the test suite for Apartment, covering adapters, elevators, configuration, and integration scenarios.
 
 ## Directory Structure
 

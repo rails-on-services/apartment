@@ -25,153 +25,51 @@ Do NOT use `docs/superpowers/specs/` or `docs/superpowers/plans/` — those are 
 4. **lib/apartment/CLAUDE.md** - Implementation file guide
 5. **spec/CLAUDE.md** - Test organization and patterns
 
+## Commands
+
+```bash
+# Unit tests (no database required)
+bundle exec rspec spec/unit/
+
+# Unit tests across Rails versions
+bundle exec appraisal install                              # first time only
+bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/   # single version
+bundle exec appraisal rspec spec/unit/                     # all versions
+
+# Lint
+bundle exec rubocop
+
+# Build gem
+gem build ros-apartment.gemspec
+```
+
+**CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1 × PG 16+18, MySQL 8.4, SQLite3. See `.github/workflows/ci.yml`.
+
 ## Core Concepts
 
-### Multi-Tenancy via Database Isolation
+**Multi-tenancy via database isolation**: One app, many customers, data fully separated.
+- **PostgreSQL (schemas)**: Namespaces in single DB. Fast (<1ms switch), scales to 100+ tenants.
+- **MySQL (databases)**: Separate DB per tenant. Complete isolation, slower switching.
+- **Elevators**: Rack middleware extracts tenant from request. Must be before session middleware.
+- **Excluded models**: Shared tables (User, Company) pinned to default tenant. Use `has_many :through`, not HABTM.
 
-**Problem**: Single application needs to serve multiple customers with data completely separated.
+See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strategy trade-offs, `docs/elevators.md` for middleware rationale.
 
-**v3 Solution**: Thread-local tenant switching. Each request/thread tracks which tenant it's serving.
+## Key Patterns
 
-**Key limitation**: Not fiber-safe (fibers share thread-local storage).
+- **Block-based switching**: Always prefer `switch(tenant) { ... }` over `switch!`. Ensure block guarantees cleanup on exceptions.
+- **Adapter pattern**: Abstract base class with database-specific subclasses. Unified API hides DB differences.
+- **Callbacks**: `ActiveSupport::Callbacks` on `:create` and `:switch` for logging/notification hooks.
+- **Dynamic tenant discovery**: `tenants_provider` is a callable (proc/lambda) that queries the database at runtime.
 
-### Two Main Strategies
+## Testing
 
-**PostgreSQL (schemas)**: Multiple namespaces in single database. Fast, scales to 100+ tenants.
+```bash
+bundle exec rspec spec/unit/                    # v4 unit tests (161 specs)
+bundle exec appraisal rspec spec/unit/          # across all Rails versions
+```
 
-**MySQL (databases)**: Separate database per tenant. Complete isolation, slower switching.
-
-**See**: `docs/adapters.md` for trade-offs.
-
-### Automatic Tenant Detection
-
-**Middleware ("Elevators")**: Rack middleware extracts tenant from request (subdomain, domain, header).
-
-**Critical**: Must position before session middleware to avoid data leakage.
-
-**See**: `docs/elevators.md` for design decisions.
-
-## Key Architecture Decisions
-
-### 1. Thread-Local Adapter Storage
-
-**Why**: Concurrent requests need isolated tenant contexts without global locks.
-
-**Implementation**: `Thread.current[:apartment_adapter]`
-
-**Trade-off**: Not fiber-safe, but works for 99% of Rails deployments.
-
-**See**: `Apartment::Tenant.adapter` method in `tenant.rb`, `docs/architecture.md`
-
-### 2. Block-Based Tenant Switching
-
-**Why**: Automatic cleanup even on exceptions prevents tenant context leakage.
-
-**Pattern**: `Apartment::Tenant.switch(tenant) { ... }` with ensure block
-
-**Alternative rejected**: Manual switch/reset - too error-prone.
-
-**See**: `AbstractAdapter#switch` method in `adapters/abstract_adapter.rb`
-
-### 3. Excluded Models
-
-**Why**: Some models (User, Company) exist globally across all tenants.
-
-**Implementation**: Separate connections that bypass tenant switching.
-
-**Limitation**: Can't use `has_and_belongs_to_many` - must use `has_many :through`.
-
-**See**: `AbstractAdapter#process_excluded_models` method in `adapters/abstract_adapter.rb`
-
-### 4. Adapter Pattern
-
-**Why**: PostgreSQL uses schemas, MySQL uses databases - fundamentally different.
-
-**Implementation**: Abstract base class with database-specific subclasses.
-
-**Benefit**: Unified API hides database differences.
-
-**See**: `lib/apartment/adapters/`, `docs/adapters.md`
-
-### 5. Callback System
-
-**Why**: Users need logging/notification hooks without modifying gem code.
-
-**Implementation**: ActiveSupport::Callbacks on `:create` and `:switch`.
-
-**See**: Callback definitions in `AbstractAdapter` class in `adapters/abstract_adapter.rb`
-
-## File Organization
-
-**Core logic**: `lib/apartment.rb` (configuration), `lib/apartment/tenant.rb` (public API)
-
-**Adapters**: `lib/apartment/adapters/*.rb` - Database-specific implementations
-
-**Elevators**: `lib/apartment/elevators/*.rb` - Rack middleware for auto-switching
-
-**Tests**: `spec/` - Adapter tests, elevator tests, integration tests
-
-**See folder CLAUDE.md files for details on each directory.**
-
-## Configuration Philosophy
-
-**Dynamic tenant discovery**: `tenant_names` can be callable (proc/lambda) that queries database. Why? Tenants change at runtime.
-
-**Fail-safe boot**: Rescue database errors during config loading. Why? App should start even if tenant table doesn't exist yet (pending migrations).
-
-**Environment isolation**: Optional `prepend_environment`/`append_environment` to prevent cross-environment tenant name collisions.
-
-**See**: `Apartment.extract_tenant_config` method in `lib/apartment.rb`
-
-## Common Pitfalls
-
-**Elevator positioning**: Must be before session/auth middleware. Otherwise session data leaks across tenants.
-
-**Not using blocks**: `switch!` without block requires manual cleanup. Easy to forget. Always prefer `switch` with block.
-
-**HABTM with excluded models**: Doesn't work. Must use `has_many :through` instead.
-
-**Assuming fiber safety**: v3 uses thread-local storage. Not safe for fiber-based async frameworks.
-
-**See**: `docs/architecture.md` for detailed analysis
-
-## Performance Characteristics
-
-**PostgreSQL schemas**:
-- Switch: <1ms
-- Scalability: 100+ tenants
-- Memory: Constant
-
-**MySQL databases**:
-- Switch: 10-50ms
-- Scalability: 10-50 tenants
-- Memory: Linear with active tenants
-
-**See**: `docs/adapters.md` for benchmarks and trade-offs
-
-## Testing the Gem
-
-**Spec organization**: `spec/adapters/` for database tests, `spec/unit/elevators/` for middleware tests
-
-**Database selection**: `DB=postgresql rspec` or `DB=mysql` or `DB=sqlite3`
-
-**Key test pattern**: Create test tenant, switch to it, verify isolation, cleanup
-
-**See**: `spec/CLAUDE.md` for testing patterns
-
-## Debugging Techniques
-
-**Check current tenant**: `Apartment::Tenant.current`
-
-**Inspect adapter**: `Apartment::Tenant.adapter.class`
-
-**List tenants**: `Apartment.tenant_names`
-
-**Enable logging**: `config.active_record_log = true`
-
-**PostgreSQL search path**: `SHOW search_path` in SQL console
-
-**See**: Inline code comments for context-specific debugging
+v4 unit tests are in `spec/unit/` and require no database. See `spec/CLAUDE.md` for test organization.
 
 ## v4 Rewrite
 
