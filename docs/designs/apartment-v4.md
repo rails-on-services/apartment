@@ -48,8 +48,8 @@ Apartment v4 is a ground-up rewrite of the `ros-apartment` gem, replacing v3's t
 | Ruby | 3.3+ | 3.2 EOL April 2026 |
 | Rails | 7.2+ | Aligns with Rails support policy; `migration_context` on `connection_pool` (not `connection`); no legacy connection handling shims |
 | Sidekiq | No constraint | Auto-detected at boot; works on 7+ and 8+ via `CurrentAttributes` |
-| PostgreSQL | 12+ | Schema-based tenancy baseline |
-| MySQL | 5.7+ / 8.0+ | Database-per-tenant baseline |
+| PostgreSQL | 14+ | 13 and below EOL; schema-based tenancy baseline |
+| MySQL | 8.4+ | 8.0 EOL April 2026; 8.4 LTS supported through 2032 |
 
 ## Architecture
 

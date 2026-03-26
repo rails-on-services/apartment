@@ -1,5 +1,7 @@
 # lib/apartment/adapters/ - Database Adapter Implementations
 
+> **Note**: This file describes the v3 adapter architecture. On the `man/v4-adapters` branch, `abstract_adapter.rb` has been replaced with the v4 version (lifecycle only, no switching — switching is handled by `CurrentAttributes`). JDBC and PostGIS adapters are dropped in v4. Concrete v4 adapters (PostgreSQLSchemaAdapter, MySQL2Adapter, etc.) will be added in Phase 2.2. See `docs/designs/apartment-v4.md` for v4 architecture.
+
 This directory contains database-specific implementations of tenant isolation strategies.
 
 ## Purpose

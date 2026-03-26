@@ -1,6 +1,8 @@
 # lib/apartment/ - Core Implementation Directory
 
-This directory contains the core implementation of Apartment v3's multi-tenancy system.
+> **Note**: This file describes the v3 implementation. On the `man/v4-adapters` branch, `tenant.rb` and `adapters/abstract_adapter.rb` have been replaced with v4 versions. Other files (railtie, elevators, migrator, etc.) are still v3 and will be replaced in later phases. See `docs/designs/apartment-v4.md` for v4 architecture.
+
+This directory contains the core implementation of Apartment's multi-tenancy system.
 
 ## Directory Structure
 

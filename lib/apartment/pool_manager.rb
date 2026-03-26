@@ -11,8 +11,8 @@ module Apartment
 
     # Fetch an existing pool or create one via the block.
     # Timestamp is updated after pool creation to avoid orphaned timestamps if the block raises.
-    def fetch_or_create(tenant_key)
-      pool = @pools.compute_if_absent(tenant_key) { yield }
+    def fetch_or_create(tenant_key, &)
+      pool = @pools.compute_if_absent(tenant_key, &)
       touch(tenant_key)
       pool
     end
@@ -35,21 +35,25 @@ module Apartment
       @pools.key?(tenant_key)
     end
 
+    # Returns stats for a tenant pool. Follows ActiveRecord's convention of
+    # exposing computed durations (seconds_idle) rather than raw monotonic
+    # timestamps, which are meaningless outside the process.
     def stats_for(tenant_key)
       return nil unless tracked?(tenant_key)
-      { last_accessed: @timestamps[tenant_key] }
+
+      { seconds_idle: monotonic_now - @timestamps[tenant_key] }
     end
 
     def idle_tenants(timeout:)
-      cutoff = Time.now - timeout
+      cutoff = monotonic_now - timeout
       @timestamps.each_pair.filter_map { |key, ts| key if ts < cutoff }
     end
 
     def lru_tenants(count:)
       @timestamps.each_pair
-                  .sort_by { |_, ts| ts }
-                  .first(count)
-                  .map(&:first)
+        .sort_by { |_, ts| ts }
+        .first(count)
+        .map(&:first)
     end
 
     # Phase 1: basic stats. Full observability (per-tenant breakdown,
@@ -61,7 +65,15 @@ module Apartment
       }
     end
 
+    # Disconnect all pools before clearing to prevent connection leaks.
+    # Each pool's disconnect! is individually rescued so one broken pool
+    # doesn't prevent cleanup of others.
     def clear
+      @pools.each_pair do |key, pool|
+        pool.disconnect! if pool.respond_to?(:disconnect!)
+      rescue StandardError => e
+        warn "[Apartment::PoolManager] Failed to disconnect pool '#{key}': #{e.class}: #{e.message}"
+      end
       @pools.clear
       @timestamps.clear
     end
@@ -69,7 +81,11 @@ module Apartment
     private
 
     def touch(tenant_key)
-      @timestamps[tenant_key] = Time.now
+      @timestamps[tenant_key] = monotonic_now
+    end
+
+    def monotonic_now
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
   end
 end

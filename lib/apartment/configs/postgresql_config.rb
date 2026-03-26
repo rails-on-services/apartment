@@ -18,6 +18,13 @@ module Apartment
         @enforce_search_path_reset = false
         @include_schemas_in_dump = []
       end
+
+      # Freeze mutable collections, then freeze self.
+      def freeze!
+        @persistent_schemas.freeze
+        @include_schemas_in_dump.freeze
+        freeze
+      end
     end
   end
 end

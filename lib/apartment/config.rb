@@ -12,17 +12,15 @@ module Apartment
     VALID_PARALLEL_STRATEGIES = %i[auto threads processes].freeze
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
-    attr_reader :tenant_strategy
-    attr_accessor :tenants_provider
-    attr_accessor :default_tenant, :excluded_models
-    attr_accessor :tenant_pool_size, :pool_idle_timeout, :max_total_connections
-    attr_accessor :seed_after_create, :seed_data_file
-    attr_accessor :parallel_migration_threads, :parallel_strategy
-    attr_accessor :environmentify_strategy
-    attr_accessor :elevator, :elevator_options
-    attr_accessor :tenant_not_found_handler
-    attr_accessor :active_record_log
-    attr_reader :postgres_config, :mysql_config
+    attr_reader :tenant_strategy, :postgres_config, :mysql_config,
+                :parallel_strategy, :environmentify_strategy
+
+    attr_accessor :tenants_provider, :default_tenant, :excluded_models,
+                  :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
+                  :seed_after_create, :seed_data_file,
+                  :parallel_migration_threads,
+                  :elevator, :elevator_options,
+                  :tenant_not_found_handler, :active_record_log
 
     def initialize
       @tenant_strategy = nil
@@ -47,8 +45,8 @@ module Apartment
 
     def tenant_strategy=(strategy)
       unless VALID_STRATEGIES.include?(strategy)
-        raise ConfigurationError, "Invalid tenant_strategy: #{strategy.inspect}. " \
-                                  "Must be one of: #{VALID_STRATEGIES.join(', ')}"
+        raise(ConfigurationError, "Invalid tenant_strategy: #{strategy.inspect}. " \
+                                  "Must be one of: #{VALID_STRATEGIES.join(', ')}")
       end
 
       @tenant_strategy = strategy
@@ -56,8 +54,8 @@ module Apartment
 
     def parallel_strategy=(strategy)
       unless VALID_PARALLEL_STRATEGIES.include?(strategy)
-        raise ConfigurationError, "Invalid parallel_strategy: #{strategy.inspect}. " \
-                                  "Must be one of: #{VALID_PARALLEL_STRATEGIES.join(', ')}"
+        raise(ConfigurationError, "Invalid parallel_strategy: #{strategy.inspect}. " \
+                                  "Must be one of: #{VALID_PARALLEL_STRATEGIES.join(', ')}")
       end
 
       @parallel_strategy = strategy
@@ -65,8 +63,8 @@ module Apartment
 
     def environmentify_strategy=(strategy)
       unless VALID_ENVIRONMENTIFY_STRATEGIES.include?(strategy) || strategy.respond_to?(:call)
-        raise ConfigurationError, "Invalid environmentify_strategy: #{strategy.inspect}. " \
-                                  'Must be nil, :prepend, :append, or a callable'
+        raise(ConfigurationError, "Invalid environmentify_strategy: #{strategy.inspect}. " \
+                                  'Must be nil, :prepend, :append, or a callable')
       end
 
       @environmentify_strategy = strategy
@@ -75,41 +73,52 @@ module Apartment
     # Configure PostgreSQL-specific options via block.
     def configure_postgres
       @postgres_config = Configs::PostgreSQLConfig.new
-      yield @postgres_config if block_given?
+      yield(@postgres_config) if block_given?
       @postgres_config
     end
 
     # Configure MySQL-specific options via block.
     def configure_mysql
       @mysql_config = Configs::MySQLConfig.new
-      yield @mysql_config if block_given?
+      yield(@mysql_config) if block_given?
       @mysql_config
+    end
+
+    # Deep-freeze the config after validation to prevent post-boot mutation.
+    # Freezes mutable collections and sub-configs, then freezes self.
+    def freeze!
+      @excluded_models.freeze
+      @elevator_options.freeze
+      @postgres_config&.freeze!
+      @mysql_config&.freeze!
+      freeze
     end
 
     # Validate configuration completeness and consistency.
     # Raises ConfigurationError on invalid state.
     def validate!
-      raise ConfigurationError, 'tenant_strategy is required' unless @tenant_strategy
+      raise(ConfigurationError, 'tenant_strategy is required') unless @tenant_strategy
 
       unless @tenants_provider.respond_to?(:call)
-        raise ConfigurationError, 'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })'
+        raise(ConfigurationError, 'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
       end
 
       if @postgres_config && @mysql_config
-        raise ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time'
+        raise(ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time')
       end
 
-      unless @tenant_pool_size.is_a?(Integer) && @tenant_pool_size > 0
-        raise ConfigurationError, "tenant_pool_size must be a positive integer, got: #{@tenant_pool_size.inspect}"
+      unless @tenant_pool_size.is_a?(Integer) && @tenant_pool_size.positive?
+        raise(ConfigurationError, "tenant_pool_size must be a positive integer, got: #{@tenant_pool_size.inspect}")
       end
 
-      unless @pool_idle_timeout.is_a?(Numeric) && @pool_idle_timeout > 0
-        raise ConfigurationError, "pool_idle_timeout must be a positive number, got: #{@pool_idle_timeout.inspect}"
+      unless @pool_idle_timeout.is_a?(Numeric) && @pool_idle_timeout.positive?
+        raise(ConfigurationError, "pool_idle_timeout must be a positive number, got: #{@pool_idle_timeout.inspect}")
       end
 
-      if @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
-        raise ConfigurationError, "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}"
-      end
+      return unless @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
+
+      raise(ConfigurationError,
+            "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}")
     end
   end
 end
