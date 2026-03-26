@@ -83,8 +83,7 @@ RSpec.describe(Apartment) do
       end
 
       # The adapter ivar should be nil (cleared), so lazy build will be attempted
-      # Since concrete classes don't exist, this will raise LoadError
-      # We verify the old mock is gone by checking the ivar directly
+      # on next access. Verify the old mock is gone by checking the ivar directly.
       expect(described_class.instance_variable_get(:@adapter)).to(be_nil)
     end
   end

@@ -299,6 +299,16 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       reconfigure(environmentify_strategy: ->(tenant) { "custom_#{tenant}" })
       expect(adapter.environmentify('acme')).to(eq('custom_acme'))
     end
+
+    it 'raises ConfigurationError when Rails is not defined and strategy needs it' do
+      reconfigure(environmentify_strategy: :prepend)
+      # Simulate Rails being undefined by making rails_env raise
+      allow(adapter).to(receive(:rails_env).and_raise(
+                          Apartment::ConfigurationError,
+                          'environmentify_strategy :prepend/:append requires Rails to be defined'
+                        ))
+      expect { adapter.environmentify('acme') }.to(raise_error(Apartment::ConfigurationError, /requires Rails/))
+    end
   end
 
   describe '#default_tenant' do

@@ -70,12 +70,13 @@ module Apartment
       end
 
       # Environmentify a tenant name based on config.
+      # :prepend/:append require Rails to be defined (for Rails.env).
       def environmentify(tenant)
         case Apartment.config.environmentify_strategy
         when :prepend
-          "#{Rails.env}_#{tenant}"
+          "#{rails_env}_#{tenant}"
         when :append
-          "#{tenant}_#{Rails.env}"
+          "#{tenant}_#{rails_env}"
         when nil
           tenant.to_s
         else
@@ -104,6 +105,14 @@ module Apartment
       # Connection config with string keys (used by subclasses to build tenant configs).
       def base_config
         connection_config.transform_keys(&:to_s)
+      end
+
+      def rails_env
+        unless defined?(Rails)
+          raise(Apartment::ConfigurationError,
+                'environmentify_strategy :prepend/:append requires Rails to be defined')
+        end
+        Rails.env
       end
     end
   end
