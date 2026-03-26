@@ -32,11 +32,6 @@ module Apartment
         )
       end
 
-      private
-
-      def base_config
-        connection_config.transform_keys(&:to_s)
-      end
     end
   end
 end

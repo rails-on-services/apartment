@@ -98,6 +98,13 @@ module Apartment
       def drop_tenant(tenant)
         raise(NotImplementedError)
       end
+
+      private
+
+      # Connection config with string keys (used by subclasses to build tenant configs).
+      def base_config
+        connection_config.transform_keys(&:to_s)
+      end
     end
   end
 end

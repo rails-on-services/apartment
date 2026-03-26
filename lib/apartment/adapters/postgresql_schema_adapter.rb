@@ -20,21 +20,13 @@ module Apartment
       protected
 
       def create_tenant(tenant)
-        ActiveRecord::Base.connection.execute(
-          "CREATE SCHEMA #{ActiveRecord::Base.connection.quote_table_name(tenant)}"
-        )
+        conn = ActiveRecord::Base.connection
+        conn.execute("CREATE SCHEMA #{conn.quote_table_name(tenant)}")
       end
 
       def drop_tenant(tenant)
-        ActiveRecord::Base.connection.execute(
-          "DROP SCHEMA #{ActiveRecord::Base.connection.quote_table_name(tenant)} CASCADE"
-        )
-      end
-
-      private
-
-      def base_config
-        connection_config.transform_keys(&:to_s)
+        conn = ActiveRecord::Base.connection
+        conn.execute("DROP SCHEMA #{conn.quote_table_name(tenant)} CASCADE")
       end
     end
   end
