@@ -1043,7 +1043,7 @@ These items were flagged during Phase 1 review and should be addressed during th
 - [x] Freeze Config after validate! (now that adapters consume it) — done in Phase 2.1
 - [ ] Consider converting PoolReaper from class singleton to instance — address in Phase 2.3
 - [x] Add switch/reset methods to Current — decided against: Tenant.switch/reset use Current attributes directly; Current stays thin (just attributes)
-- [ ] Resolve any remaining persistent_schemas usage (now only on PostgreSQLConfig) — address in Phase 2.2
+- [x] Resolve any remaining persistent_schemas usage (now only on PostgreSQLConfig) — PostgreSQLSchemaAdapter reads from config.postgres_config with nil guard (Phase 2.2)
 
 ## Notes from Phase 2.1 review (deferred to later sub-phases)
 
@@ -1051,8 +1051,8 @@ Flagged during comprehensive PR review of Phase 2.1. Categorized by target sub-p
 
 ### Phase 2.2 (Database Adapters)
 
-- [ ] Adapter factory routing tests assert LoadError/NameError for missing v4 files — rewrite to use stub pattern when concrete adapters land
-- [ ] `environmentify` does not guard against `Rails` being undefined — relevant when concrete adapters call it outside Rails context
+- [x] Adapter factory routing tests assert LoadError/NameError for missing v4 files — rewritten to verify concrete adapter instantiation (Phase 2.2)
+- [x] `environmentify` does not guard against `Rails` being undefined — added `rails_env` private method with `ConfigurationError` guard (Phase 2.2)
 
 ### Phase 2.3 (Connection Handling & Pool Wiring)
 
