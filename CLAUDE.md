@@ -2,7 +2,7 @@
 
 **Gem Name**: `ros-apartment`
 **Maintained by**: CampusESP
-**Active work**: v4 rewrite on `man/v4-adapters` branch (phased, PR-per-sub-phase)
+**Active work**: v4 rewrite (phased, PR-per-sub-phase off `development`)
 
 ## Design & Plan Documents
 
@@ -73,44 +73,16 @@ v4 unit tests are in `spec/unit/` and require no database. See `spec/CLAUDE.md` 
 
 ## v4 Rewrite
 
-**Branch**: `man/v4-adapters` (phased implementation, PRs per sub-phase)
-
 **Design spec**: `docs/designs/apartment-v4.md`
 
 **Major changes**: Pool-per-tenant (vs thread-local switching), fiber-safe via `CurrentAttributes`, immutable connection config per pool, `Config#freeze!` after validation
 
 **Why v4**: Eliminates thread-local tenant leakage (e.g., ActionCable shared thread pool bugs), true fiber safety, PgBouncer/RDS Proxy compatibility, simpler mental model
 
-**Status**: Phase 1 (foundation) merged, Phase 2.1 (Tenant API, AbstractAdapter, adapter factory) in PR. See `docs/plans/apartment-v4/` for full plan.
+**Status**: Phase 1 (foundation) and Phase 2.1 (Tenant API, AbstractAdapter, adapter factory) merged. See `docs/plans/apartment-v4/` for full plan and deferred items.
 
-## Design Principles
+## Gotchas
 
-**Open for extension**: Users can create custom adapters and elevators without modifying gem.
-
-**Closed for modification**: Core logic shouldn't need changes for new use cases.
-
-**Fail fast**: Configuration errors raise at boot. Tenant not found raises at runtime.
-
-**Graceful degradation**: If rollback fails, fall back to default tenant rather than crash.
-
-**See**: `docs/architecture.md` for rationale
-
-## Getting Help
-
-**Issues**: https://github.com/rails-on-services/apartment/issues
-
-**Discussions**: https://github.com/rails-on-services/apartment/discussions
-
-**Code**: Read the actual implementation files - they're well-commented
-
-## Documentation Philosophy
-
-**This documentation focuses on WHY, not HOW**:
-- Design decisions and trade-offs
-- Architecture rationale
-- Pitfalls and constraints
-- References to actual source files
-
-**For HOW (implementation details)**: Read the well-commented source code in `lib/`.
-
-**For WHAT (API reference)**: See README.md and RDoc comments.
+- **v3/v4 coexistence**: v3 files and v4 files coexist in `lib/apartment/`. Zeitwerk `loader.ignore` directives in `lib/apartment.rb` control which files load. v3 files are replaced incrementally by phase.
+- **Frozen config**: `Apartment.config` is frozen after `Apartment.configure`. Tests that need different config values must call `Apartment.configure` again (not stub the frozen object).
+- **Monotonic clock**: `PoolManager` uses `Process.clock_gettime(Process::CLOCK_MONOTONIC)` for timestamps, not `Time.now`. Stats return `seconds_idle` (duration), not wall-clock times.
