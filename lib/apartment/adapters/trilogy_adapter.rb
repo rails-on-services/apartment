@@ -1,29 +1,13 @@
 # frozen_string_literal: true
 
-require 'apartment/adapters/mysql2_adapter'
+require_relative 'mysql2_adapter'
 
 module Apartment
-  # Helper module to decide wether to use trilogy adapter or trilogy adapter with schemas
-  module Tenant
-    def self.trilogy_adapter(config)
-      if Apartment.use_schemas
-        Adapters::TrilogySchemaAdapter.new(config)
-      else
-        Adapters::TrilogyAdapter.new(config)
-      end
-    end
-  end
-
   module Adapters
-    class TrilogyAdapter < Mysql2Adapter
-      protected
-
-      def rescue_from
-        Trilogy::Error
-      end
-    end
-
-    class TrilogySchemaAdapter < Mysql2SchemaAdapter
+    class TrilogyAdapter < MySQL2Adapter
+      # Same behavior as MySQL2Adapter — Trilogy is a compatible MySQL driver.
+      # Exception handling differences (Trilogy::Error vs Mysql2::Error)
+      # are handled at the connection pool level, not the adapter.
     end
   end
 end
