@@ -31,7 +31,6 @@ module Apartment
           "DROP DATABASE IF EXISTS #{conn.quote_table_name(db_name)}"
         )
       end
-
     end
   end
 end
