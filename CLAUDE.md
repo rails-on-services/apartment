@@ -1,23 +1,29 @@
-# CLAUDE.md - Apartment v3 Understanding Guide
+# CLAUDE.md - Apartment
 
-**Version**: 3.x (Current Development Branch)
-**Maintained by**: CampusESP
 **Gem Name**: `ros-apartment`
+**Maintained by**: CampusESP
+**Active work**: v4 rewrite on `man/v4-adapters` branch (phased, PR-per-sub-phase)
 
-## What This Documentation Covers
+## Design & Plan Documents
 
-This branch contains v3 (current stable release). A v4 refactor with different architecture exists on `man/spec-restart` branch.
+Planning artifacts live in `docs/` with no date prefixes (git handles temporal tracking):
 
-**Goal**: Understand v3 deeply enough to maintain it and plan v4 migration.
+- `docs/designs/<feature>.md` — Design specs (what and why). Living docs, one per feature, updated in place.
+- `docs/plans/<feature>/` — Implementation plans (how and in what order). Can have multiple files for phased plans.
+
+Do NOT use `docs/superpowers/specs/` or `docs/superpowers/plans/` — those are plugin defaults that we override with the paths above.
+
+**Key documents:**
+- `docs/designs/apartment-v4.md` — v4 design spec
+- `docs/plans/apartment-v4/phase-2-adapters.md` — Current phase plan (includes deferred review items)
 
 ## Where to Start
 
 1. **README.md** - Installation, basic usage, configuration options
-2. **docs/architecture.md** - Core design decisions and WHY they were made
-3. **docs/adapters.md** - Database strategy trade-offs
-4. **docs/elevators.md** - Middleware design rationale
-5. **lib/apartment/CLAUDE.md** - Implementation file guide
-6. **spec/CLAUDE.md** - Test organization and patterns
+2. **docs/architecture.md** - Core design decisions and WHY they were made (v3)
+3. **docs/designs/apartment-v4.md** - v4 architecture and motivation
+4. **lib/apartment/CLAUDE.md** - Implementation file guide
+5. **spec/CLAUDE.md** - Test organization and patterns
 
 ## Core Concepts
 
@@ -167,15 +173,17 @@ This branch contains v3 (current stable release). A v4 refactor with different a
 
 **See**: Inline code comments for context-specific debugging
 
-## Migration to v4
+## v4 Rewrite
 
-**v4 branch**: `man/spec-restart`
+**Branch**: `man/v4-adapters` (phased implementation, PRs per sub-phase)
 
-**Major changes**: Connection pool per tenant (vs thread-local switching), fiber-safe via CurrentAttributes, immutable connection descriptors
+**Design spec**: `docs/designs/apartment-v4.md`
 
-**Why v4**: Better performance (no switching overhead), true fiber safety, simpler mental model
+**Major changes**: Pool-per-tenant (vs thread-local switching), fiber-safe via `CurrentAttributes`, immutable connection config per pool, `Config#freeze!` after validation
 
-**Migration strategy**: Understand v3 architecture first (this branch), then contrast with v4 approach
+**Why v4**: Eliminates thread-local tenant leakage (e.g., ActionCable shared thread pool bugs), true fiber safety, PgBouncer/RDS Proxy compatibility, simpler mental model
+
+**Status**: Phase 1 (foundation) merged, Phase 2.1 (Tenant API, AbstractAdapter, adapter factory) in PR. See `docs/plans/apartment-v4/` for full plan.
 
 ## Design Principles
 
