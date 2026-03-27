@@ -60,19 +60,19 @@ module Apartment
       #
       # @yield [String] tenant name
       # @return [Array<Result>] outcome for each tenant
-      def each_tenant(&)
+      def each_tenant(&block)
         return [] if tenants_without_default.empty?
 
         if parallel_migration_threads.positive?
-          each_tenant_parallel(&)
+          each_tenant_parallel(&block)
         else
-          each_tenant_sequential(&)
+          each_tenant_sequential(&block)
         end
       end
 
       # Sequential execution: simpler, no connection management complexity.
       # Used when parallel_migration_threads is 0 (the default).
-      def each_tenant_sequential
+      def each_tenant_sequential(&block)
         tenants_without_default.map do |tenant|
           Rails.application.executor.wrap do
             yield(tenant)
@@ -85,13 +85,13 @@ module Apartment
 
       # Parallel execution wrapper. Disables advisory locks for the duration,
       # then delegates to platform-appropriate parallelism strategy.
-      def each_tenant_parallel(&)
+      def each_tenant_parallel(&block)
         with_advisory_locks_disabled do
           case resolve_parallel_strategy
           when :processes
-            each_tenant_in_processes(&)
+            each_tenant_in_processes(&block)
           else
-            each_tenant_in_threads(&)
+            each_tenant_in_threads(&block)
           end
         end
       end
@@ -100,7 +100,7 @@ module Apartment
       # copy-on-write memory and no GIL contention. Each forked process
       # gets isolated memory, so we must clear inherited connections
       # and establish fresh ones.
-      def each_tenant_in_processes
+      def each_tenant_in_processes(&block)
         Parallel.map(tenants_without_default, in_processes: parallel_migration_threads) do |tenant|
           # Forked processes inherit parent's connection handles but the
           # underlying sockets are invalid. Must reconnect before any DB work.
@@ -122,7 +122,7 @@ module Apartment
       # for CPU-bound work (migrations are typically I/O-bound, so this is fine).
       # Threads share the connection pool, so we reconfigure once before
       # spawning and restore after completion.
-      def each_tenant_in_threads
+      def each_tenant_in_threads(&block)
         original_config = ActiveRecord::Base.connection_db_config.configuration_hash
         reconnect_for_parallel_execution
 
