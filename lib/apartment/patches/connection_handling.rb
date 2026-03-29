@@ -10,7 +10,8 @@ module Apartment
     module ConnectionHandling
       def connection_pool # rubocop:disable Metrics/MethodLength
         tenant = Apartment::Current.tenant
-        default = Apartment.config&.default_tenant
+        cfg = Apartment.config
+        default = cfg&.default_tenant
 
         return super if tenant.nil? || tenant == default
         return super unless Apartment.pool_manager
@@ -19,11 +20,12 @@ module Apartment
 
         Apartment.pool_manager.fetch_or_create(pool_key) do
           config = Apartment.adapter.resolve_connection_config(tenant)
-          shard_key = :"#{Apartment.config.shard_key_prefix}_#{tenant}"
+          prefix = cfg.shard_key_prefix
+          shard_key = :"#{prefix}_#{tenant}"
 
           db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
-            Apartment.config.rails_env_name,
-            "#{Apartment.config.shard_key_prefix}_#{tenant}",
+            cfg.rails_env_name,
+            "#{prefix}_#{tenant}",
             config
           )
 

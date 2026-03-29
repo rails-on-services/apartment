@@ -106,9 +106,10 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment::Current.tenant = 'acme'
         ActiveRecord::Base.connection_pool
 
+        shard_key = :"#{Apartment.config.shard_key_prefix}_acme"
         registered = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
           'ActiveRecord::Base',
-          shard: :apartment_acme
+          shard: shard_key
         )
         expect(registered).not_to(be_nil)
       end
@@ -185,13 +186,50 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment::Current.tenant = 'acme'
         ActiveRecord::Base.connection_pool
 
+        shard_key = :"#{Apartment.config.shard_key_prefix}_acme"
         pool = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
+          'ActiveRecord::Base',
+          role: ActiveRecord::Base.current_role,
+          shard: shard_key
+        )
+        expect(pool).not_to(be_nil)
+        expect(pool).to(be_a(ActiveRecord::ConnectionAdapters::ConnectionPool))
+      end
+    end
+
+    context 'custom shard_key_prefix' do
+      before do
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme] }
+          config.default_tenant = 'public'
+          config.shard_key_prefix = 'myapp'
+        end
+        Apartment.adapter = mock_adapter
+      end
+
+      it 'uses the custom prefix for shard keys' do
+        Apartment::Current.tenant = 'acme'
+        ActiveRecord::Base.connection_pool
+
+        registered = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
+          'ActiveRecord::Base',
+          role: ActiveRecord::Base.current_role,
+          shard: :myapp_acme
+        )
+        expect(registered).not_to(be_nil)
+      end
+
+      it 'does not register under the default prefix' do
+        Apartment::Current.tenant = 'acme'
+        ActiveRecord::Base.connection_pool
+
+        registered = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
           'ActiveRecord::Base',
           role: ActiveRecord::Base.current_role,
           shard: :apartment_acme
         )
-        expect(pool).not_to(be_nil)
-        expect(pool).to(be_a(ActiveRecord::ConnectionAdapters::ConnectionPool))
+        expect(registered).to(be_nil)
       end
     end
   end
