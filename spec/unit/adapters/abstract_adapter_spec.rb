@@ -34,6 +34,10 @@ unless defined?(Rails)
     def self.env
       'test'
     end
+
+    def self.root
+      Pathname.new('/rails/app')
+    end
   end
 end
 
@@ -57,6 +61,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       c.tenant_strategy = :schema
       c.tenants_provider = -> { %w[t1 t2] }
       c.default_tenant = 'public'
+      c.schema_load_strategy = nil # disable by default in tests (explicit in schema loading tests)
     end
   end
 
@@ -405,6 +410,60 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
   describe '#default_tenant' do
     it 'delegates to Apartment.config.default_tenant' do
       expect(adapter.default_tenant).to(eq('public'))
+    end
+  end
+
+  describe '#create with schema loading' do
+    it 'calls import_schema when schema_load_strategy is set' do
+      reconfigure(schema_load_strategy: :schema_rb)
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      expect(adapter).to(receive(:import_schema).with('acme'))
+      adapter.create('acme')
+    end
+
+    it 'does not call import_schema when strategy is nil' do
+      # Default in tests is nil
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      expect(adapter).not_to(receive(:import_schema))
+      adapter.create('acme')
+    end
+
+    it 'calls seed after schema when seed_after_create is true' do
+      reconfigure(schema_load_strategy: :schema_rb, seed_after_create: true, seed_data_file: '/tmp/seeds.rb')
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      call_order = []
+      allow(adapter).to(receive(:import_schema) { call_order << :schema })
+      allow(File).to(receive(:exist?).and_return(true))
+      allow(adapter).to(receive(:load) { call_order << :seed })
+      adapter.create('acme')
+      expect(call_order).to(eq(%i[schema seed]))
+    end
+  end
+
+  describe '#resolve_schema_file (private)' do
+    it 'returns custom schema_file when configured' do
+      reconfigure(schema_file: '/custom/schema.rb')
+      expect(adapter.send(:resolve_schema_file)).to(eq('/custom/schema.rb'))
+    end
+
+    it 'returns db/schema.rb path when Rails is defined' do
+      result = adapter.send(:resolve_schema_file)
+      expect(result).to(include('schema.rb'))
+    end
+  end
+
+  describe '#import_schema (private)' do
+    it 'calls load with resolved schema file for :schema_rb' do
+      reconfigure(schema_load_strategy: :schema_rb, schema_file: '/tmp/test_schema.rb')
+      expect(adapter).to(receive(:load).with('/tmp/test_schema.rb'))
+      adapter.send(:import_schema, 'acme')
+    end
+
+    it 'wraps errors in SchemaLoadError' do
+      reconfigure(schema_load_strategy: :schema_rb, schema_file: '/tmp/bad.rb')
+      allow(adapter).to(receive(:load).and_raise(RuntimeError, 'syntax error'))
+      expect { adapter.send(:import_schema, 'acme') }
+        .to(raise_error(Apartment::SchemaLoadError, /syntax error/))
     end
   end
 

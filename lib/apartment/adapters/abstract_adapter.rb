@@ -45,6 +45,8 @@ module Apartment
         )
         run_callbacks(:create) do
           create_tenant(tenant)
+          import_schema(tenant) if Apartment.config.schema_load_strategy
+          seed(tenant) if Apartment.config.seed_after_create
           Instrumentation.instrument(:create, tenant: tenant)
         end
       end
@@ -159,6 +161,34 @@ module Apartment
 
       def deregister_shard_from_ar_handler(tenant)
         Apartment.deregister_shard(tenant)
+      end
+
+      def import_schema(tenant)
+        Apartment::Tenant.switch(tenant) do
+          schema_file = resolve_schema_file
+          case Apartment.config.schema_load_strategy
+          when :schema_rb
+            load(schema_file)
+          when :sql
+            ActiveRecord::Tasks::DatabaseTasks.load_schema(
+              ActiveRecord::Base.connection_db_config, :sql, schema_file
+            )
+          end
+        end
+      rescue StandardError => e
+        raise(Apartment::SchemaLoadError,
+              "Failed to load schema for tenant '#{tenant}': #{e.class}: #{e.message}")
+      end
+
+      def resolve_schema_file
+        custom = Apartment.config.schema_file
+        return custom if custom
+
+        if defined?(Rails)
+          Rails.root.join('db/schema.rb').to_s
+        else
+          'db/schema.rb'
+        end
       end
     end
   end

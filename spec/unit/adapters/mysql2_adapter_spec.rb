@@ -34,6 +34,7 @@ RSpec.shared_examples('a MySQL adapter') do
       c.tenant_strategy = :database_name
       c.tenants_provider = -> { %w[t1 t2] }
       c.default_tenant = 'myapp'
+      c.schema_load_strategy = nil
     end
   end
 
@@ -44,6 +45,7 @@ RSpec.shared_examples('a MySQL adapter') do
       c.tenant_strategy = :database_name
       c.tenants_provider = -> { %w[t1 t2] }
       c.default_tenant = 'myapp'
+      c.schema_load_strategy = nil
       overrides.each { |key, val| c.send(:"#{key}=", val) }
     end
   end
