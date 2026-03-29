@@ -60,7 +60,7 @@ lib/apartment/
 
 ### pool_reaper.rb — Pool Eviction
 
-Background `Concurrent::TimerTask` that evicts idle and excess tenant pools. Default tenant is never evicted. Class-level singleton with mutex.
+Background `Concurrent::TimerTask` instance that evicts idle and excess tenant pools. Created by `Apartment.configure`, stored as `Apartment.pool_reaper`. Deregisters evicted pools from AR's ConnectionHandler. Default tenant is never evicted.
 
 ### adapters/abstract_adapter.rb — Base Adapter
 

@@ -6,18 +6,22 @@ module Apartment
   module Patches
     # Prepended on ActiveRecord::Base (singleton class) to intercept
     # connection_pool lookups. When Apartment::Current.tenant is set,
-    # returns a tenant-specific pool with immutable, tenant-scoped config.
+    # returns a tenant-specific pool keyed by AR shard, with config
+    # resolved by the adapter.
     module ConnectionHandling
       def connection_pool # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
         tenant = Apartment::Current.tenant
         cfg = Apartment.config
-        default = cfg&.default_tenant
 
-        return super if tenant.nil? || tenant.to_s == default.to_s
+        # No tenant, no config, or default tenant — normal Rails behavior.
+        return super if tenant.nil? || cfg.nil?
+        return super if tenant.to_s == cfg.default_tenant.to_s
         return super unless Apartment.pool_manager
 
         pool_key = tenant.to_s
 
+        # Leverage AR's ConnectionHandler for pool lifecycle (checkout, checkin,
+        # reaping). We register tenant configs as named shards — AR handles the rest.
         Apartment.pool_manager.fetch_or_create(pool_key) do
           config = Apartment.adapter.resolve_connection_config(tenant)
           prefix = cfg.shard_key_prefix
@@ -36,6 +40,11 @@ module Apartment
             shard: shard_key
           )
         end
+      rescue Apartment::ApartmentError
+        raise
+      rescue StandardError => e
+        raise(Apartment::ApartmentError,
+              "Failed to resolve connection pool for tenant '#{tenant}': #{e.class}: #{e.message}")
       end
     end
   end

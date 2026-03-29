@@ -113,8 +113,9 @@ module Apartment
 
     private
 
-    # Safely tear down old state. Deregisters tenant pools from AR's
-    # ConnectionHandler before clearing, then stops the reaper.
+    # Safely tear down old state. Stops the reaper first (so it doesn't
+    # evict mid-cleanup), then deregisters tenant pools from AR's
+    # ConnectionHandler, then clears the pool manager.
     def teardown_old_state
       begin
         @pool_reaper&.stop
