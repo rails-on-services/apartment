@@ -110,14 +110,14 @@ RSpec.shared_examples('a MySQL adapter') do
 
     it 'executes CREATE DATABASE with quoted environmentified name' do
       allow(connection).to(receive(:quote_table_name).with('acme').and_return('`acme`'))
-      expect(connection).to(receive(:execute).with('CREATE DATABASE `acme`'))
+      expect(connection).to(receive(:execute).with('CREATE DATABASE IF NOT EXISTS `acme`'))
 
       adapter.create('acme')
     end
 
     it 'quotes tenant names that need escaping' do
       allow(connection).to(receive(:quote_table_name).with('my-tenant').and_return('`my-tenant`'))
-      expect(connection).to(receive(:execute).with('CREATE DATABASE `my-tenant`'))
+      expect(connection).to(receive(:execute).with('CREATE DATABASE IF NOT EXISTS `my-tenant`'))
 
       adapter.create('my-tenant')
     end
@@ -126,7 +126,7 @@ RSpec.shared_examples('a MySQL adapter') do
       reconfigure(environmentify_strategy: :prepend)
       allow(Rails).to(receive(:env).and_return('test'))
       allow(connection).to(receive(:quote_table_name).with('test_acme').and_return('`test_acme`'))
-      expect(connection).to(receive(:execute).with('CREATE DATABASE `test_acme`'))
+      expect(connection).to(receive(:execute).with('CREATE DATABASE IF NOT EXISTS `test_acme`'))
 
       adapter.create('acme')
     end

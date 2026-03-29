@@ -23,7 +23,7 @@ module Apartment
 
       def create_tenant(tenant)
         conn = ActiveRecord::Base.connection
-        conn.execute("CREATE SCHEMA #{conn.quote_table_name(tenant)}")
+        conn.execute("CREATE SCHEMA IF NOT EXISTS #{conn.quote_table_name(tenant)}")
       end
 
       def drop_tenant(tenant)

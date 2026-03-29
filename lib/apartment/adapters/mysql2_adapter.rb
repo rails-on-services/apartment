@@ -19,7 +19,7 @@ module Apartment
       def create_tenant(tenant)
         db_name = environmentify(tenant)
         conn = ActiveRecord::Base.connection
-        conn.execute("CREATE DATABASE #{conn.quote_table_name(db_name)}")
+        conn.execute("CREATE DATABASE IF NOT EXISTS #{conn.quote_table_name(db_name)}")
       end
 
       def drop_tenant(tenant)
