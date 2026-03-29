@@ -23,7 +23,7 @@ module Apartment
 
           db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
             Apartment.config.rails_env_name,
-            "apartment_#{tenant}",
+            "#{Apartment.config.shard_key_prefix}_#{tenant}",
             config
           )
 
