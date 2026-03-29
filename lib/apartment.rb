@@ -91,7 +91,7 @@ module Apartment
     # Activate the ConnectionHandling patch on ActiveRecord::Base.
     # Idempotent — prepend on an already-prepended module is a no-op.
     def activate!
-      require_relative 'apartment/patches/connection_handling'
+      require_relative('apartment/patches/connection_handling')
       ActiveRecord::Base.singleton_class.prepend(Patches::ConnectionHandling)
     end
 
