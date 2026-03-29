@@ -20,7 +20,8 @@ module Apartment
                   :seed_after_create, :seed_data_file,
                   :parallel_migration_threads,
                   :elevator, :elevator_options,
-                  :tenant_not_found_handler, :active_record_log
+                  :tenant_not_found_handler, :active_record_log,
+                  :shard_key_prefix
 
     def initialize
       @tenant_strategy = nil
@@ -41,6 +42,7 @@ module Apartment
       @active_record_log = false
       @postgres_config = nil
       @mysql_config = nil
+      @shard_key_prefix = 'apartment'
     end
 
     def tenant_strategy=(strategy)
@@ -115,10 +117,20 @@ module Apartment
         raise(ConfigurationError, "pool_idle_timeout must be a positive number, got: #{@pool_idle_timeout.inspect}")
       end
 
-      return unless @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
+      if @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
+        raise(ConfigurationError,
+              "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}")
+      end
 
-      raise(ConfigurationError,
-            "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}")
+      unless @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)
+        raise(ConfigurationError,
+              "shard_key_prefix must be a lowercase string matching /[a-z_][a-z0-9_]*/, got: #{@shard_key_prefix.inspect}")
+      end
+    end
+
+    # Returns the current Rails environment name, falling back to env vars and a safe default.
+    def rails_env_name
+      (Rails.env if defined?(Rails.env)) || ENV['RAILS_ENV'] || ENV['RACK_ENV'] || 'default_env'
     end
   end
 end

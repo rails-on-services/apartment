@@ -24,6 +24,7 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.active_record_log).to(be(false)) }
     it { expect(config.postgres_config).to(be_nil) }
     it { expect(config.mysql_config).to(be_nil) }
+    it { expect(config.shard_key_prefix).to(eq('apartment')) }
   end
 
   describe '#tenant_strategy=' do
@@ -145,6 +146,78 @@ RSpec.describe(Apartment::Config) do
       config.tenant_strategy = :schema
       config.tenants_provider = -> { [] }
       expect { config.validate! }.not_to(raise_error)
+    end
+  end
+
+  describe '#shard_key_prefix validation' do
+    before do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+    end
+
+    it 'passes with the default value' do
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'passes with a custom valid prefix' do
+      config.shard_key_prefix = 'myapp_tenant'
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'raises ConfigurationError for empty string' do
+      config.shard_key_prefix = ''
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /shard_key_prefix/))
+    end
+
+    it 'raises ConfigurationError for string starting with a number' do
+      config.shard_key_prefix = '1bad'
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /shard_key_prefix/))
+    end
+
+    it 'raises ConfigurationError for string with special characters' do
+      config.shard_key_prefix = 'my-prefix'
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /shard_key_prefix/))
+    end
+
+    it 'raises ConfigurationError for non-string value' do
+      config.shard_key_prefix = :symbol
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /shard_key_prefix/))
+    end
+  end
+
+  describe '#rails_env_name' do
+    around do |example|
+      saved_rails_env = ENV.fetch('RAILS_ENV', nil)
+      saved_rack_env = ENV.fetch('RACK_ENV', nil)
+      example.run
+      ENV['RAILS_ENV'] = saved_rails_env
+      ENV['RACK_ENV'] = saved_rack_env
+    end
+
+    it 'returns Rails.env when Rails is defined' do
+      stub_const('Rails', double(env: 'test'))
+      expect(config.rails_env_name).to(eq('test'))
+    end
+
+    it 'falls back to RAILS_ENV env var' do
+      hide_const('Rails')
+      ENV['RAILS_ENV'] = 'staging'
+      ENV.delete('RACK_ENV')
+      expect(config.rails_env_name).to(eq('staging'))
+    end
+
+    it 'falls back to RACK_ENV env var' do
+      hide_const('Rails')
+      ENV.delete('RAILS_ENV')
+      ENV['RACK_ENV'] = 'production'
+      expect(config.rails_env_name).to(eq('production'))
+    end
+
+    it "defaults to 'default_env' when nothing is set" do
+      hide_const('Rails')
+      ENV.delete('RAILS_ENV')
+      ENV.delete('RACK_ENV')
+      expect(config.rails_env_name).to(eq('default_env'))
     end
   end
 end
