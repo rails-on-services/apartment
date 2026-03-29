@@ -7,12 +7,12 @@ require 'spec_helper'
 # Skips gracefully when sqlite3 is not available or when the AR stub from
 # apartment_spec.rb loaded first (randomized suite order).
 REAL_AR_AVAILABLE = begin
-  require 'active_record'
+  require('active_record')
   # The stub in apartment_spec.rb defines AR::Base without establish_connection.
   # If that loaded first, real AR's require is a partial no-op. Detect this.
   if ActiveRecord::Base.respond_to?(:establish_connection)
     ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
-    require_relative '../../../lib/apartment/patches/connection_handling'
+    require_relative('../../../lib/apartment/patches/connection_handling')
     ActiveRecord::Base.singleton_class.prepend(Apartment::Patches::ConnectionHandling)
     true
   else
@@ -33,7 +33,15 @@ unless REAL_AR_AVAILABLE
 end
 
 RSpec.describe(Apartment::Patches::ConnectionHandling) do
-  before { skip 'requires real ActiveRecord with sqlite3 gem (run via appraisal)' unless REAL_AR_AVAILABLE }
+  before do
+    skip 'requires real ActiveRecord with sqlite3 gem (run via appraisal)' unless REAL_AR_AVAILABLE
+    Apartment.configure do |config|
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { %w[acme widgets] }
+      config.default_tenant = 'public'
+    end
+    Apartment.adapter = mock_adapter
+  end
 
   let(:mock_adapter) do
     double('AbstractAdapter',
@@ -44,15 +52,6 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
   let(:default_pool) do
     Apartment::Current.tenant = nil
     ActiveRecord::Base.connection_pool
-  end
-
-  before do
-    Apartment.configure do |config|
-      config.tenant_strategy = :schema
-      config.tenants_provider = -> { %w[acme widgets] }
-      config.default_tenant = 'public'
-    end
-    Apartment.adapter = mock_adapter
   end
 
   describe '#connection_pool' do

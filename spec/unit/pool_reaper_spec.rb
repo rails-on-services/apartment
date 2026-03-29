@@ -181,7 +181,7 @@ RSpec.describe(Apartment::PoolReaper) do
 
       reaper.start
 
-      sleep 0.2
+      sleep(0.2)
 
       expect(events.any? { |e| e.payload[:tenant] == 'stale' }).to(be(true))
     ensure
