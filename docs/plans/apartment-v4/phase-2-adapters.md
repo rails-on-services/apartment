@@ -1077,6 +1077,10 @@ Flagged during comprehensive PR review of Phase 2.1. Categorized by target sub-p
 
 - [ ] `drop` partial failure when `drop_tenant` raises — document whether pool cleanup occurs
 - [ ] LRU eviction default-tenant protection — direct test for LRU path (idle path tested)
+- [ ] `Apartment.activate!` — no test exercises the full `require_relative` + `prepend` path (connection_handling_spec prepends directly)
+- [ ] `deregister_all_tenant_pools` — no test verifies AR handler entries are actually removed during teardown (hard without real AR)
+- [ ] Concurrent `connection_pool` access — no multi-threaded test exercising concurrent tenant pool creation from parallel threads
+- [ ] `AbstractAdapter#drop` + AR handler cleanup — no test verifying the shard entry is removed from AR's ConnectionHandler after drop
 - [ ] Fiber isolation for `Current` — validate the core v4 design claim with a fiber test
 - [ ] `PoolManager#clear` disconnect verification — assert `disconnect!` called, not just count drops
 - [ ] Concurrent `remove` + `get` race — document `Concurrent::Map` guarantees with a test
