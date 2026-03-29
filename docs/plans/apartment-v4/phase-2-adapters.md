@@ -1041,7 +1041,7 @@ Phase 2.2 and 2.3 are independent and can be done in either order. Phase 2.3 is 
 These items were flagged during Phase 1 review and should be addressed during this phase:
 
 - [x] Freeze Config after validate! (now that adapters consume it) — done in Phase 2.1
-- [ ] Consider converting PoolReaper from class singleton to instance — address in Phase 2.3
+- [x] Consider converting PoolReaper from class singleton to instance — done in Phase 2.3
 - [x] Add switch/reset methods to Current — decided against: Tenant.switch/reset use Current attributes directly; Current stays thin (just attributes)
 - [x] Resolve any remaining persistent_schemas usage (now only on PostgreSQLConfig) — PostgreSQLSchemaAdapter reads from config.postgres_config with nil guard (Phase 2.2)
 
@@ -1056,8 +1056,8 @@ Flagged during comprehensive PR review of Phase 2.1. Categorized by target sub-p
 
 ### Phase 2.3 (Connection Handling & Pool Wiring)
 
-- [ ] PoolReaper evict_idle/evict_lru do not call `disconnect!` on evicted pools — pools rely on GC. Add explicit disconnect when pool wiring is implemented
-- [ ] `configure` teardown sequence not protected — if `PoolReaper.stop` raises after validation passes, system is half-torn-down. Wrap in begin/rescue
+- [x] PoolReaper evict_idle/evict_lru do not call `disconnect!` on evicted pools — done in Phase 2.3 (deregister_from_ar_handler calls remove_connection_pool which disconnects)
+- [x] `configure` teardown sequence not protected — done in Phase 2.3 (teardown_old_state rescues PoolReaper.stop failures)
 
 ### Phase 2.4 (Excluded Models & Integration)
 
@@ -1077,6 +1077,10 @@ Flagged during comprehensive PR review of Phase 2.1. Categorized by target sub-p
 
 - [ ] `drop` partial failure when `drop_tenant` raises — document whether pool cleanup occurs
 - [ ] LRU eviction default-tenant protection — direct test for LRU path (idle path tested)
+- [ ] `Apartment.activate!` — no test exercises the full `require_relative` + `prepend` path (connection_handling_spec prepends directly)
+- [ ] `deregister_all_tenant_pools` — no test verifies AR handler entries are actually removed during teardown (hard without real AR)
+- [ ] Concurrent `connection_pool` access — no multi-threaded test exercising concurrent tenant pool creation from parallel threads
+- [ ] `AbstractAdapter#drop` + AR handler cleanup — no test verifying the shard entry is removed from AR's ConnectionHandler after drop
 - [ ] Fiber isolation for `Current` — validate the core v4 design claim with a fiber test
 - [ ] `PoolManager#clear` disconnect verification — assert `disconnect!` called, not just count drops
 - [ ] Concurrent `remove` + `get` race — document `Concurrent::Map` guarantees with a test

@@ -56,8 +56,8 @@ module Apartment
         .map(&:first)
     end
 
-    # Phase 1: basic stats. Full observability (per-tenant breakdown,
-    # connection counts, eviction counters) deferred to Phase 2+.
+    # Basic stats. Full observability (per-tenant breakdown, connection
+    # counts, eviction counters) deferred to Phase 3.
     def stats
       {
         total_pools: @pools.size,

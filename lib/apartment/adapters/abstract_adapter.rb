@@ -35,10 +35,10 @@ module Apartment
       # Drop a tenant.
       def drop(tenant)
         drop_tenant(tenant)
-        # Remove cached pool (key is tenant.to_s, must match pool key used in Phase 2.3 ConnectionHandling)
         pool_key = tenant.to_s
         pool = Apartment.pool_manager&.remove(pool_key)
         pool&.disconnect! if pool.respond_to?(:disconnect!)
+        deregister_shard_from_ar_handler(tenant)
         Instrumentation.instrument(:drop, tenant: tenant)
       end
 
@@ -113,6 +113,10 @@ module Apartment
                 'environmentify_strategy :prepend/:append requires Rails to be defined')
         end
         Rails.env
+      end
+
+      def deregister_shard_from_ar_handler(tenant)
+        Apartment.deregister_shard(tenant)
       end
     end
   end
