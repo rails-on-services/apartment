@@ -23,7 +23,7 @@ module Apartment
         # Leverage AR's ConnectionHandler for pool lifecycle (checkout, checkin,
         # reaping). We register tenant configs as named shards — AR handles the rest.
         Apartment.pool_manager.fetch_or_create(pool_key) do
-          config = Apartment.adapter.resolve_connection_config(tenant)
+          config = Apartment.adapter.validated_connection_config(tenant)
           prefix = cfg.shard_key_prefix
           shard_key = :"#{prefix}_#{tenant}"
 

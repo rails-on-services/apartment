@@ -2,6 +2,7 @@
 
 require 'active_support/callbacks'
 require 'active_support/core_ext/string/inflections'
+require_relative '../tenant_name_validator'
 
 module Apartment
   module Adapters
@@ -18,6 +19,17 @@ module Apartment
         @connection_config = connection_config
       end
 
+      # Template method: validates tenant name then delegates to resolve_connection_config.
+      # Called by ConnectionHandling — subclasses should NOT override this.
+      def validated_connection_config(tenant)
+        TenantNameValidator.validate!(
+          tenant,
+          strategy: Apartment.config.tenant_strategy,
+          adapter_name: base_config['adapter']
+        )
+        resolve_connection_config(tenant)
+      end
+
       # Resolve a tenant-specific connection config hash.
       # Subclasses override to set strategy-specific keys.
       def resolve_connection_config(tenant)
@@ -26,6 +38,11 @@ module Apartment
 
       # Create a new tenant (schema or database).
       def create(tenant)
+        TenantNameValidator.validate!(
+          tenant,
+          strategy: Apartment.config.tenant_strategy,
+          adapter_name: base_config['adapter']
+        )
         run_callbacks(:create) do
           create_tenant(tenant)
           Instrumentation.instrument(:create, tenant: tenant)

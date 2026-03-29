@@ -77,6 +77,23 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
   end
 
+  describe '#validated_connection_config' do
+    it 'returns the resolved config for valid tenant names' do
+      result = adapter.validated_connection_config('acme')
+      expect(result).to(eq(adapter: 'postgresql', database: 'acme'))
+    end
+
+    it 'raises ConfigurationError for invalid tenant names' do
+      expect { adapter.validated_connection_config("bad\x00name") }
+        .to(raise_error(Apartment::ConfigurationError, /NUL byte/))
+    end
+
+    it 'raises ConfigurationError for empty tenant names' do
+      expect { adapter.validated_connection_config('') }
+        .to(raise_error(Apartment::ConfigurationError, /cannot be empty/))
+    end
+  end
+
   describe '#resolve_connection_config' do
     it 'raises NotImplementedError on the abstract class' do
       abstract = described_class.new(connection_config)
@@ -98,6 +115,14 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     it 'instruments the create event' do
       expect(Apartment::Instrumentation).to(receive(:instrument).with(:create, tenant: 'acme'))
       adapter.create('acme')
+    end
+
+    it 'raises ConfigurationError for invalid tenant names before creating' do
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      expect { adapter.create("bad\x00name") }
+        .to(raise_error(Apartment::ConfigurationError, /NUL byte/))
+      # Should not have called create_tenant
+      expect(adapter.created_tenants).to(be_empty)
     end
 
     it 'runs :create callbacks around the operation' do
