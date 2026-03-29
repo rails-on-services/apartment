@@ -1,24 +1,36 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'active_record'
-require_relative '../../../lib/apartment/patches/connection_handling'
 
-# This spec uses a real SQLite3 in-memory database.
-# When the full suite runs, other specs may have loaded a stub ActiveRecord::Base
-# without establish_connection. Skip this suite in that case — run it directly
-# or via a gemfile that includes sqlite3 to get full coverage.
-REAL_AR = ActiveRecord::Base.respond_to?(:establish_connection)
+# This spec requires real ActiveRecord + sqlite3 gem (not the stub in apartment_spec.rb).
+# Run via appraisal: bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/patches/
+# Skips gracefully when sqlite3 is not available or when the AR stub from
+# apartment_spec.rb loaded first (randomized suite order).
+REAL_AR_AVAILABLE = begin
+  require 'active_record'
+  # The stub in apartment_spec.rb defines AR::Base without establish_connection.
+  # If that loaded first, real AR's require is a partial no-op. Detect this.
+  ActiveRecord::Base.respond_to?(:establish_connection) &&
+    (ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:') rescue false) &&
+    begin
+      require_relative '../../../lib/apartment/patches/connection_handling'
+      ActiveRecord::Base.singleton_class.prepend(Apartment::Patches::ConnectionHandling)
+      true
+    end
+rescue LoadError
+  false
+end
 
-if REAL_AR
-  # Establish the default SQLite3 connection once before any example runs.
-  ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
-  # Prepend the patch once; subsequent prepends of the same module are no-ops.
-  ActiveRecord::Base.singleton_class.prepend(Apartment::Patches::ConnectionHandling)
+unless REAL_AR_AVAILABLE
+  module Apartment
+    module Patches
+      module ConnectionHandling; end
+    end
+  end
 end
 
 RSpec.describe(Apartment::Patches::ConnectionHandling) do
-  before { skip 'requires real ActiveRecord with SQLite3' unless REAL_AR }
+  before { skip 'requires real ActiveRecord with sqlite3 gem (run via appraisal)' unless REAL_AR_AVAILABLE }
 
   let(:mock_adapter) do
     double('AbstractAdapter',
