@@ -45,7 +45,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
 
   let(:mock_adapter) do
     double('AbstractAdapter',
-           resolve_connection_config: { 'adapter' => 'sqlite3', 'database' => ':memory:' })
+           validated_connection_config: { 'adapter' => 'sqlite3', 'database' => ':memory:' })
   end
 
   # Capture the default pool with no tenant set, for comparison in tests.
@@ -192,7 +192,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
     context 'hyphenated tenant name' do
       let(:mock_adapter_hyph) do
         double('AbstractAdapter',
-               resolve_connection_config: { 'adapter' => 'sqlite3', 'database' => ':memory:' })
+               validated_connection_config: { 'adapter' => 'sqlite3', 'database' => ':memory:' })
       end
 
       before do
