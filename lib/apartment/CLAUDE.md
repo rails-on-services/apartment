@@ -20,7 +20,8 @@ lib/apartment/
 │   └── mysql_config.rb        # placeholder
 ├── active_record/         # [v3] ActiveRecord patches (to be replaced Phase 2.3)
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md)
-├── patches/               # [v3] Ruby/Rails core patches
+├── patches/               # [v4] ActiveRecord patches for tenant-aware connections
+│   └── connection_handling.rb # [v4] Prepends on AR::Base — tenant-aware connection_pool
 ├── tasks/                 # Rake task utilities, parallel migrations (see CLAUDE.md)
 ├── config.rb              # [v4] Configuration with validate!/freeze!
 ├── current.rb             # [v4] Fiber-safe tenant context (CurrentAttributes)
@@ -81,7 +82,7 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 - **migrator.rb** — Tenant migration iteration with parallel support
 - **model.rb** — Excluded model connection handling (to be replaced Phase 2.4)
 - **console.rb / custom_console.rb** — Rails console tenant helpers
-- **active_record/** — AR patches for tenant-aware connections (to be replaced Phase 2.3)
+- **active_record/** — v3 AR patches (to be removed; replaced by v4 patches/connection_handling.rb)
 - **adapters/postgresql_adapter.rb** — v3 schema switching (Zeitwerk-ignored, replaced by v4 PostgreSQLSchemaAdapter)
 
 ## Data Flow

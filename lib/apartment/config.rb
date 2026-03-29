@@ -98,7 +98,7 @@ module Apartment
 
     # Validate configuration completeness and consistency.
     # Raises ConfigurationError on invalid state.
-    def validate!
+    def validate! # rubocop:disable Metrics/AbcSize
       raise(ConfigurationError, 'tenant_strategy is required') unless @tenant_strategy
 
       unless @tenants_provider.respond_to?(:call)
@@ -122,10 +122,11 @@ module Apartment
               "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}")
       end
 
-      unless @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)
-        raise(ConfigurationError,
-              "shard_key_prefix must be a lowercase string matching /[a-z_][a-z0-9_]*/, got: #{@shard_key_prefix.inspect}")
-      end
+      return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)
+
+      raise(ConfigurationError,
+            'shard_key_prefix must be a lowercase string matching /[a-z_][a-z0-9_]*/, ' \
+            "got: #{@shard_key_prefix.inspect}")
     end
 
     # Returns the current Rails environment name, falling back to env vars and a safe default.

@@ -8,7 +8,7 @@ module Apartment
     # connection_pool lookups. When Apartment::Current.tenant is set,
     # returns a tenant-specific pool with immutable, tenant-scoped config.
     module ConnectionHandling
-      def connection_pool
+      def connection_pool # rubocop:disable Metrics/MethodLength
         tenant = Apartment::Current.tenant
         default = Apartment.config&.default_tenant
 
