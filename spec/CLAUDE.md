@@ -1,6 +1,6 @@
 # spec/ - Apartment Test Suite
 
-> **Note**: This file primarily describes the v3 test suite. v4 unit tests live in `spec/unit/` (231 specs covering Config, Current, PoolManager, PoolReaper, Tenant, AbstractAdapter, adapter factory, and all concrete adapters: PostgreSQLSchemaAdapter, PostgreSQLDatabaseAdapter, MySQL2Adapter, TrilogyAdapter, SQLite3Adapter). Run with `bundle exec rspec spec/unit/`. v3 specs in other directories remain for v3 code that hasn't been replaced yet.
+> **Note**: This file primarily describes the v3 test suite. v4 unit tests live in `spec/unit/` (273 specs). v4 integration tests live in `spec/integration/v4/` (39 specs across SQLite/PostgreSQL/MySQL: switching, lifecycle, excluded models, edge cases, stress/concurrency, PG schemas, MySQL databases). Run unit tests with `bundle exec rspec spec/unit/`. Run integration tests with `bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/` (SQLite), `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/` (PG), or `DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/` (MySQL). v3 specs in other directories remain for v3 code that hasn't been replaced yet.
 
 This directory contains the test suite for Apartment, covering adapters, elevators, configuration, and integration scenarios.
 

@@ -121,6 +121,33 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         pool = ActiveRecord::Base.connection_pool
         expect(pool.db_config.adapter).to(eq('sqlite3'))
       end
+
+      it 'deregister_all_tenant_pools removes AR handler entries' do
+        # Create pools for two tenants
+        Apartment::Current.tenant = 'acme'
+        ActiveRecord::Base.connection_pool
+        Apartment::Current.tenant = 'widgets'
+        ActiveRecord::Base.connection_pool
+
+        prefix = Apartment.config.shard_key_prefix
+
+        # Verify they exist
+        %w[acme widgets].each do |t|
+          expect(ActiveRecord::Base.connection_handler.retrieve_connection_pool(
+                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}"
+                 )).not_to(be_nil)
+        end
+
+        # Deregister all
+        Apartment.send(:deregister_all_tenant_pools)
+
+        # Verify they're gone
+        %w[acme widgets].each do |t|
+          expect(ActiveRecord::Base.connection_handler.retrieve_connection_pool(
+                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}"
+                 )).to(be_nil)
+        end
+      end
     end
 
     context 'pool usability' do
@@ -151,6 +178,14 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment.clear_config
         Apartment::Current.tenant = 'acme'
         expect { ActiveRecord::Base.connection_pool }.not_to(raise_error)
+      end
+    end
+
+    describe 'Apartment.activate!' do
+      it 'prepends ConnectionHandling on ActiveRecord::Base singleton class' do
+        # activate! is idempotent (prepend is a no-op if already prepended)
+        Apartment.activate!
+        expect(ActiveRecord::Base.singleton_class.ancestors).to(include(described_class))
       end
     end
 

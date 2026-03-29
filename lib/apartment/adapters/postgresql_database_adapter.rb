@@ -22,6 +22,10 @@ module Apartment
         conn.execute(
           "CREATE DATABASE #{conn.quote_table_name(db_name)}"
         )
+      rescue ActiveRecord::StatementInvalid => e
+        raise unless e.cause.is_a?(PG::DuplicateDatabase)
+
+        raise(Apartment::TenantExists, tenant)
       end
 
       def drop_tenant(tenant)

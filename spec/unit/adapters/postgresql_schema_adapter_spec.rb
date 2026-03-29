@@ -122,7 +122,7 @@ RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
 
     it 'executes CREATE SCHEMA with quoted tenant name' do
       allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
-      expect(connection).to(receive(:execute).with('CREATE SCHEMA "acme"'))
+      expect(connection).to(receive(:execute).with('CREATE SCHEMA IF NOT EXISTS "acme"'))
 
       adapter.create('acme')
     end
@@ -132,14 +132,14 @@ RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
       # Schema names are NOT environmentified — unlike database-per-tenant adapters.
       # The schema lives inside an already-environment-specific database.
       allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
-      expect(connection).to(receive(:execute).with('CREATE SCHEMA "acme"'))
+      expect(connection).to(receive(:execute).with('CREATE SCHEMA IF NOT EXISTS "acme"'))
 
       adapter.create('acme')
     end
 
     it 'quotes tenant names that need escaping' do
       allow(connection).to(receive(:quote_table_name).with('my-tenant').and_return('"my-tenant"'))
-      expect(connection).to(receive(:execute).with('CREATE SCHEMA "my-tenant"'))
+      expect(connection).to(receive(:execute).with('CREATE SCHEMA IF NOT EXISTS "my-tenant"'))
 
       adapter.create('my-tenant')
     end
