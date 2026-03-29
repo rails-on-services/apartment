@@ -39,7 +39,7 @@ require_relative 'apartment/errors'
 
 module Apartment
   class << self
-    attr_reader :config, :pool_manager
+    attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
 
     # Lazy-loading adapter. Built on first access via build_adapter.
@@ -59,33 +59,72 @@ module Apartment
     def configure
       raise(ConfigurationError, 'Apartment.configure requires a block') unless block_given?
 
-      # Prepare-then-swap: build and validate new config before tearing down
-      # old state. If the block or validate! raises, the previous working
-      # configuration is preserved.
       new_config = Config.new
       yield(new_config)
       new_config.validate!
       new_config.freeze!
 
       # Validation passed — tear down old state and swap in new.
-      PoolReaper.stop
-      @pool_manager&.clear
-      @adapter = nil
+      teardown_old_state
       @config = new_config
       @pool_manager = PoolManager.new
+      @pool_reaper = PoolReaper.new(
+        pool_manager: @pool_manager,
+        interval: new_config.pool_idle_timeout,
+        idle_timeout: new_config.pool_idle_timeout,
+        max_total: new_config.max_total_connections,
+        default_tenant: new_config.default_tenant,
+        shard_key_prefix: new_config.shard_key_prefix
+      )
+      @pool_reaper.start
       @config
     end
 
     # Reset all configuration and stop background tasks.
     def clear_config
-      PoolReaper.stop
-      @pool_manager&.clear
+      teardown_old_state
       @config = nil
       @pool_manager = nil
-      @adapter = nil
+      @pool_reaper = nil
+    end
+
+    # Activate the ConnectionHandling patch on ActiveRecord::Base.
+    # Idempotent — prepend on an already-prepended module is a no-op.
+    def activate!
+      require_relative 'apartment/patches/connection_handling'
+      ActiveRecord::Base.singleton_class.prepend(Patches::ConnectionHandling)
     end
 
     private
+
+    # Safely tear down old state. Deregisters tenant pools from AR's
+    # ConnectionHandler before clearing, then stops the reaper.
+    def teardown_old_state
+      begin
+        @pool_reaper&.stop
+      rescue StandardError => e
+        warn "[Apartment] PoolReaper.stop failed during teardown: #{e.class}: #{e.message}"
+      end
+      deregister_all_tenant_pools
+      @pool_manager&.clear
+      @adapter = nil
+    end
+
+    def deregister_all_tenant_pools
+      return unless @pool_manager && @config && defined?(ActiveRecord::Base)
+
+      prefix = @config.shard_key_prefix
+      @pool_manager.stats[:tenants]&.each do |tenant_key|
+        shard_key = :"#{prefix}_#{tenant_key}"
+        ActiveRecord::Base.connection_handler.remove_connection_pool(
+          'ActiveRecord::Base',
+          role: ActiveRecord::Base.current_role,
+          shard: shard_key
+        )
+      rescue StandardError => e
+        warn "[Apartment] Failed to deregister pool for #{tenant_key}: #{e.class}: #{e.message}"
+      end
+    end
 
     # Factory: resolve the correct adapter class based on strategy and database adapter.
     def build_adapter

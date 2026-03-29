@@ -162,7 +162,7 @@ RSpec.describe(Apartment::Tenant) do
   describe '.pool_stats' do
     it 'delegates to pool_manager.stats' do
       stats = { total: 2, active: 1 }
-      expect(Apartment.pool_manager).to(receive(:stats).and_return(stats))
+      allow(Apartment.pool_manager).to(receive(:stats).and_return(stats))
       expect(described_class.pool_stats).to(eq(stats))
     end
 

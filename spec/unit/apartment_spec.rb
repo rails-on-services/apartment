@@ -88,6 +88,58 @@ RSpec.describe(Apartment) do
     end
   end
 
+  describe '.pool_reaper' do
+    it 'is nil before configure' do
+      expect(described_class.pool_reaper).to(be_nil)
+    end
+
+    it 'is an instance of PoolReaper after configure' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+      expect(described_class.pool_reaper).to(be_a(Apartment::PoolReaper))
+    end
+
+    it 'is running after configure' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+      expect(described_class.pool_reaper).to(be_running)
+    end
+
+    it 'is nil after clear_config' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+      described_class.clear_config
+      expect(described_class.pool_reaper).to(be_nil)
+    end
+  end
+
+  describe '.configure teardown protection' do
+    it 'completes reconfigure even if reaper stop raises' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      allow(described_class.pool_reaper).to(receive(:stop).and_raise(RuntimeError, 'timer boom'))
+
+      expect do
+        described_class.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { [] }
+          config.default_tenant = 'new_default'
+        end
+      end.not_to(raise_error)
+
+      expect(described_class.config.default_tenant).to(eq('new_default'))
+    end
+  end
+
   describe 'build_adapter (private)' do
     before do
       described_class.configure do |config|

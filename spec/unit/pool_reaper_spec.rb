@@ -15,11 +15,6 @@ RSpec.describe(Apartment::PoolReaper) do
     )
   end
 
-  # spec_helper's after hook calls Apartment.clear_config → PoolReaper.stop (class method).
-  # That class method no longer exists — Task 3 will fix apartment.rb.
-  # Until then, stub it here so the global after hook doesn't crash our tests.
-  before { allow(described_class).to(receive(:stop)) }
-
   after { reaper.stop if reaper.running? }
 
   describe '#initialize' do
