@@ -35,7 +35,7 @@ module Apartment
       # Drop a tenant.
       def drop(tenant)
         drop_tenant(tenant)
-        # Remove cached pool (key format must match ConnectionHandling#connection_pool)
+        # Remove cached pool (key is tenant.to_s, must match pool key used in Phase 2.3 ConnectionHandling)
         pool_key = tenant.to_s
         pool = Apartment.pool_manager&.remove(pool_key)
         pool&.disconnect! if pool.respond_to?(:disconnect!)
@@ -70,12 +70,13 @@ module Apartment
       end
 
       # Environmentify a tenant name based on config.
+      # :prepend/:append require Rails to be defined (for Rails.env).
       def environmentify(tenant)
         case Apartment.config.environmentify_strategy
         when :prepend
-          "#{Rails.env}_#{tenant}"
+          "#{rails_env}_#{tenant}"
         when :append
-          "#{tenant}_#{Rails.env}"
+          "#{tenant}_#{rails_env}"
         when nil
           tenant.to_s
         else
@@ -97,6 +98,21 @@ module Apartment
 
       def drop_tenant(tenant)
         raise(NotImplementedError)
+      end
+
+      private
+
+      # Connection config with string keys (used by subclasses to build tenant configs).
+      def base_config
+        connection_config.transform_keys(&:to_s)
+      end
+
+      def rails_env
+        unless defined?(Rails)
+          raise(Apartment::ConfigurationError,
+                'environmentify_strategy :prepend/:append requires Rails to be defined')
+        end
+        Rails.env
       end
     end
   end

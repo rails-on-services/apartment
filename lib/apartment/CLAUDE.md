@@ -7,12 +7,14 @@ This directory contains v3 and v4 code side by side. Zeitwerk `loader.ignore` di
 ```
 lib/apartment/
 ├── adapters/              # Database-specific tenant isolation (see CLAUDE.md)
-│   ├── abstract_adapter.rb    # [v4] Base adapter: lifecycle, callbacks, resolve_connection_config
-│   ├── postgresql_adapter.rb  # [v3] PostgreSQL schema switching (to be replaced Phase 2.2)
-│   ├── mysql2_adapter.rb      # [v3] MySQL database switching (to be replaced Phase 2.2)
-│   ├── trilogy_adapter.rb     # [v3] MySQL via Trilogy (to be replaced Phase 2.2)
-│   ├── sqlite3_adapter.rb     # [v3] SQLite file switching (to be replaced Phase 2.2)
-│   └── *_jdbc_*.rb            # [v3] JRuby adapters (dropped in v4)
+│   ├── abstract_adapter.rb    # [v4] Base adapter: lifecycle, callbacks, resolve_connection_config, base_config
+│   ├── postgresql_schema_adapter.rb  # [v4] Schema-per-tenant (CREATE/DROP SCHEMA, schema_search_path)
+│   ├── postgresql_database_adapter.rb # [v4] Database-per-tenant on PostgreSQL (CREATE/DROP DATABASE)
+│   ├── mysql2_adapter.rb      # [v4] Database-per-tenant on MySQL (mysql2 driver)
+│   ├── trilogy_adapter.rb     # [v4] Database-per-tenant on MySQL (trilogy driver, inherits MySQL2Adapter)
+│   ├── sqlite3_adapter.rb     # [v4] File-per-tenant (FileUtils lifecycle)
+│   ├── postgresql_adapter.rb  # [v3] PostgreSQL schema switching (legacy, Zeitwerk-ignored)
+│   └── *_jdbc_*.rb            # [v3] JRuby adapters (dropped in v4, Zeitwerk-ignored)
 ├── configs/               # [v4] Database-specific config objects
 │   ├── postgresql_config.rb   # persistent_schemas, enforce_search_path_reset
 │   └── mysql_config.rb        # placeholder
@@ -61,16 +63,26 @@ Background `Concurrent::TimerTask` that evicts idle and excess tenant pools. Def
 
 ### adapters/abstract_adapter.rb — Base Adapter
 
-Lifecycle ops (`create`, `drop`, `migrate`, `seed`), `ActiveSupport::Callbacks` on `:create`/`:switch`, `resolve_connection_config` (abstract — subclasses override), `process_excluded_models`, `environmentify`. Constructor takes `connection_config` (raw AR hash, not `Apartment::Config`).
+Lifecycle ops (`create`, `drop`, `migrate`, `seed`), `ActiveSupport::Callbacks` on `:create`/`:switch`, `resolve_connection_config` (abstract — subclasses override), `process_excluded_models`, `environmentify`, `base_config` (stringified `connection_config`), `rails_env` (guarded `Rails.env` access). Constructor takes `connection_config` (raw AR hash, not `Apartment::Config`).
+
+### Concrete Adapters (Phase 2.2)
+
+All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `create_tenant`, `drop_tenant`.
+
+- **PostgreSQLSchemaAdapter** — `schema_search_path` with persistent schemas. Does NOT environmentify (schemas are named directly). `CREATE/DROP SCHEMA IF EXISTS ... CASCADE`.
+- **PostgreSQLDatabaseAdapter** — `database` key with environmentified name. `CREATE/DROP DATABASE IF EXISTS`.
+- **MySQL2Adapter** — Same pattern as PostgreSQLDatabaseAdapter. `CREATE/DROP DATABASE IF EXISTS`.
+- **TrilogyAdapter** — Empty subclass of MySQL2Adapter (alternative MySQL driver).
+- **SQLite3Adapter** — `database` key with file path. `FileUtils.mkdir_p` for create, `FileUtils.rm_f` for drop.
 
 ## v3 Files (still active, replaced incrementally)
 
 - **railtie.rb** — Rails boot integration, excluded model setup, rake task loading
 - **migrator.rb** — Tenant migration iteration with parallel support
-- **model.rb** — Excluded model connection handling
+- **model.rb** — Excluded model connection handling (to be replaced Phase 2.4)
 - **console.rb / custom_console.rb** — Rails console tenant helpers
-- **active_record/** — AR patches for tenant-aware connections
-- **adapters/postgresql_adapter.rb** etc. — v3 adapters with `SET search_path` switching
+- **active_record/** — AR patches for tenant-aware connections (to be replaced Phase 2.3)
+- **adapters/postgresql_adapter.rb** — v3 schema switching (Zeitwerk-ignored, replaced by v4 PostgreSQLSchemaAdapter)
 
 ## Data Flow
 

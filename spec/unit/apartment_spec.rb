@@ -83,8 +83,7 @@ RSpec.describe(Apartment) do
       end
 
       # The adapter ivar should be nil (cleared), so lazy build will be attempted
-      # Since concrete classes don't exist, this will raise LoadError
-      # We verify the old mock is gone by checking the ivar directly
+      # on next access. Verify the old mock is gone by checking the ivar directly.
       expect(described_class.instance_variable_get(:@adapter)).to(be_nil)
     end
   end
@@ -105,8 +104,8 @@ RSpec.describe(Apartment) do
       end
 
       it 'requires postgresql_schema_adapter for :schema strategy' do
-        # The file doesn't exist yet, so require_relative will raise LoadError
-        expect { described_class.send(:build_adapter) }.to(raise_error(LoadError, /postgresql_schema_adapter/))
+        adapter = described_class.send(:build_adapter)
+        expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLSchemaAdapter))
       end
 
       context 'with :database_name strategy' do
@@ -117,41 +116,39 @@ RSpec.describe(Apartment) do
           end
         end
 
-        it 'requires postgresql_database_adapter for postgresql' do
-          allow(db_config).to(receive(:adapter).and_return('postgresql'))
-          expect { described_class.send(:build_adapter) }.to(raise_error(LoadError, /postgresql_database_adapter/))
+        it 'instantiates PostgreSQLDatabaseAdapter for postgresql' do
+          allow(db_config).to(receive_messages(adapter: 'postgresql', configuration_hash: { adapter: 'postgresql' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLDatabaseAdapter))
         end
 
-        it 'requires postgresql_database_adapter for postgis' do
-          allow(db_config).to(receive(:adapter).and_return('postgis'))
-          expect { described_class.send(:build_adapter) }.to(raise_error(LoadError, /postgresql_database_adapter/))
+        it 'instantiates PostgreSQLDatabaseAdapter for postgis' do
+          allow(db_config).to(receive_messages(adapter: 'postgis', configuration_hash: { adapter: 'postgis' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLDatabaseAdapter))
         end
 
-        it 'attempts to load mysql2_adapter for mysql2' do
-          allow(db_config).to(receive(:adapter).and_return('mysql2'))
-          # V3 file exists but v4 constant (MySQL2Adapter) doesn't — raises NameError
-          expect { described_class.send(:build_adapter) }.to(raise_error(NameError, /MySQL2Adapter/))
+        it 'instantiates MySQL2Adapter for mysql2' do
+          allow(db_config).to(receive_messages(adapter: 'mysql2', configuration_hash: { adapter: 'mysql2' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::MySQL2Adapter))
         end
 
-        it 'routes to TrilogyAdapter for trilogy' do
-          allow(db_config).to(receive(:adapter).and_return('trilogy'))
-          # V3 TrilogyAdapter happens to exist with matching constant name.
-          # Verify the factory resolves without raising AdapterNotFound.
-          # It may succeed (v3 class) or raise a different error depending on
-          # initialization — the key assertion is routing logic is correct.
-          begin
-            described_class.send(:build_adapter)
-          rescue Apartment::AdapterNotFound
-            raise('Expected trilogy to route correctly, but got AdapterNotFound')
-          rescue StandardError
-            # Other errors (e.g., from v3 adapter init) are acceptable
-          end
+        it 'instantiates TrilogyAdapter for trilogy' do
+          allow(db_config).to(receive_messages(adapter: 'trilogy', configuration_hash: { adapter: 'trilogy' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::TrilogyAdapter))
         end
 
-        it 'attempts to load sqlite3_adapter for sqlite3' do
-          allow(db_config).to(receive(:adapter).and_return('sqlite3'))
-          # V3 file exists but v4 constant (SQLite3Adapter) doesn't — raises NameError
-          expect { described_class.send(:build_adapter) }.to(raise_error(NameError, /SQLite3Adapter/))
+        it 'instantiates SQLite3Adapter for sqlite3' do
+          allow(db_config).to(receive_messages(adapter: 'sqlite3', configuration_hash: { adapter: 'sqlite3' }))
+
+          adapter = described_class.send(:build_adapter)
+          expect(adapter).to(be_a(Apartment::Adapters::SQLite3Adapter))
         end
 
         it 'raises AdapterNotFound for unknown database adapter' do
