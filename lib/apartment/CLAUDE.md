@@ -35,7 +35,7 @@ lib/apartment/
 ├── deprecation.rb         # [v3] Deprecation warnings
 ├── log_subscriber.rb      # [v3] ActiveRecord log subscriber
 ├── migrator.rb            # [v3] Tenant migration runner
-├── model.rb               # [v3] Excluded model behavior (to be replaced Phase 2.4)
+├── model.rb               # [v3] Excluded model behavior (v4 handling in abstract_adapter.rb)
 ├── railtie.rb             # [v3] Rails initialization hooks
 └── version.rb             # Gem version constant
 ```
@@ -80,7 +80,7 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 - **railtie.rb** — Rails boot integration, excluded model setup, rake task loading
 - **migrator.rb** — Tenant migration iteration with parallel support
-- **model.rb** — Excluded model connection handling (to be replaced Phase 2.4)
+- **model.rb** — Excluded model connection handling (v4 handling in abstract_adapter.rb)
 - **console.rb / custom_console.rb** — Rails console tenant helpers
 - **active_record/** — v3 AR patches (to be removed; replaced by v4 patches/connection_handling.rb)
 - **adapters/postgresql_adapter.rb** — v3 schema switching (Zeitwerk-ignored, replaced by v4 PostgreSQLSchemaAdapter)

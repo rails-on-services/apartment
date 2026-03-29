@@ -153,6 +153,25 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       expect(Apartment::Instrumentation).to(receive(:instrument).with(:drop, tenant: 'acme'))
       adapter.drop('acme')
     end
+
+    it 'deregisters the shard from AR ConnectionHandler' do
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(Apartment.pool_manager).to(receive(:remove).and_return(nil))
+      expect(Apartment).to(receive(:deregister_shard).with('acme'))
+      adapter.drop('acme')
+    end
+
+    it 'still deregisters shard and instruments when disconnect! raises' do
+      mock_pool = double('Pool')
+      allow(mock_pool).to(receive(:respond_to?).with(:disconnect!).and_return(true))
+      allow(mock_pool).to(receive(:disconnect!).and_raise(RuntimeError, 'disconnect boom'))
+      allow(Apartment.pool_manager).to(receive(:remove).and_return(mock_pool))
+
+      expect(Apartment).to(receive(:deregister_shard).with('acme'))
+      expect(Apartment::Instrumentation).to(receive(:instrument).with(:drop, tenant: 'acme'))
+
+      adapter.drop('acme')
+    end
   end
 
   describe '#migrate' do
@@ -225,12 +244,14 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       adapter.seed('acme')
     end
 
-    it 'does nothing when seed file does not exist' do
+    it 'raises ConfigurationError when seed file does not exist' do
       reconfigure(seed_data_file: '/tmp/missing.rb')
       allow(File).to(receive(:exist?).with('/tmp/missing.rb').and_return(false))
-      expect(adapter).not_to(receive(:load))
 
-      adapter.seed('acme')
+      expect { adapter.seed('acme') }.to(raise_error(
+                                           Apartment::ConfigurationError,
+                                           "Seed file '/tmp/missing.rb' does not exist"
+                                         ))
     end
   end
 
@@ -238,6 +259,8 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     it 'establishes connections for each excluded model' do
       model_class = Class.new
       stub_const('GlobalUser', model_class)
+      allow(model_class).to(receive(:table_name).and_return('global_users'))
+      allow(model_class).to(receive(:table_name=))
 
       reconfigure(excluded_models: ['GlobalUser'])
 
@@ -254,6 +277,10 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       company_class = Class.new
       stub_const('GlobalUser', user_class)
       stub_const('GlobalCompany', company_class)
+      allow(user_class).to(receive(:table_name).and_return('global_users'))
+      allow(user_class).to(receive(:table_name=))
+      allow(company_class).to(receive(:table_name).and_return('global_companies'))
+      allow(company_class).to(receive(:table_name=))
 
       reconfigure(excluded_models: %w[GlobalUser GlobalCompany])
 
@@ -269,9 +296,48 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       adapter.process_excluded_models
     end
 
-    it 'raises NameError when excluded model class does not exist' do
+    it 'raises ConfigurationError when excluded model class does not exist' do
       reconfigure(excluded_models: ['NonExistentModel'])
-      expect { adapter.process_excluded_models }.to(raise_error(NameError, /NonExistentModel/))
+      expect { adapter.process_excluded_models }.to(raise_error(
+                                                      Apartment::ConfigurationError,
+                                                      /Excluded model 'NonExistentModel' could not be resolved/
+                                                    ))
+    end
+
+    it 'prefixes table name with default schema for schema strategy' do
+      model_class = Class.new
+      stub_const('GlobalUser', model_class)
+      allow(model_class).to(receive(:establish_connection))
+      allow(model_class).to(receive(:table_name).and_return('global_users'))
+
+      reconfigure(excluded_models: ['GlobalUser'])
+
+      expect(model_class).to(receive(:table_name=).with('public.global_users'))
+      adapter.process_excluded_models
+    end
+
+    it 'strips existing schema prefix before re-prefixing' do
+      model_class = Class.new
+      stub_const('GlobalUser', model_class)
+      allow(model_class).to(receive(:establish_connection))
+      allow(model_class).to(receive(:table_name).and_return('old_schema.global_users'))
+
+      reconfigure(excluded_models: ['GlobalUser'])
+
+      expect(model_class).to(receive(:table_name=).with('public.global_users'))
+      adapter.process_excluded_models
+    end
+
+    it 'does not prefix table name for database_name strategy' do
+      model_class = Class.new
+      stub_const('GlobalUser', model_class)
+      allow(model_class).to(receive(:establish_connection))
+      allow(model_class).to(receive(:table_name).and_return('global_users'))
+
+      reconfigure(tenant_strategy: :database_name, excluded_models: ['GlobalUser'])
+
+      expect(model_class).not_to(receive(:table_name=))
+      adapter.process_excluded_models
     end
   end
 

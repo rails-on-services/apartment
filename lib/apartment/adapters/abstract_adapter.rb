@@ -37,7 +37,11 @@ module Apartment
         drop_tenant(tenant)
         pool_key = tenant.to_s
         pool = Apartment.pool_manager&.remove(pool_key)
-        pool&.disconnect! if pool.respond_to?(:disconnect!)
+        begin
+          pool&.disconnect! if pool.respond_to?(:disconnect!)
+        rescue StandardError => e
+          warn "[Apartment] Pool disconnect failed for '#{tenant}': #{e.class}: #{e.message}"
+        end
         deregister_shard_from_ar_handler(tenant)
         Instrumentation.instrument(:drop, tenant: tenant)
       end
@@ -53,7 +57,14 @@ module Apartment
       def seed(tenant)
         Apartment::Tenant.switch(tenant) do
           seed_file = Apartment.config.seed_data_file
-          load(seed_file) if seed_file && File.exist?(seed_file)
+          return unless seed_file
+
+          unless File.exist?(seed_file)
+            raise(Apartment::ConfigurationError,
+                  "Seed file '#{seed_file}' does not exist")
+          end
+
+          load(seed_file)
         end
       end
 
@@ -64,8 +75,13 @@ module Apartment
         )
 
         Apartment.config.excluded_models.each do |model_name|
-          klass = model_name.constantize
+          klass = resolve_excluded_model(model_name)
           klass.establish_connection(default_config)
+
+          if Apartment.config.tenant_strategy == :schema
+            table = klass.table_name.split('.').last # Strip existing prefix if any
+            klass.table_name = "#{default_tenant}.#{table}"
+          end
         end
       end
 
@@ -113,6 +129,13 @@ module Apartment
                 'environmentify_strategy :prepend/:append requires Rails to be defined')
         end
         Rails.env
+      end
+
+      def resolve_excluded_model(model_name)
+        model_name.constantize
+      rescue NameError => e
+        raise(Apartment::ConfigurationError,
+              "Excluded model '#{model_name}' could not be resolved: #{e.message}")
       end
 
       def deregister_shard_from_ar_handler(tenant)
