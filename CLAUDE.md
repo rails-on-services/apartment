@@ -36,6 +36,11 @@ bundle exec appraisal install                              # first time only
 bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/   # single version
 bundle exec appraisal rspec spec/unit/                     # all versions
 
+# v4 integration tests (requires real databases)
+bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/                        # SQLite
+DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/  # PostgreSQL
+DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/          # MySQL
+
 # Lint
 bundle exec rubocop
 

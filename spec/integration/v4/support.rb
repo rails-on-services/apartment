@@ -3,12 +3,142 @@
 require('tmpdir')
 require('fileutils')
 
-# Integration tests require real ActiveRecord + sqlite3.
-# Run via: bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/
+# Integration tests require real ActiveRecord + a database gem.
+# Run via appraisal:
+#   bundle exec appraisal rails-8.1-sqlite3      rspec spec/integration/v4/
+#   bundle exec appraisal rails-8.1-postgresql    rspec spec/integration/v4/
+#   bundle exec appraisal rails-8.1-mysql2        rspec spec/integration/v4/
+#
+# Set DATABASE_ENGINE to force an engine: postgresql, mysql, sqlite (default: sqlite)
 V4_INTEGRATION_AVAILABLE = begin
   require('active_record')
-  require('apartment/adapters/sqlite3_adapter')
   ActiveRecord::Base.respond_to?(:establish_connection)
 rescue LoadError
   false
+end
+
+# Helpers for multi-engine integration tests.
+module V4IntegrationHelper
+  module_function
+
+  def database_engine
+    ENV.fetch('DATABASE_ENGINE', 'sqlite')
+  end
+
+  def postgresql?
+    database_engine == 'postgresql'
+  end
+
+  def mysql?
+    database_engine == 'mysql'
+  end
+
+  def sqlite?
+    database_engine == 'sqlite'
+  end
+
+  # Establish the default AR connection for the current engine.
+  # Returns the connection config hash (string keys).
+  def establish_default_connection!(tmp_dir: nil)
+    config = default_connection_config(tmp_dir: tmp_dir)
+    ActiveRecord::Base.establish_connection(config)
+    config
+  end
+
+  # Build the default connection config for the current engine.
+  def default_connection_config(tmp_dir: nil)
+    case database_engine
+    when 'postgresql'
+      {
+        'adapter' => 'postgresql',
+        'host' => ENV.fetch('PGHOST', '127.0.0.1'),
+        'port' => ENV.fetch('PGPORT', '5432').to_i,
+        'username' => ENV.fetch('PGUSER', ENV.fetch('USER', nil)),
+        'password' => ENV.fetch('PGPASSWORD', nil),
+        'database' => ENV.fetch('APARTMENT_TEST_PG_DB', 'apartment_v4_test'),
+      }
+    when 'mysql'
+      {
+        'adapter' => 'mysql2',
+        'host' => ENV.fetch('MYSQL_HOST', '127.0.0.1'),
+        'port' => ENV.fetch('MYSQL_PORT', '3306').to_i,
+        'username' => ENV.fetch('MYSQL_USER', 'root'),
+        'password' => ENV.fetch('MYSQL_PASSWORD', nil),
+        'database' => ENV.fetch('APARTMENT_TEST_MYSQL_DB', 'apartment_v4_test'),
+      }
+    else # sqlite
+      {
+        'adapter' => 'sqlite3',
+        'database' => File.join(tmp_dir || Dir.mktmpdir('apartment_v4'), 'default.sqlite3'),
+      }
+    end
+  end
+
+  # Build the v4 adapter for the current engine.
+  def build_adapter(connection_config)
+    case database_engine
+    when 'postgresql'
+      require('apartment/adapters/postgresql_schema_adapter')
+      Apartment::Adapters::PostgreSQLSchemaAdapter.new(connection_config.transform_keys(&:to_sym))
+    when 'mysql'
+      require('apartment/adapters/mysql2_adapter')
+      Apartment::Adapters::MySQL2Adapter.new(connection_config.transform_keys(&:to_sym))
+    else
+      require('apartment/adapters/sqlite3_adapter')
+      Apartment::Adapters::SQLite3Adapter.new(connection_config.transform_keys(&:to_sym))
+    end
+  end
+
+  # The tenant strategy for the current engine.
+  def tenant_strategy
+    postgresql? ? :schema : :database_name
+  end
+
+  # The default tenant name (PG schema strategy uses 'public').
+  def default_tenant
+    postgresql? ? 'public' : 'default'
+  end
+
+  # Create a test table in the current connection.
+  def create_test_table!(table_name = 'widgets', connection: ActiveRecord::Base.connection)
+    connection.create_table(table_name, force: true) do |t|
+      t.string(:name)
+    end
+  end
+
+  # Ensure the test database exists for PG/MySQL (no-op for SQLite).
+  def ensure_test_database!
+    case database_engine
+    when 'postgresql'
+      db_name = ENV.fetch('APARTMENT_TEST_PG_DB', 'apartment_v4_test')
+      # Connect to 'postgres' DB to create the test DB
+      ActiveRecord::Base.establish_connection(
+        default_connection_config.merge('database' => 'postgres')
+      )
+      unless ActiveRecord::Base.connection.select_value(
+        "SELECT 1 FROM pg_database WHERE datname = '#{db_name}'"
+      )
+        ActiveRecord::Base.connection.execute("CREATE DATABASE #{db_name}")
+      end
+      ActiveRecord::Base.establish_connection(default_connection_config)
+    when 'mysql'
+      db_name = ENV.fetch('APARTMENT_TEST_MYSQL_DB', 'apartment_v4_test')
+      # Connect without a database to create it
+      ActiveRecord::Base.establish_connection(
+        default_connection_config.merge('database' => nil)
+      )
+      ActiveRecord::Base.connection.execute("CREATE DATABASE IF NOT EXISTS `#{db_name}`")
+      ActiveRecord::Base.establish_connection(default_connection_config)
+    end
+    # SQLite: no-op, file created on connect
+  end
+
+  # Drop tenant schemas/databases created during tests.
+  def cleanup_tenants!(tenant_names, adapter)
+    tenant_names.each do |tenant|
+      adapter.drop(tenant)
+    rescue StandardError => e
+      warn "[V4IntegrationHelper] cleanup_tenants! failed for '#{tenant}': #{e.message}"
+    end
+  end
 end

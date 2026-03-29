@@ -4,54 +4,46 @@ require 'spec_helper'
 require_relative 'support'
 
 RSpec.describe('v4 Tenant switching integration', :integration,
-               skip: (V4_INTEGRATION_AVAILABLE ? false : 'requires ActiveRecord + sqlite3')) do
-  let(:tmp_dir) { Dir.mktmpdir('apartment_integration') }
-  # The adapter derives the tenant directory from File.dirname of the base config's database path.
-  # All tenant files land in the same directory: <tmp_dir>/<tenant>.sqlite3
-  let(:default_db) { File.join(tmp_dir, 'default.sqlite3') }
+               skip: (V4_INTEGRATION_AVAILABLE ? false : 'requires ActiveRecord + database gem')) do
+  include V4IntegrationHelper
+
+  let(:tmp_dir) { Dir.mktmpdir('apartment_switching') }
+  let(:tenants) { %w[tenant_a tenant_b] }
 
   before do
-    ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: default_db)
-    ActiveRecord::Base.connection.create_table(:widgets, force: true) do |t|
-      t.string(:name)
-    end
+    V4IntegrationHelper.ensure_test_database! unless V4IntegrationHelper.sqlite?
+    config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
+    V4IntegrationHelper.create_test_table!
 
     stub_const('Widget', Class.new(ActiveRecord::Base) do
       self.table_name = 'widgets'
     end)
 
-    Apartment.configure do |config|
-      config.tenant_strategy = :database_name
-      config.tenants_provider = -> { %w[tenant_a tenant_b] }
-      config.default_tenant = 'default'
+    Apartment.configure do |c|
+      c.tenant_strategy = V4IntegrationHelper.tenant_strategy
+      c.tenants_provider = -> { tenants }
+      c.default_tenant = V4IntegrationHelper.default_tenant
     end
 
-    # The adapter uses base_config['database'] to derive the directory for tenant files.
-    # With default.sqlite3 in tmp_dir, tenant files will be <tmp_dir>/tenant_a.sqlite3, etc.
-    Apartment.adapter = Apartment::Adapters::SQLite3Adapter.new(
-      ActiveRecord::Base.connection_db_config.configuration_hash
-    )
-
+    Apartment.adapter = V4IntegrationHelper.build_adapter(config)
     Apartment.activate!
 
-    # Create tenants — SQLite3Adapter#create just ensures the directory exists;
-    # the actual .sqlite3 file is created on first connection.
-    %w[tenant_a tenant_b].each do |tenant|
+    tenants.each do |tenant|
       Apartment.adapter.create(tenant)
-      # Create the widgets table inside each tenant database.
       Apartment::Tenant.switch(tenant) do
-        ActiveRecord::Base.connection.create_table(:widgets, force: true) do |t|
-          t.string(:name)
-        end
+        V4IntegrationHelper.create_test_table!('widgets', connection: ActiveRecord::Base.connection)
       end
     end
   end
 
   after do
+    V4IntegrationHelper.cleanup_tenants!(tenants, Apartment.adapter)
     Apartment.clear_config
     Apartment::Current.reset
-    ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
-    FileUtils.rm_rf(tmp_dir)
+    if V4IntegrationHelper.sqlite?
+      ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
+      FileUtils.rm_rf(tmp_dir)
+    end
   end
 
   it 'isolates data between tenants' do
@@ -76,7 +68,7 @@ RSpec.describe('v4 Tenant switching integration', :integration,
       end
     end.to(raise_error('boom'))
 
-    expect(Apartment::Tenant.current).to(eq('default'))
+    expect(Apartment::Tenant.current).to(eq(V4IntegrationHelper.default_tenant))
   end
 
   it 'supports nested switching' do
@@ -90,7 +82,6 @@ RSpec.describe('v4 Tenant switching integration', :integration,
       expect(Widget.count).to(eq(1))
     end
 
-    # Verify tenant_b got its own record
     Apartment::Tenant.switch('tenant_b') do
       expect(Widget.count).to(eq(1))
       expect(Widget.first.name).to(eq('B'))

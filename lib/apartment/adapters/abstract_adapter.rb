@@ -70,6 +70,8 @@ module Apartment
 
       # Process excluded models — establish separate connections pinned to default tenant.
       def process_excluded_models
+        return if Apartment.config.excluded_models.empty?
+
         default_config = resolve_connection_config(
           Apartment.config.default_tenant
         )

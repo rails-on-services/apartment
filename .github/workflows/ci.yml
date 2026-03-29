@@ -76,6 +76,10 @@ jobs:
         run: bundle exec rake db:test:prepare
       - name: Run tests
         run: bundle exec rspec --format progress
+      - name: Run v4 integration tests
+        run: bundle exec rspec spec/integration/v4/ --format progress
+        env:
+          DATABASE_ENGINE: postgresql
 
   # ── MySQL integration tests ────────────────────────────────────────
   mysql:
@@ -116,6 +120,10 @@ jobs:
         run: bundle exec rake db:test:prepare
       - name: Run tests
         run: bundle exec rspec --format progress
+      - name: Run v4 integration tests
+        run: bundle exec rspec spec/integration/v4/ --format progress
+        env:
+          DATABASE_ENGINE: mysql
 
   # ── SQLite integration tests ───────────────────────────────────────
   sqlite:
@@ -143,3 +151,7 @@ jobs:
         run: bundle exec rake db:test:prepare
       - name: Run tests
         run: bundle exec rspec --format progress
+      - name: Run v4 integration tests
+        run: bundle exec rspec spec/integration/v4/ --format progress
+        env:
+          DATABASE_ENGINE: sqlite
