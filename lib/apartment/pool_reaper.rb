@@ -100,16 +100,7 @@ module Apartment
     end
 
     def deregister_from_ar_handler(tenant)
-      return unless @shard_key_prefix && defined?(ActiveRecord::Base)
-
-      shard_key = :"#{@shard_key_prefix}_#{tenant}"
-      ActiveRecord::Base.connection_handler.remove_connection_pool(
-        'ActiveRecord::Base',
-        role: ActiveRecord::Base.current_role,
-        shard: shard_key
-      )
-    rescue StandardError => e
-      warn "[Apartment::PoolReaper] Failed to deregister AR pool for #{tenant}: #{e.class}: #{e.message}"
+      Apartment.deregister_shard(tenant)
     end
   end
 end
