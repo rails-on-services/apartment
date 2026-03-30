@@ -36,7 +36,6 @@ Metrics/MethodLength:
     - spec/**/*.rb
     - lib/apartment.rb
     - lib/apartment/tenant.rb
-    - lib/apartment/migrator.rb
     - lib/apartment/config.rb
     - lib/apartment/pool_reaper.rb
 
@@ -59,15 +58,10 @@ Metrics/ParameterLists:
   Exclude:
     - lib/apartment/pool_reaper.rb
 
-Style/OneClassPerFile:
-  Exclude:
-    - lib/apartment/active_record/postgresql_adapter.rb
-
 Metrics/AbcSize:
   Max: 20
   Exclude:
     - spec/**/*.rb
-    - lib/apartment/adapters/postgresql_adapter.rb
 
 Rails/SkipsModelValidations:
   Exclude:
@@ -199,7 +193,6 @@ RSpec/NoExpectationExample:
 ThreadSafety/ClassInstanceVariable:
   Exclude:
     - lib/apartment.rb
-    - lib/apartment/model.rb
     - lib/apartment/pool_reaper.rb
     - lib/apartment/elevators/*.rb
     - spec/support/config.rb
@@ -207,7 +200,6 @@ ThreadSafety/ClassInstanceVariable:
 ThreadSafety/ClassAndModuleAttributes:
   Exclude:
     - lib/apartment.rb
-    - lib/apartment/active_record/postgresql_adapter.rb
 
 ThreadSafety/DirChdir:
   Exclude:
