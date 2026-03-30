@@ -57,7 +57,7 @@ module Apartment
       class_name.constantize
     rescue NameError, LoadError => e
       available = Dir[File.join(__dir__, 'elevators', '*.rb')]
-        .filter_map { |f| name = File.basename(f, '.rb'); name unless name == 'generic' }
+        .filter_map { |f| File.basename(f, '.rb').then { |name| name unless name == 'generic' } }
       raise(Apartment::ConfigurationError,
             "Unknown elevator '#{elevator}': #{e.message}. " \
             "Available elevators: #{available.join(', ')}")
