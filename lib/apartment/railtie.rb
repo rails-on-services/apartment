@@ -29,23 +29,35 @@ module Apartment
       next unless Apartment.config&.elevator
 
       elevator_class = Apartment::Railtie.resolve_elevator_class(Apartment.config.elevator)
-      options = Apartment.config.elevator_options || {}
-      app.middleware.use(elevator_class, *options.values)
+      opts = Apartment.config.elevator_options || {}
+
+      if elevator_class <= Apartment::Elevators::Header && !opts[:trusted]
+        warn <<~WARNING
+          [Apartment] WARNING: Header elevator with trusted: false.
+          Header-based tenant resolution trusts the client to provide the correct tenant.
+          Only use this when the header is injected by trusted infrastructure (CDN, reverse proxy)
+          that strips client-supplied values.
+        WARNING
+      end
+
+      app.middleware.use(elevator_class, **opts)
     end
 
     rake_tasks do
       load File.expand_path('tasks/v4.rake', __dir__)
     end
 
-    # Resolve an elevator symbol to its class. Class method for testability.
+    # Resolve an elevator symbol/string to its class. Class method for testability.
+    # Accepts a Class directly (pass-through) or a symbol/string for lookup.
     def self.resolve_elevator_class(elevator)
+      return elevator if elevator.is_a?(Class)
+
       class_name = "Apartment::Elevators::#{elevator.to_s.camelize}"
       require("apartment/elevators/#{elevator}")
       class_name.constantize
     rescue NameError, LoadError => e
       available = Dir[File.join(__dir__, 'elevators', '*.rb')]
-        .map { |f| File.basename(f, '.rb') }
-        .reject { |n| n == 'generic' }
+        .filter_map { |f| name = File.basename(f, '.rb'); name unless name == 'generic' }
       raise(Apartment::ConfigurationError,
             "Unknown elevator '#{elevator}': #{e.message}. " \
             "Available elevators: #{available.join(', ')}")

@@ -34,5 +34,21 @@ RSpec.describe('Apartment::Railtie') do
       expect { Apartment::Railtie.resolve_elevator_class(:nonexistent) }
         .to(raise_error(Apartment::ConfigurationError, /subdomain/))
     end
+
+    it 'passes through a class without resolution' do
+      klass = Apartment::Railtie.resolve_elevator_class(Apartment::Elevators::Subdomain)
+      expect(klass).to(eq(Apartment::Elevators::Subdomain))
+    end
+
+    it 'passes through any custom class' do
+      custom_class = Class.new(Apartment::Elevators::Generic)
+      klass = Apartment::Railtie.resolve_elevator_class(custom_class)
+      expect(klass).to(eq(custom_class))
+    end
+
+    it 'resolves :header to Apartment::Elevators::Header' do
+      klass = Apartment::Railtie.resolve_elevator_class(:header)
+      expect(klass).to(eq(Apartment::Elevators::Header))
+    end
   end
 end
