@@ -1,0 +1,12 @@
+name: mysql_database
+engine: mysql
+strategy: database_name
+adapter_class: MySQL2Adapter
+default_tenant: apartment_v4_test
+connection:
+  adapter: mysql2
+  host: <%= ENV.fetch('MYSQL_HOST', '127.0.0.1') %>
+  port: <%= ENV.fetch('MYSQL_PORT', '3306') %>
+  username: <%= ENV.fetch('MYSQL_USER', 'root') %>
+  password: <%= ENV.fetch('MYSQL_PASSWORD', nil) %>
+  database: <%= ENV.fetch('APARTMENT_TEST_MYSQL_DB', 'apartment_v4_test') %>

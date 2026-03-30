@@ -2,6 +2,8 @@
 
 require('tmpdir')
 require('fileutils')
+require('erb')
+require('yaml')
 
 # Integration tests require real ActiveRecord + a database gem.
 # Run via appraisal:
@@ -140,6 +142,38 @@ module V4IntegrationHelper
     rescue StandardError => e
       warn "[V4IntegrationHelper] cleanup_tenants! failed for '#{tenant}': #{e.message}"
     end
+  end
+
+  # --- Scenario-based configs ---
+
+  Scenario = Struct.new(:name, :engine, :strategy, :adapter_class, :default_tenant,
+                         :connection, keyword_init: true)
+
+  def load_scenario(name)
+    path = File.join(__dir__, 'scenarios', "#{name}.yml")
+    raise(ArgumentError, "Scenario file not found: #{path}") unless File.exist?(path)
+
+    raw = YAML.safe_load(ERB.new(File.read(path)).result, permitted_classes: [Symbol])
+    Scenario.new(
+      name: raw['name'],
+      engine: raw['engine'],
+      strategy: raw['strategy'].to_sym,
+      adapter_class: raw['adapter_class'],
+      default_tenant: raw['default_tenant'],
+      connection: raw['connection'].transform_keys(&:to_s)
+    )
+  end
+
+  def scenarios_for_engine
+    Dir[File.join(__dir__, 'scenarios', '*.yml')].filter_map do |path|
+      scenario_name = File.basename(path, '.yml')
+      scenario = load_scenario(scenario_name)
+      scenario if scenario.engine == database_engine
+    end
+  end
+
+  def each_scenario(&block)
+    scenarios_for_engine.each(&block)
   end
 end
 
