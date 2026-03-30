@@ -7,7 +7,11 @@ require_relative 'support'
 require 'concurrent'
 
 RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
-               skip: (V4_INTEGRATION_AVAILABLE ? false : 'requires ActiveRecord + database gem')) do
+               skip: if !V4_INTEGRATION_AVAILABLE
+                       'requires ActiveRecord + database gem'
+                     elsif V4IntegrationHelper.sqlite?
+                       'SQLite single-writer lock causes BusyException under concurrent threads'
+                     end) do
   include V4IntegrationHelper
 
   # ── Concurrent switching ────────────────────────────────────────────
