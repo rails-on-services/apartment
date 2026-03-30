@@ -157,7 +157,7 @@ RSpec.describe(Apartment) do
 
       it 'requires postgresql_schema_adapter for :schema strategy' do
         adapter = described_class.send(:build_adapter)
-        expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLSchemaAdapter))
+        expect(adapter).to(be_a(Apartment::Adapters::PostgresqlSchemaAdapter))
       end
 
       context 'with :database_name strategy' do
@@ -168,25 +168,25 @@ RSpec.describe(Apartment) do
           end
         end
 
-        it 'instantiates PostgreSQLDatabaseAdapter for postgresql' do
+        it 'instantiates PostgresqlDatabaseAdapter for postgresql' do
           allow(db_config).to(receive_messages(adapter: 'postgresql', configuration_hash: { adapter: 'postgresql' }))
 
           adapter = described_class.send(:build_adapter)
-          expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLDatabaseAdapter))
+          expect(adapter).to(be_a(Apartment::Adapters::PostgresqlDatabaseAdapter))
         end
 
-        it 'instantiates PostgreSQLDatabaseAdapter for postgis' do
+        it 'instantiates PostgresqlDatabaseAdapter for postgis' do
           allow(db_config).to(receive_messages(adapter: 'postgis', configuration_hash: { adapter: 'postgis' }))
 
           adapter = described_class.send(:build_adapter)
-          expect(adapter).to(be_a(Apartment::Adapters::PostgreSQLDatabaseAdapter))
+          expect(adapter).to(be_a(Apartment::Adapters::PostgresqlDatabaseAdapter))
         end
 
-        it 'instantiates MySQL2Adapter for mysql2' do
+        it 'instantiates Mysql2Adapter for mysql2' do
           allow(db_config).to(receive_messages(adapter: 'mysql2', configuration_hash: { adapter: 'mysql2' }))
 
           adapter = described_class.send(:build_adapter)
-          expect(adapter).to(be_a(Apartment::Adapters::MySQL2Adapter))
+          expect(adapter).to(be_a(Apartment::Adapters::Mysql2Adapter))
         end
 
         it 'instantiates TrilogyAdapter for trilogy' do
@@ -196,11 +196,11 @@ RSpec.describe(Apartment) do
           expect(adapter).to(be_a(Apartment::Adapters::TrilogyAdapter))
         end
 
-        it 'instantiates SQLite3Adapter for sqlite3' do
+        it 'instantiates Sqlite3Adapter for sqlite3' do
           allow(db_config).to(receive_messages(adapter: 'sqlite3', configuration_hash: { adapter: 'sqlite3' }))
 
           adapter = described_class.send(:build_adapter)
-          expect(adapter).to(be_a(Apartment::Adapters::SQLite3Adapter))
+          expect(adapter).to(be_a(Apartment::Adapters::Sqlite3Adapter))
         end
 
         it 'raises AdapterNotFound for unknown database adapter' do
@@ -237,12 +237,12 @@ RSpec.describe(Apartment) do
     context 'with a concrete adapter class available' do
       let(:db_config) { double('db_config', adapter: 'postgresql', configuration_hash: { adapter: 'postgresql' }) }
       let(:fake_adapter_instance) { double('adapter_instance') }
-      let(:fake_adapter_class) { class_double('Apartment::Adapters::PostgreSQLSchemaAdapter').as_stubbed_const }
+      let(:fake_adapter_class) { class_double('Apartment::Adapters::PostgresqlSchemaAdapter').as_stubbed_const }
 
       before do
         allow(ActiveRecord::Base).to(receive(:connection_db_config).and_return(db_config))
         allow(described_class).to(receive(:require_relative))
-        stub_const('Apartment::Adapters::PostgreSQLSchemaAdapter', fake_adapter_class)
+        stub_const('Apartment::Adapters::PostgresqlSchemaAdapter', fake_adapter_class)
         allow(fake_adapter_class).to(receive(:new).and_return(fake_adapter_instance))
       end
 

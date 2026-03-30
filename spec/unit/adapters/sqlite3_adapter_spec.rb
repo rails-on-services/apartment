@@ -12,7 +12,7 @@ unless defined?(Rails)
   end
 end
 
-RSpec.describe(Apartment::Adapters::SQLite3Adapter) do
+RSpec.describe(Apartment::Adapters::Sqlite3Adapter) do
   let(:connection_config) { { adapter: 'sqlite3', database: 'db/myapp.sqlite3' } }
   let(:adapter) { described_class.new(connection_config) }
 

@@ -1,7 +1,7 @@
 name: sqlite_file
 engine: sqlite
 strategy: database_name
-adapter_class: SQLite3Adapter
+adapter_class: Sqlite3Adapter
 default_tenant: default
 connection:
   adapter: sqlite3

@@ -3,7 +3,7 @@
 module Apartment
   module Configs
     # PostgreSQL-specific configuration options.
-    class PostgreSQLConfig
+    class PostgresqlConfig
       # Schemas that persist across all tenants (e.g., shared extensions).
       attr_accessor :persistent_schemas
 

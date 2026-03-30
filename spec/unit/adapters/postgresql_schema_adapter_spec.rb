@@ -14,7 +14,7 @@ unless defined?(ActiveRecord::Base)
   end
 end
 
-RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
+RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
   let(:connection_config) { { adapter: 'postgresql', host: 'localhost', database: 'myapp' } }
   let(:adapter) { described_class.new(connection_config) }
 

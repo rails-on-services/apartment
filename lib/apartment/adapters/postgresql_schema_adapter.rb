@@ -11,7 +11,7 @@ module Apartment
     # unlike database-per-tenant adapters) plus any persistent schemas from
     # Apartment.config.postgres_config. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
-    class PostgreSQLSchemaAdapter < AbstractAdapter
+    class PostgresqlSchemaAdapter < AbstractAdapter
       def resolve_connection_config(tenant)
         persistent = Apartment.config.postgres_config&.persistent_schemas || []
         search_path = [tenant, *persistent].join(',')

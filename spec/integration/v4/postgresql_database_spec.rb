@@ -54,7 +54,7 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
     end
 
     require 'apartment/adapters/postgresql_database_adapter'
-    Apartment.adapter = Apartment::Adapters::PostgreSQLDatabaseAdapter.new(
+    Apartment.adapter = Apartment::Adapters::PostgresqlDatabaseAdapter.new(
       @config.transform_keys(&:to_sym)
     )
     Apartment.activate!
@@ -159,7 +159,7 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
         c.environmentify_strategy = :prepend
       end
 
-      Apartment.adapter = Apartment::Adapters::PostgreSQLDatabaseAdapter.new(
+      Apartment.adapter = Apartment::Adapters::PostgresqlDatabaseAdapter.new(
         @config.transform_keys(&:to_sym)
       )
       Apartment.activate!
@@ -182,7 +182,7 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
         c.environmentify_strategy = :prepend
       end
 
-      Apartment.adapter = Apartment::Adapters::PostgreSQLDatabaseAdapter.new(
+      Apartment.adapter = Apartment::Adapters::PostgresqlDatabaseAdapter.new(
         @config.transform_keys(&:to_sym)
       )
 

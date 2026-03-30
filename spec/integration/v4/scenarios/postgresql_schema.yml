@@ -1,7 +1,7 @@
 name: postgresql_schema
 engine: postgresql
 strategy: schema
-adapter_class: PostgreSQLSchemaAdapter
+adapter_class: PostgresqlSchemaAdapter
 default_tenant: public
 connection:
   adapter: postgresql
