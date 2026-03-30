@@ -147,7 +147,7 @@ module V4IntegrationHelper
   # --- Scenario-based configs ---
 
   Scenario = Struct.new(:name, :engine, :strategy, :adapter_class, :default_tenant,
-                         :connection, keyword_init: true)
+                        :connection)
 
   def load_scenario(name)
     path = File.join(__dir__, 'scenarios', "#{name}.yml")
@@ -172,8 +172,8 @@ module V4IntegrationHelper
     end
   end
 
-  def each_scenario(&block)
-    scenarios_for_engine.each(&block)
+  def each_scenario(&)
+    scenarios_for_engine.each(&)
   end
 end
 
