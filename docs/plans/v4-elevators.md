@@ -927,34 +927,69 @@ git commit -m "v4 Railtie: keyword args, class pass-through, Header trust warnin
 
 ---
 
-## Task 9: Full suite green + CLAUDE.md updates
+## Task 9: Header integration test + full suite green + CLAUDE.md updates
 
 **Files:**
+- Modify: `spec/integration/v4/request_lifecycle_spec.rb` (add Header elevator scenario)
 - Modify: `lib/apartment/elevators/CLAUDE.md` (update for v4 changes)
 - Modify: `spec/CLAUDE.md` (add elevator test references)
 - Modify: `lib/apartment/CLAUDE.md` (update elevator section)
 
-- [ ] **Step 1: Run full unit tests**
+- [ ] **Step 1: Add Header elevator integration test**
+
+Add to `spec/integration/v4/request_lifecycle_spec.rb`, inside the describe block:
+
+```ruby
+context 'with Header elevator' do
+  around do |example|
+    # Temporarily swap middleware to Header elevator for this test.
+    # The dummy app uses Subdomain by default; we insert Header before it.
+    Rails.application.middleware.use(Apartment::Elevators::Header, header: 'X-Tenant-Id')
+    example.run
+  ensure
+    Rails.application.middleware.delete(Apartment::Elevators::Header)
+  end
+
+  it 'switches tenant based on X-Tenant-Id header' do
+    header 'X-Tenant-Id', 'acme'
+    header 'Host', 'example.com' # no subdomain, so Subdomain elevator returns nil
+    get '/tenant_info'
+    expect(last_response).to(be_ok)
+    body = JSON.parse(last_response.body)
+    expect(body['tenant']).to(eq('acme'))
+  end
+
+  it 'falls through to default tenant when header is absent' do
+    header 'Host', 'example.com'
+    get '/tenant_info'
+    expect(last_response).to(be_ok)
+    body = JSON.parse(last_response.body)
+    expect(body['tenant']).to(eq('public'))
+  end
+end
+```
+
+- [ ] **Step 2: Run full unit tests**
 
 Run: `bundle exec rspec spec/unit/`
 Expected: All pass
 
-- [ ] **Step 2: Run full unit tests across Rails versions**
+- [ ] **Step 3: Run full unit tests across Rails versions**
 
 Run: `bundle exec appraisal rspec spec/unit/`
 Expected: All pass
 
-- [ ] **Step 3: Run integration tests (if PostgreSQL available)**
+- [ ] **Step 4: Run integration tests (if PostgreSQL available)**
 
 Run: `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/request_lifecycle_spec.rb`
-Expected: All pass (existing subdomain elevator integration test still works)
+Expected: All pass (existing subdomain tests + new Header tests)
 
-- [ ] **Step 4: Run rubocop**
+- [ ] **Step 5: Run rubocop**
 
 Run: `bundle exec rubocop lib/apartment/elevators/ spec/unit/elevators/`
 Expected: No offenses (fix any that appear)
 
-- [ ] **Step 5: Update CLAUDE.md files**
+- [ ] **Step 6: Update CLAUDE.md files**
 
 Update `lib/apartment/elevators/CLAUDE.md` to reflect v4 changes (constructor-only config, Header elevator, no class-level setters).
 
