@@ -1,6 +1,6 @@
 # lib/apartment/adapters/ - Database Adapter Implementations
 
-> **Note**: This file primarily describes the v3 adapter architecture for reference. As of Phase 2.2, v4 adapters are implemented: `abstract_adapter.rb` (base class with lifecycle, callbacks, `base_config`, `rails_env` guard), `postgresql_schema_adapter.rb`, `postgresql_database_adapter.rb`, `mysql2_adapter.rb` (replaced v3), `trilogy_adapter.rb` (replaced v3), `sqlite3_adapter.rb` (replaced v3). v4 adapters handle lifecycle only (create/drop/resolve_connection_config) — switching is handled by `CurrentAttributes` + pool lookup (Phase 2.3). JDBC and PostGIS adapters are dropped in v4. The v3 `postgresql_adapter.rb` and JDBC files still exist but are Zeitwerk-ignored. See `docs/designs/apartment-v4.md` for v4 architecture.
+> **Note**: v4 adapters (Phase 2.2+): `abstract_adapter.rb` (base class with lifecycle, callbacks, `base_config`, `rails_env` guard), `postgresql_schema_adapter.rb`, `postgresql_database_adapter.rb`, `mysql2_adapter.rb`, `trilogy_adapter.rb`, `sqlite3_adapter.rb`. v4 adapters handle lifecycle only (create/drop/resolve_connection_config) — switching is handled by `CurrentAttributes` + pool lookup (Phase 2.3). JDBC and PostGIS adapters are dropped in v4. See `docs/designs/apartment-v4.md` for v4 architecture.
 
 This directory contains database-specific implementations of tenant isolation strategies.
 
@@ -13,26 +13,21 @@ Adapters translate abstract tenant operations (create, switch, drop) into databa
 ```
 adapters/
 ├── abstract_adapter.rb          # Base class with shared logic
-├── postgresql_adapter.rb         # PostgreSQL schema-based isolation
-├── postgis_adapter.rb           # PostgreSQL with PostGIS extensions
+├── postgresql_schema_adapter.rb # PostgreSQL schema-based isolation
+├── postgresql_database_adapter.rb # PostgreSQL database-based isolation
 ├── mysql2_adapter.rb            # MySQL database-based isolation (mysql2 gem)
 ├── trilogy_adapter.rb           # MySQL database-based isolation (trilogy gem)
-├── sqlite3_adapter.rb           # SQLite file-based isolation
-├── abstract_jdbc_adapter.rb     # Base for JDBC adapters (JRuby)
-├── jdbc_postgresql_adapter.rb   # JDBC PostgreSQL adapter
-└── jdbc_mysql_adapter.rb        # JDBC MySQL adapter
+└── sqlite3_adapter.rb           # SQLite file-based isolation
 ```
 
 ## Adapter Hierarchy
 
 ```
 AbstractAdapter
-├── PostgresqlAdapter
-│   ├── PostgisAdapter (PostgreSQL + spatial extensions)
-│   └── JdbcPostgresqlAdapter (JDBC for JRuby)
+├── PostgresqlSchemaAdapter
+├── PostgresqlDatabaseAdapter
 ├── Mysql2Adapter
-│   ├── TrilogyAdapter (alternative MySQL driver)
-│   └── JdbcMysqlAdapter (JDBC for JRuby)
+│   └── TrilogyAdapter (alternative MySQL driver)
 └── Sqlite3Adapter
 ```
 
@@ -80,187 +75,63 @@ AbstractAdapter
 
 **Excluded model processing**: Establishes separate connections for excluded models. See `AbstractAdapter#process_excluded_models` method.
 
-## PostgreSQL Adapter
+## PostgreSQL Adapters
 
-**Location**: `postgresql_adapter.rb`
+### PostgresqlSchemaAdapter
 
-### Strategy
+**Location**: `postgresql_schema_adapter.rb`
 
-Uses **PostgreSQL schemas** (namespaces) for tenant isolation.
+Uses **PostgreSQL schemas** (namespaces) for tenant isolation. Does NOT environmentify tenant names — schemas are named directly. Resolves connection config via `schema_search_path`. `CREATE/DROP SCHEMA IF EXISTS ... CASCADE`.
 
-### Key Implementation Details
+Persistent schemas (configured via `PostgresqlConfig#persistent_schemas`) stay in `search_path` across all tenants — use for shared extensions (uuid-ossp, hstore) or reference data.
 
-**Create tenant**: Executes `CREATE SCHEMA` SQL command. See `PostgresqlAdapter#create_tenant` method.
+**Performance**: <1ms switching (no connection change), ~50MB total, 100+ tenants.
 
-**Switch tenant**: Changes `search_path` to target schema. See `PostgresqlAdapter#connect_to_new` method.
+### PostgresqlDatabaseAdapter
 
-**Drop tenant**: Executes `DROP SCHEMA CASCADE`. See `PostgresqlAdapter#drop_command` method.
+**Location**: `postgresql_database_adapter.rb`
 
-**Get current tenant**: Returns instance variable tracking current schema. See `PostgresqlAdapter#current` method.
-
-### Search Path Mechanics
-
-PostgreSQL searches schemas in order defined by `search_path`. Queries resolve to first matching table. Search path includes tenant schema, persistent schemas, then public. See search path construction in `PostgresqlAdapter#connect_to_new`.
-
-### Persistent Schemas
-
-Configured via `config.persistent_schemas` to specify schemas that remain in search path across all tenants.
-
-**Use cases**:
-- Shared PostgreSQL extensions (uuid-ossp, hstore, postgis)
-- Utility functions/views shared across tenants
-- Reference data tables
-
-**See**: README.md for configuration examples.
-
-### Excluded Names (pg_excluded_names)
-
-Configured via `config.pg_excluded_names` to exclude tables/schemas from tenant cloning.
-
-**Use cases**:
-- Temporary tables
-- Backup tables
-- Staging/import tables
-
-**See**: README.md for configuration patterns.
-
-### Performance Characteristics
-
-- **Switching**: <1ms (SQL command)
-- **Memory**: ~50MB total (shared connection pool)
-- **Scalability**: 100+ tenants easily
-- **Isolation**: Schema-level (good, not absolute)
-
-## PostGIS Adapter
-
-**Location**: `postgis_adapter.rb`
-
-### Strategy
-
-Extends `PostgresqlAdapter` with PostGIS spatial extension support.
-
-### Key Differences
-
-**Tenant creation**: Extends base PostgresqlAdapter to automatically enable PostGIS extensions in new schemas. See `PostgisAdapter#create_tenant` method.
-
-**Schema dumping**: Custom logic to handle spatial types and indexes correctly. See `active_record/postgres/schema_dumper.rb`.
-
-### Configuration
-
-Typically includes PostGIS-related schemas in `persistent_schemas`. See README.md for configuration.
+Uses **separate databases** on PostgreSQL. Environmentifies tenant names. `CREATE/DROP DATABASE IF EXISTS`.
 
 ## MySQL Adapters
 
 **Locations**: `mysql2_adapter.rb`, `trilogy_adapter.rb`
 
-### Strategy
+Uses **separate databases** for each tenant. `CREATE/DROP DATABASE IF EXISTS`. Environmentifies tenant names.
 
-Uses **separate databases** for each tenant.
+`TrilogyAdapter` is an empty subclass of `Mysql2Adapter` using the `trilogy` gem. Auto-selected when `adapter: trilogy` in `database.yml`.
 
-### Key Implementation Details
-
-**Create tenant**: Executes `CREATE DATABASE` SQL command. See `Mysql2Adapter#create_tenant` method.
-
-**Switch tenant**: Establishes new connection with different database name. See `Mysql2Adapter#connect_to_new` method.
-
-**Drop tenant**: Executes `DROP DATABASE`. See `Mysql2Adapter#drop_command` method.
-
-**Get current database**: Queries current database name from connection. See `Mysql2Adapter#current` method.
-
-### Connection Management
-
-Each tenant switch establishes new connection to different database. This creates connection pool overhead compared to PostgreSQL schemas. See `Mysql2Adapter#connect_to_new` for connection establishment.
-
-### Multi-Server Support
-
-MySQL adapters support hash-based configuration mapping tenant names to full connection configs, enabling different tenants on different servers. See README.md for configuration examples.
-
-### Performance Characteristics
-
-- **Switching**: 10-50ms (connection establishment)
-- **Memory**: ~20MB per active tenant (connection pool)
-- **Scalability**: 10-50 concurrent tenants
-- **Isolation**: Database-level (excellent)
-
-### Trilogy Adapter
-
-**Location**: `trilogy_adapter.rb`
-
-Identical to `Mysql2Adapter` but uses the `trilogy` gem (modern MySQL client).
-
-**Usage**: Auto-selected if `adapter: trilogy` in `database.yml`.
+**Performance**: 10-50ms switching (connection establishment), ~20MB per active tenant, 10-50 concurrent tenants. Database-level isolation.
 
 ## SQLite Adapter
 
 **Location**: `sqlite3_adapter.rb`
 
-### Strategy
+Uses **separate database files** for each tenant. `database` key with file path. `FileUtils.mkdir_p` for create, `FileUtils.rm_f` for drop.
 
-Uses **separate database files** for each tenant.
-
-### Key Implementation Details
-
-**Create tenant**: Creates new SQLite file and establishes connection. See `Sqlite3Adapter#create_tenant` method.
-
-**Switch tenant**: Establishes connection to different database file. See `Sqlite3Adapter#connect_to_new` method.
-
-**Drop tenant**: Deletes database file. See `Sqlite3Adapter#drop_command` method.
-
-**Database file path**: Constructs file path in db/ directory. See file path construction in `Sqlite3Adapter`.
-
-### Use Cases
-
-- ✅ **Testing**: Each test tenant is isolated file
-- ✅ **Development**: Easy to inspect individual tenant data
-- ✅ **Single-user apps**: Desktop or embedded applications
-- ❌ **Production**: Not suitable for concurrent multi-user access
-
-### Performance Characteristics
-
-- **Switching**: 5-20ms (file I/O + connection)
-- **Memory**: ~5MB per database file
-- **Scalability**: Not recommended for production multi-tenant
-- **Isolation**: Complete (separate files)
-
-## JDBC Adapters (JRuby)
-
-**Locations**: `abstract_jdbc_adapter.rb`, `jdbc_postgresql_adapter.rb`, `jdbc_mysql_adapter.rb`
-
-### Purpose
-
-Support JRuby deployments using JDBC drivers.
-
-### Implementation
-
-Inherit from standard adapters but use JDBC-specific connection handling. See `jdbc_postgresql_adapter.rb` and `jdbc_mysql_adapter.rb`.
-
-### Auto-Detection
-
-JRuby detection happens in `tenant.rb` - automatically selects JDBC adapters when running on JRuby. See adapter factory logic in `Apartment::Tenant.adapter_method`.
+Best for testing and development. Not suitable for concurrent multi-user production use. ~5MB per file, complete isolation.
 
 ## Adapter Selection Matrix
 
-| Adapter                | Database Type | Strategy     | Speed        | Scalability | Isolation | Best For                |
-|------------------------|---------------|--------------|--------------|-------------|-----------|-------------------------|
-| PostgresqlAdapter      | PostgreSQL    | Schemas      | Very Fast    | Excellent   | Good      | 100+ tenants            |
-| PostgisAdapter         | PostGIS       | Schemas      | Very Fast    | Excellent   | Good      | Spatial data apps       |
-| Mysql2Adapter          | MySQL         | Databases    | Moderate     | Good        | Excellent | Complete isolation      |
-| TrilogyAdapter         | MySQL         | Databases    | Moderate     | Good        | Excellent | Modern MySQL client     |
-| Sqlite3Adapter         | SQLite        | Files        | Moderate     | Poor        | Excellent | Testing, development    |
-| JdbcPostgresqlAdapter  | PostgreSQL    | Schemas      | Very Fast    | Excellent   | Good      | JRuby deployments       |
-| JdbcMysqlAdapter       | MySQL         | Databases    | Moderate     | Good        | Excellent | JRuby deployments       |
+| Adapter                      | Database Type | Strategy     | Speed        | Scalability | Isolation | Best For                |
+|------------------------------|---------------|--------------|--------------|-------------|-----------|-------------------------|
+| PostgresqlSchemaAdapter      | PostgreSQL    | Schemas      | Very Fast    | Excellent   | Good      | 100+ tenants            |
+| PostgresqlDatabaseAdapter    | PostgreSQL    | Databases    | Moderate     | Good        | Excellent | Complete PG isolation   |
+| Mysql2Adapter                | MySQL         | Databases    | Moderate     | Good        | Excellent | Complete isolation      |
+| TrilogyAdapter               | MySQL         | Databases    | Moderate     | Good        | Excellent | Modern MySQL client     |
+| Sqlite3Adapter               | SQLite        | Files        | Moderate     | Poor        | Excellent | Testing, development    |
 
 ## Creating Custom Adapters
 
 To support new databases: subclass `AbstractAdapter`, implement required methods (`create_tenant`, `connect_to_new`, `drop_command`, `current`), register factory method in `tenant.rb`, and configure in `database.yml`.
 
-**See**: Existing adapters for patterns (`postgresql_adapter.rb` is most complex, `sqlite3_adapter.rb` is simplest), and `docs/adapters.md` for design rationale.
+**See**: Existing adapters for patterns (`postgresql_schema_adapter.rb` is most complex, `sqlite3_adapter.rb` is simplest), and `docs/adapters.md` for design rationale.
 
 ## Testing Adapters
 
 ### Adapter-Specific Tests
 
-Each adapter has comprehensive specs covering tenant creation, switching, deletion, error handling, and callbacks. See `spec/adapters/` for test patterns.
+Each adapter has specs in `spec/unit/` (unit) and `spec/integration/v4/` (integration against real databases).
 
 ## Debugging Adapters
 
@@ -302,11 +173,11 @@ Access `adapter.instance_variable_get(:@config)` for configuration and `adapter.
 
 ### PostgreSQL: Connection Pooling
 
-PostgreSQL adapters use shared connection pool across all tenants. Configure pool size in `database.yml`. See Rails connection pooling guides.
+`PostgresqlSchemaAdapter` uses a shared connection pool (schema_search_path switching). Configure pool size in `database.yml`.
 
-### MySQL: Connection Pool Caching
+### MySQL / PostgresqlDatabaseAdapter: Pool-per-Tenant
 
-Consider implementing LRU cache for connection pools to limit memory usage with many tenants. Not implemented in v3 but possible via custom adapter.
+v4 uses a `PoolManager` (LRU cache with `PoolReaper`) to limit memory usage with many tenants. Idle pools are evicted automatically. See `pool_manager.rb` and `pool_reaper.rb`.
 
 ## References
 
