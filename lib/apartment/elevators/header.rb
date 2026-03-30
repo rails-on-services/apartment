@@ -19,7 +19,7 @@ module Apartment
       end
 
       def parse_tenant_name(request)
-        request.get_header(@header_name)
+        request.get_header(@header_name).presence
       end
     end
   end

@@ -32,6 +32,11 @@ RSpec.describe(Apartment::Elevators::Domain) do
       expect(elevator.parse_tenant_name(request_for('www.example.bc.ca'))).to(eq('example'))
     end
 
+    it 'extracts name from single-label host' do
+      elevator = described_class.new(inner_app)
+      expect(elevator.parse_tenant_name(request_for('localhost'))).to(eq('localhost'))
+    end
+
     it 'returns nil for blank host' do
       elevator = described_class.new(inner_app)
       request = Rack::Request.new(Rack::MockRequest.env_for('/'))

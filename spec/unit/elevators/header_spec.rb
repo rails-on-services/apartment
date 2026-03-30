@@ -31,6 +31,12 @@ RSpec.describe(Apartment::Elevators::Header) do
       expect(elevator.parse_tenant_name(request)).to(be_nil)
     end
 
+    it 'returns nil when header is empty string' do
+      elevator = described_class.new(inner_app)
+      request = Rack::Request.new(env_with_header('X-Tenant-Id', ''))
+      expect(elevator.parse_tenant_name(request)).to(be_nil)
+    end
+
     it 'handles header names with mixed case' do
       elevator = described_class.new(inner_app, header: 'x-tenant-id')
       request = Rack::Request.new(env_with_header('X-Tenant-Id', 'acme'))

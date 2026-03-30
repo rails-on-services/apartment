@@ -42,7 +42,7 @@ This replaces the v3 pattern of setting class attributes (`Subdomain.excluded_su
 
 ### Request Lifecycle with Elevator
 
-HTTP Request → Elevator extracts tenant → Switch to tenant → Application processes → Automatic cleanup (ensure block) → HTTP Response
+HTTP Request -> Elevator extracts tenant -> Switch to tenant -> Application processes -> Automatic cleanup (ensure block) -> HTTP Response
 
 **See**: `Generic#call` method for middleware call pattern.
 
@@ -76,7 +76,7 @@ Extract first subdomain from hostname.
 
 ### Implementation
 
-Uses `request.subdomain` and checks against `excluded_subdomains` class attribute. Returns nil for excluded subdomains. See `Subdomain#parse_tenant_name` in `subdomain.rb`.
+Extracts subdomain via `PublicSuffix` and checks against `@excluded_subdomains` instance variable. Returns nil for excluded subdomains. See `Subdomain#parse_tenant_name` in `subdomain.rb`.
 
 ### Configuration
 
@@ -183,7 +183,7 @@ Accepts hash mapping hostnames to tenant names. See `HostHash` implementation in
 
 ### Configuration
 
-Pass hash to HostHash initializer when adding to middleware stack. See README.md for examples.
+Pass `hash:` keyword arg when adding to middleware stack. See README.md for examples.
 
 ### Use Cases
 

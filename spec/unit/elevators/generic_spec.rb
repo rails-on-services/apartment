@@ -47,6 +47,22 @@ RSpec.describe(Apartment::Elevators::Generic) do
     it 'absorbs keyword args without error' do
       expect { described_class.new(inner_app, nil, some_option: 'value') }.not_to(raise_error)
     end
+
+    it 'propagates exceptions from parse_tenant_name' do
+      elevator = described_class.new(inner_app, ->(_req) { raise(Apartment::TenantNotFound, 'bad') })
+
+      expect { elevator.call(Rack::MockRequest.env_for('http://example.com')) }
+        .to(raise_error(Apartment::TenantNotFound))
+    end
+
+    it 'propagates exceptions from Tenant.switch' do
+      elevator = described_class.new(inner_app, ->(_req) { 'acme' })
+
+      allow(Apartment::Tenant).to(receive(:switch).and_raise(Apartment::TenantNotFound, 'acme'))
+
+      expect { elevator.call(Rack::MockRequest.env_for('http://example.com')) }
+        .to(raise_error(Apartment::TenantNotFound))
+    end
   end
 
   describe '#parse_tenant_name' do

@@ -41,4 +41,24 @@ RSpec.describe(Apartment::Elevators::HostHash) do
         .to(raise_error(Apartment::TenantNotFound))
     end
   end
+
+  describe '#call' do
+    it 'raises TenantNotFound for unknown host through full call stack' do
+      elevator = described_class.new(inner_app, hash: { 'known.com' => 'acme' })
+      expect { elevator.call(Rack::MockRequest.env_for('http://unknown.com/')) }
+        .to(raise_error(Apartment::TenantNotFound, /unknown\.com/))
+    end
+
+    it 'does not call the inner app when host is unknown' do
+      called = false
+      app = lambda { |_env|
+        called = true
+        [200, {}, ['ok']]
+      }
+      elevator = described_class.new(app, hash: { 'known.com' => 'acme' })
+      expect { elevator.call(Rack::MockRequest.env_for('http://unknown.com/')) }
+        .to(raise_error(Apartment::TenantNotFound))
+      expect(called).to(be(false))
+    end
+  end
 end
