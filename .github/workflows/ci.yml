@@ -91,16 +91,14 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      - name: Configure database
-        run: bundle exec rake db:load_credentials
-      - name: Database setup
-        run: bundle exec rake db:test:prepare
-      - name: Run tests
-        run: bundle exec rspec --format progress
       - name: Run v4 integration tests
         run: bundle exec rspec spec/integration/v4/ --format progress
         env:
           DATABASE_ENGINE: postgresql
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: postgres
 
   # ── MySQL integration tests ────────────────────────────────────────
   mysql:
@@ -136,16 +134,13 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      - name: Configure database
-        run: bundle exec rake db:load_credentials
-      - name: Database setup
-        run: bundle exec rake db:test:prepare
-      - name: Run tests
-        run: bundle exec rspec --format progress
       - name: Run v4 integration tests
         run: bundle exec rspec spec/integration/v4/ --format progress
         env:
           DATABASE_ENGINE: mysql
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: '3306'
+          MYSQL_USER: root
 
   # ── SQLite integration tests ───────────────────────────────────────
   sqlite:
@@ -168,12 +163,6 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      - name: Configure database
-        run: bundle exec rake db:load_credentials
-      - name: Database setup
-        run: bundle exec rake db:test:prepare
-      - name: Run tests
-        run: bundle exec rspec --format progress
       - name: Run v4 integration tests
         run: bundle exec rspec spec/integration/v4/ --format progress
         env:
