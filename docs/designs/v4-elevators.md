@@ -127,7 +127,7 @@ class HostHash < Generic
 end
 ```
 
-Raises `TenantNotFound` when host is not in the hash (explicit mapping; missing = config error).
+Raises `TenantNotFound` when host is not in the hash (explicit mapping; missing = config error). v3's optional `processor` positional arg is dropped; HostHash's tenant resolution is always via the hash lookup.
 
 ### Header (new)
 
