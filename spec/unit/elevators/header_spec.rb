@@ -5,7 +5,7 @@ require 'rack'
 require 'apartment/elevators/header'
 
 RSpec.describe(Apartment::Elevators::Header) do
-  let(:inner_app) { ->(env) { [200, {}, ['ok']] } }
+  let(:inner_app) { ->(_env) { [200, {}, ['ok']] } }
 
   def env_with_header(header_name, value)
     rack_key = "HTTP_#{header_name.upcase.tr('-', '_')}"

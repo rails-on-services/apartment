@@ -5,7 +5,7 @@ require 'rack'
 require 'apartment/elevators/host_hash'
 
 RSpec.describe(Apartment::Elevators::HostHash) do
-  let(:inner_app) { ->(env) { [200, {}, ['ok']] } }
+  let(:inner_app) { ->(_env) { [200, {}, ['ok']] } }
   let(:mapping) { { 'acme.com' => 'acme', 'widgets.io' => 'widgets' } }
 
   def request_for(host)

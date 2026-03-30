@@ -1,6 +1,6 @@
 # spec/ - Apartment Test Suite
 
-> **Note**: v4 unit tests live in `spec/unit/` (273 specs). v4 integration tests live in `spec/integration/v4/` (39 specs across SQLite/PostgreSQL/MySQL: switching, lifecycle, excluded models, edge cases, stress/concurrency, PG schemas, MySQL databases). Request lifecycle tests in `spec/integration/v4/request_lifecycle_spec.rb` exercise the full elevator-to-response flow through a dummy Rails app. Scenario-based YAML configs in `spec/integration/v4/scenarios/` define per-engine database settings. Integration tests use a ConnectionHandler swap for hermetic isolation (no cross-test pool leakage). Coverage via SimpleCov (opt-in: `COVERAGE=1`) and profiling via TestProf (`FPROF=1`, `EVENT_PROF=`). Run unit tests with `bundle exec rspec spec/unit/`. Run integration tests with `bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/` (SQLite), `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/` (PG), or `DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/` (MySQL).
+> **Note**: v4 unit tests live in `spec/unit/` (371 specs). v4 integration tests live in `spec/integration/v4/` (39 specs across SQLite/PostgreSQL/MySQL: switching, lifecycle, excluded models, edge cases, stress/concurrency, PG schemas, MySQL databases). Request lifecycle tests in `spec/integration/v4/request_lifecycle_spec.rb` exercise the full elevator-to-response flow through a dummy Rails app. Scenario-based YAML configs in `spec/integration/v4/scenarios/` define per-engine database settings. Integration tests use a ConnectionHandler swap for hermetic isolation (no cross-test pool leakage). Coverage via SimpleCov (opt-in: `COVERAGE=1`) and profiling via TestProf (`FPROF=1`, `EVENT_PROF=`). Run unit tests with `bundle exec rspec spec/unit/`. Run integration tests with `bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/` (SQLite), `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/` (PG), or `DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/` (MySQL).
 
 This directory contains the test suite for Apartment, covering adapters, elevators, configuration, and integration scenarios.
 
@@ -44,7 +44,7 @@ spec/
 
 ### Elevator Tests (spec/unit/elevators/)
 
-**Purpose**: Test Rack middleware tenant detection
+**Purpose**: Test Rack middleware tenant detection (7 spec files, v4 constructor keyword args)
 
 **Files**:
 - `generic_spec.rb` - Base elevator with Proc
@@ -53,6 +53,7 @@ spec/
 - `domain_spec.rb` - Domain-based switching
 - `host_spec.rb` - Full hostname switching
 - `host_hash_spec.rb` - Hash-based tenant mapping
+- `header_spec.rb` - HTTP header-based switching (new in v4)
 
 **What's tested**:
 - Tenant name parsing from requests

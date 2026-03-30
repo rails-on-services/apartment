@@ -17,7 +17,7 @@ RSpec.describe(Apartment::Elevators::Generic) do
     end
 
     it 'does not switch when processor returns nil' do
-      elevator = described_class.new(inner_app, ->(_req) { nil })
+      elevator = described_class.new(inner_app, ->(_req) {})
 
       expect(Apartment::Tenant).not_to(receive(:switch))
 
@@ -25,7 +25,7 @@ RSpec.describe(Apartment::Elevators::Generic) do
     end
 
     it 'calls the inner app' do
-      elevator = described_class.new(inner_app, ->(_req) { nil })
+      elevator = described_class.new(inner_app, ->(_req) {})
 
       status, = elevator.call(Rack::MockRequest.env_for('http://example.com'))
       expect(status).to(eq(200))

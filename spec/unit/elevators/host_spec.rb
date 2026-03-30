@@ -5,7 +5,7 @@ require 'rack'
 require 'apartment/elevators/host'
 
 RSpec.describe(Apartment::Elevators::Host) do
-  let(:inner_app) { ->(env) { [200, {}, ['ok']] } }
+  let(:inner_app) { ->(_env) { [200, {}, ['ok']] } }
 
   def request_for(host)
     Rack::Request.new(Rack::MockRequest.env_for("http://#{host}/"))

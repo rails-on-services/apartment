@@ -16,7 +16,7 @@ lib/apartment/
 ├── configs/               # Database-specific config objects
 │   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, enforce_search_path_reset
 │   └── mysql_config.rb        # MysqlConfig: placeholder
-├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md)
+├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md); v4 uses constructor keyword args, no class-level state; Generic, Subdomain, FirstSubdomain, Domain, Host, HostHash, Header
 ├── patches/               # ActiveRecord patches for tenant-aware connections
 │   └── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
 ├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
