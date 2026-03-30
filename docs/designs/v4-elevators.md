@@ -95,11 +95,13 @@ Uses PublicSuffix for international TLD handling. Returns `nil` for excluded sub
 
 ### FirstSubdomain
 
-Inherits Subdomain. Takes the first segment when subdomains are nested (`tenant.staging.example.com` → `tenant`). No additional constructor args.
+Inherits Subdomain. Takes the first segment when subdomains are nested (`tenant.staging.example.com` -> `tenant`). No additional constructor args.
+
+**v4 fix:** v3 calls `super` twice in `parse_tenant_name` (once for nil check, once for value). v4 caches the result in a local variable.
 
 ### Domain
 
-Extracts second-level domain, strips `www` prefix. No constructor args beyond Generic.
+Extracts the first non-`www` segment of the hostname via regex (`/(?:www\.)?(?<sld>[^.]*)/`). For `a.example.bc.ca` this returns `a`, not `example`. No constructor args beyond Generic.
 
 ### Host
 
@@ -143,7 +145,7 @@ class Header < Generic
 end
 ```
 
-For infrastructure that injects tenant identity at the edge (CloudFront, Nginx, API gateway). The `trusted:` flag controls a boot-time warning in the Railtie (see below); the elevator itself behaves identically regardless.
+For infrastructure that injects tenant identity at the edge (CloudFront, Nginx, API gateway). The `trusted:` flag is consumed by the Railtie for a boot-time warning (see below); the elevator constructor accepts it via `**_options` splat but does not store it. The elevator behaves identically regardless of trust level; trust is an operational acknowledgment, not a runtime behavior toggle.
 
 Missing header returns `nil` (falls through to default tenant), consistent with other elevators.
 
@@ -169,7 +171,40 @@ initializer 'apartment.middleware' do |app|
 end
 ```
 
-The `<=` check handles subclasses of Header. `resolve_elevator_class` is unchanged.
+The `<=` check handles subclasses of Header.
+
+### `resolve_elevator_class` update (symbol or class)
+
+`config.elevator` accepts both symbols (`:subdomain`) and classes (`DynamicElevator`). The resolver must handle both:
+
+```ruby
+def self.resolve_elevator_class(elevator)
+  return elevator if elevator.is_a?(Class)
+
+  class_name = "Apartment::Elevators::#{elevator.to_s.camelize}"
+  require("apartment/elevators/#{elevator}")
+  class_name.constantize
+rescue NameError, LoadError => e
+  available = Dir[File.join(__dir__, 'elevators', '*.rb')]
+    .map { |f| File.basename(f, '.rb') }
+    .reject { |n| n == 'generic' }
+  raise(Apartment::ConfigurationError,
+        "Unknown elevator '#{elevator}': #{e.message}. " \
+        "Available elevators: #{available.join(', ')}")
+end
+```
+
+Symbols are the canonical form for built-in elevators. Classes are for custom elevators that live outside the gem (e.g., `DynamicElevator`). The parent design spec's "always pass a class" convention is updated: symbols are resolved by the Railtie, classes pass through.
+
+## Error Handling
+
+Generic's `call` method does not rescue exceptions. If `Apartment::Tenant.switch` raises `TenantNotFound` (e.g., from HostHash), the exception propagates through the Rack stack. This is intentional:
+
+- Custom elevators handle errors by wrapping `super` in their own `call` override (as DynamicElevator does with rescue -> redirect).
+- The `tenant_not_found_handler` config is an adapter-level hook, not a middleware-level one.
+- Generic adding rescue logic would interfere with custom error handling in subclasses.
+
+Users who want middleware-level error handling should subclass Generic and override `call`.
 
 ## Configuration Examples
 
@@ -198,7 +233,7 @@ Apartment.configure do |config|
 end
 ```
 
-When `elevator` is a class (not a symbol), `resolve_elevator_class` should pass it through. This supports custom elevators like CampusESP's DynamicElevator.
+When `elevator` is a class (not a symbol), `resolve_elevator_class` passes it through (see Railtie Changes above).
 
 ## Subclassing Contract
 
@@ -245,7 +280,7 @@ Extend `spec/integration/v4/request_lifecycle_spec.rb` with a Header elevator sc
 ### Modified
 - `lib/apartment/elevators/generic.rb` — add `**_options` splat, `NotImplementedError`
 - `lib/apartment/elevators/subdomain.rb` — constructor keyword args, remove class-level setters
-- `lib/apartment/elevators/first_subdomain.rb` — no change (inherits Subdomain)
+- `lib/apartment/elevators/first_subdomain.rb` — fix double-super call
 - `lib/apartment/elevators/domain.rb` — no change
 - `lib/apartment/elevators/host.rb` — constructor keyword args, remove class-level setters
 - `lib/apartment/elevators/host_hash.rb` — constructor keyword args
