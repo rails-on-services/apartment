@@ -142,3 +142,35 @@ module V4IntegrationHelper
     end
   end
 end
+
+if V4_INTEGRATION_AVAILABLE
+  RSpec.configure do |config|
+    # Swap ConnectionHandler per test for hermetic isolation.
+    # Skip for :stress-tagged tests — concurrent threads race with handler swap teardown.
+    config.around(:each, :integration) do |example|
+      if example.metadata[:stress]
+        example.run
+        next
+      end
+
+      old_handler = ActiveRecord::Base.connection_handler
+      new_handler = ActiveRecord::ConnectionAdapters::ConnectionHandler.new
+      ActiveRecord::Base.connection_handler = new_handler
+
+      # Re-establish the default connection on the fresh handler.
+      default_config = V4IntegrationHelper.default_connection_config
+      ActiveRecord::Base.establish_connection(default_config) if default_config
+
+      example.run
+    ensure
+      unless example.metadata[:stress]
+        begin
+          new_handler&.clear_all_connections!
+        rescue StandardError
+          nil
+        end
+        ActiveRecord::Base.connection_handler = old_handler
+      end
+    end
+  end
+end

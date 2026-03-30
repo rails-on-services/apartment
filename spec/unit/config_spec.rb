@@ -186,9 +186,9 @@ RSpec.describe(Apartment::Config) do
   end
 
   describe 'schema_load_strategy' do
-    it 'defaults to :schema_rb' do
+    it 'defaults to nil (opt-in schema loading)' do
       config = described_class.new
-      expect(config.schema_load_strategy).to(eq(:schema_rb))
+      expect(config.schema_load_strategy).to(be_nil)
     end
 
     it 'accepts :schema_rb' do

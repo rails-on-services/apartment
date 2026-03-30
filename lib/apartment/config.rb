@@ -34,7 +34,7 @@ module Apartment
       @max_total_connections = nil
       @seed_after_create = false
       @seed_data_file = nil
-      @schema_load_strategy = :schema_rb
+      @schema_load_strategy = nil
       @schema_file = nil
       @parallel_migration_threads = 0
       @parallel_strategy = :auto

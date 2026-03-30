@@ -184,8 +184,8 @@ module Apartment
         custom = Apartment.config.schema_file
         return custom if custom
 
-        if defined?(Rails)
-          Rails.root.join('db/schema.rb').to_s
+        if defined?(Rails) && Rails.respond_to?(:root) && Rails.root
+          Rails.root.join('db', 'schema.rb').to_s
         else
           'db/schema.rb'
         end

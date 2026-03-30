@@ -32,9 +32,9 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
   # All database names this spec may create (including environmentified variants).
   # rubocop:disable Lint/ConstantDefinitionInBlock
   ALL_TEST_DBS = %w[
-    pg_db_tenant pg_db_drop_test pg_db_dup
-    pg_db_iso_a pg_db_iso_b
-    test_pg_env_tenant
+    apt_db_tenant apt_db_drop_test apt_db_dup
+    apt_db_iso_a apt_db_iso_b
+    test_apt_env_tenant
   ].freeze
   # rubocop:enable Lint/ConstantDefinitionInBlock
 
@@ -73,11 +73,11 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
 
   describe 'database creation' do
     it 'creates a tenant database visible in pg_database' do
-      Apartment.adapter.create('pg_db_tenant')
-      created_tenants << 'pg_db_tenant'
+      Apartment.adapter.create('apt_db_tenant')
+      created_tenants << 'apt_db_tenant'
 
       exists = ActiveRecord::Base.connection.select_value(
-        "SELECT 1 FROM pg_database WHERE datname = 'pg_db_tenant'"
+        "SELECT 1 FROM pg_database WHERE datname = 'apt_db_tenant'"
       )
       expect(exists).to(eq(1))
     end
@@ -85,17 +85,17 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
 
   describe 'database drop' do
     it 'removes the tenant database from pg_database' do
-      Apartment.adapter.create('pg_db_drop_test')
+      Apartment.adapter.create('apt_db_drop_test')
 
       exists_before = ActiveRecord::Base.connection.select_value(
-        "SELECT 1 FROM pg_database WHERE datname = 'pg_db_drop_test'"
+        "SELECT 1 FROM pg_database WHERE datname = 'apt_db_drop_test'"
       )
       expect(exists_before).to(eq(1))
 
-      Apartment.adapter.drop('pg_db_drop_test')
+      Apartment.adapter.drop('apt_db_drop_test')
 
       exists_after = ActiveRecord::Base.connection.select_value(
-        "SELECT 1 FROM pg_database WHERE datname = 'pg_db_drop_test'"
+        "SELECT 1 FROM pg_database WHERE datname = 'apt_db_drop_test'"
       )
       expect(exists_after).to(be_nil)
     end
@@ -103,18 +103,18 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
 
   describe 'double create raises TenantExists' do
     it 'raises Apartment::TenantExists on duplicate create' do
-      Apartment.adapter.create('pg_db_dup')
-      created_tenants << 'pg_db_dup'
+      Apartment.adapter.create('apt_db_dup')
+      created_tenants << 'apt_db_dup'
 
       expect do
-        Apartment.adapter.create('pg_db_dup')
+        Apartment.adapter.create('apt_db_dup')
       end.to(raise_error(Apartment::TenantExists))
     end
   end
 
   describe 'data isolation across databases' do
     before do
-      %w[pg_db_iso_a pg_db_iso_b].each do |tenant|
+      %w[apt_db_iso_a apt_db_iso_b].each do |tenant|
         Apartment.adapter.create(tenant)
         created_tenants << tenant
 
@@ -125,16 +125,16 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
     end
 
     it 'isolates records between tenant databases' do
-      Apartment::Tenant.switch('pg_db_iso_a') do
+      Apartment::Tenant.switch('apt_db_iso_a') do
         ActiveRecord::Base.connection.execute("INSERT INTO widgets (name) VALUES ('from_a')")
       end
 
-      Apartment::Tenant.switch('pg_db_iso_b') do
+      Apartment::Tenant.switch('apt_db_iso_b') do
         count = ActiveRecord::Base.connection.select_value('SELECT COUNT(*) FROM widgets')
         expect(count.to_i).to(eq(0))
       end
 
-      Apartment::Tenant.switch('pg_db_iso_a') do
+      Apartment::Tenant.switch('apt_db_iso_a') do
         count = ActiveRecord::Base.connection.select_value('SELECT COUNT(*) FROM widgets')
         expect(count.to_i).to(eq(1))
       end
@@ -164,11 +164,11 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
       )
       Apartment.activate!
 
-      Apartment.adapter.create('pg_env_tenant')
-      created_tenants << 'pg_env_tenant'
+      Apartment.adapter.create('apt_env_tenant')
+      created_tenants << 'apt_env_tenant'
 
       exists = ActiveRecord::Base.connection.select_value(
-        "SELECT 1 FROM pg_database WHERE datname = 'test_pg_env_tenant'"
+        "SELECT 1 FROM pg_database WHERE datname = 'test_apt_env_tenant'"
       )
       expect(exists).to(eq(1))
     end
