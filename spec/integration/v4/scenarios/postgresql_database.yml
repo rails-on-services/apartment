@@ -1,0 +1,12 @@
+name: postgresql_database
+engine: postgresql
+strategy: database_name
+adapter_class: PostgreSQLDatabaseAdapter
+default_tenant: apartment_v4_test
+connection:
+  adapter: postgresql
+  host: <%= ENV.fetch('PGHOST', '127.0.0.1') %>
+  port: <%= ENV.fetch('PGPORT', '5432') %>
+  username: <%= ENV.fetch('PGUSER', ENV.fetch('USER', nil)) %>
+  password: <%= ENV.fetch('PGPASSWORD', nil) %>
+  database: <%= ENV.fetch('APARTMENT_TEST_PG_DB', 'apartment_v4_test') %>

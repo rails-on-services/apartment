@@ -18,12 +18,13 @@ module Apartment
     attr_accessor :tenants_provider, :default_tenant, :excluded_models,
                   :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
                   :seed_after_create, :seed_data_file,
+                  :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
                   :elevator, :elevator_options,
                   :tenant_not_found_handler, :active_record_log,
                   :shard_key_prefix
 
-    def initialize
+    def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
       @tenants_provider = nil
       @default_tenant = nil
@@ -33,6 +34,8 @@ module Apartment
       @max_total_connections = nil
       @seed_after_create = false
       @seed_data_file = nil
+      @schema_load_strategy = nil
+      @schema_file = nil
       @parallel_migration_threads = 0
       @parallel_strategy = :auto
       @environmentify_strategy = nil
@@ -93,6 +96,7 @@ module Apartment
       @elevator_options.freeze
       @postgres_config&.freeze!
       @mysql_config&.freeze!
+      # schema_file is a simple string, no deep freeze needed
       freeze
     end
 
@@ -120,6 +124,11 @@ module Apartment
       if @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
         raise(ConfigurationError,
               "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}")
+      end
+
+      unless [nil, :schema_rb, :sql].include?(@schema_load_strategy)
+        raise(ConfigurationError, "Invalid schema_load_strategy: #{@schema_load_strategy.inspect}. " \
+                                  'Must be nil, :schema_rb, or :sql')
       end
 
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)

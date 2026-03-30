@@ -1,68 +1,54 @@
 # frozen_string_literal: true
 
 require 'rails'
-require 'apartment/tenant'
 
 module Apartment
   class Railtie < Rails::Railtie
-    #
-    #   Set up our default config options
-    #   Do this before the app initializers run so we don't override custom settings
-    #
-    config.before_initialize do
-      Apartment.configure do |config|
-        config.excluded_models = []
-        config.use_schemas = true
-        config.tenant_names = []
-        config.seed_after_create = false
-        config.prepend_environment = false
-        config.append_environment = false
-        config.tenant_presence_check = true
-        config.active_record_log = false
+    # After all initializers run: wire up Apartment if configured.
+    config.after_initialize do
+      next unless Apartment.config
+
+      # v4 requires fiber isolation for correct CurrentAttributes propagation.
+      if defined?(ActiveSupport::IsolatedExecutionState) &&
+         ActiveSupport::IsolatedExecutionState.isolation_level == :thread
+        warn '[Apartment] WARNING: ActiveSupport isolation_level is :thread. ' \
+             'Apartment v4 requires :fiber for correct CurrentAttributes propagation. ' \
+             'Set config.active_support.isolation_level = :fiber in your application config.'
       end
-
-      ActiveRecord::Migrator.migrations_paths = Rails.application.paths['db/migrate'].to_a
-    end
-
-    #   Hook into ActionDispatch::Reloader to ensure Apartment is properly initialized
-    #   Note that this doesn't entirely work as expected in Development,
-    #   because this is called before classes are reloaded
-    #   See the middleware/console declarations below to help with this. Hope to fix that soon.
-    #
-    config.to_prepare do
-      next if ARGV.any? { |arg| arg =~ /\Aassets:(?:precompile|clean)\z/ }
-      next if ARGV.any?('webpacker:compile')
-      next if ENV['APARTMENT_DISABLE_INIT']
 
       begin
-        Apartment.connection_class.connection_pool.with_connection do
-          Apartment::Tenant.init
-        end
-      rescue ::ActiveRecord::NoDatabaseError
-        # Since `db:create` and other tasks invoke this block from Rails 5.2.0,
-        # we need to swallow the error to execute `db:create` properly.
+        Apartment.activate!
+        Apartment::Tenant.init
+      rescue ActiveRecord::NoDatabaseError
+        warn '[Apartment] Database not found during init — skipping. Run db:create first.'
       end
     end
 
-    config.after_initialize do
-      # NOTE: Load the custom log subscriber if enabled
-      if Apartment.active_record_log
-        ActiveSupport::Notifications.notifier.listeners_for('sql.active_record').each do |listener|
-          next unless listener.instance_variable_get(:@delegate).is_a?(ActiveRecord::LogSubscriber)
+    # Insert elevator middleware if configured.
+    initializer 'apartment.middleware' do |app|
+      next unless Apartment.config&.elevator
 
-          ActiveSupport::Notifications.unsubscribe(listener)
-        end
-
-        Apartment::LogSubscriber.attach_to(:active_record)
-      end
+      elevator_class = Apartment::Railtie.resolve_elevator_class(Apartment.config.elevator)
+      options = Apartment.config.elevator_options || {}
+      app.middleware.use(elevator_class, *options.values)
     end
 
-    #
-    #   Ensure rake tasks are loaded
-    #
     rake_tasks do
-      load 'tasks/apartment.rake'
-      require 'apartment/tasks/enhancements' if Apartment.db_migrate_tenants
+      load File.expand_path('tasks/v4.rake', __dir__)
+    end
+
+    # Resolve an elevator symbol to its class. Class method for testability.
+    def self.resolve_elevator_class(elevator)
+      class_name = "Apartment::Elevators::#{elevator.to_s.camelize}"
+      require("apartment/elevators/#{elevator}")
+      class_name.constantize
+    rescue NameError, LoadError => e
+      available = Dir[File.join(__dir__, 'elevators', '*.rb')]
+        .map { |f| File.basename(f, '.rb') }
+        .reject { |n| n == 'generic' }
+      raise(Apartment::ConfigurationError,
+            "Unknown elevator '#{elevator}': #{e.message}. " \
+            "Available elevators: #{available.join(', ')}")
     end
   end
 end

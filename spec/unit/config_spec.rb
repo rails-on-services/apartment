@@ -185,6 +185,54 @@ RSpec.describe(Apartment::Config) do
     end
   end
 
+  describe 'schema_load_strategy' do
+    it 'defaults to nil (opt-in schema loading)' do
+      config = described_class.new
+      expect(config.schema_load_strategy).to(be_nil)
+    end
+
+    it 'accepts :schema_rb' do
+      config = described_class.new
+      config.schema_load_strategy = :schema_rb
+      expect(config.schema_load_strategy).to(eq(:schema_rb))
+    end
+
+    it 'accepts :sql' do
+      config = described_class.new
+      config.schema_load_strategy = :sql
+      expect(config.schema_load_strategy).to(eq(:sql))
+    end
+
+    it 'accepts nil' do
+      config = described_class.new
+      config.schema_load_strategy = nil
+      expect(config.schema_load_strategy).to(be_nil)
+    end
+
+    it 'rejects invalid values during validation' do
+      expect do
+        Apartment.configure do |c|
+          c.tenant_strategy = :schema
+          c.tenants_provider = -> { [] }
+          c.schema_load_strategy = :invalid
+        end
+      end.to(raise_error(Apartment::ConfigurationError, /Invalid schema_load_strategy/))
+    end
+  end
+
+  describe 'schema_file' do
+    it 'defaults to nil' do
+      config = described_class.new
+      expect(config.schema_file).to(be_nil)
+    end
+
+    it 'accepts a string path' do
+      config = described_class.new
+      config.schema_file = '/path/to/schema.rb'
+      expect(config.schema_file).to(eq('/path/to/schema.rb'))
+    end
+  end
+
   describe '#rails_env_name' do
     around do |example|
       saved_rails_env = ENV.fetch('RAILS_ENV', nil)

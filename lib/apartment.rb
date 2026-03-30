@@ -175,3 +175,7 @@ module Apartment
     end
   end
 end
+
+# Load Railtie when Rails is present (standard gem convention).
+# Railtie is Zeitwerk-ignored — this explicit require is the only load path.
+require_relative 'apartment/railtie' if defined?(Rails::Railtie)

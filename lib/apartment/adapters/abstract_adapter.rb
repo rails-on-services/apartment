@@ -2,6 +2,7 @@
 
 require 'active_support/callbacks'
 require 'active_support/core_ext/string/inflections'
+require_relative '../tenant_name_validator'
 
 module Apartment
   module Adapters
@@ -18,6 +19,17 @@ module Apartment
         @connection_config = connection_config
       end
 
+      # Template method: validates tenant name then delegates to resolve_connection_config.
+      # Called by ConnectionHandling — subclasses should NOT override this.
+      def validated_connection_config(tenant)
+        TenantNameValidator.validate!(
+          tenant,
+          strategy: Apartment.config.tenant_strategy,
+          adapter_name: base_config['adapter']
+        )
+        resolve_connection_config(tenant)
+      end
+
       # Resolve a tenant-specific connection config hash.
       # Subclasses override to set strategy-specific keys.
       def resolve_connection_config(tenant)
@@ -26,8 +38,15 @@ module Apartment
 
       # Create a new tenant (schema or database).
       def create(tenant)
+        TenantNameValidator.validate!(
+          tenant,
+          strategy: Apartment.config.tenant_strategy,
+          adapter_name: base_config['adapter']
+        )
         run_callbacks(:create) do
           create_tenant(tenant)
+          import_schema(tenant) if Apartment.config.schema_load_strategy
+          seed(tenant) if Apartment.config.seed_after_create
           Instrumentation.instrument(:create, tenant: tenant)
         end
       end
@@ -142,6 +161,34 @@ module Apartment
 
       def deregister_shard_from_ar_handler(tenant)
         Apartment.deregister_shard(tenant)
+      end
+
+      def import_schema(tenant)
+        Apartment::Tenant.switch(tenant) do
+          schema_file = resolve_schema_file
+          case Apartment.config.schema_load_strategy
+          when :schema_rb
+            load(schema_file)
+          when :sql
+            ActiveRecord::Tasks::DatabaseTasks.load_schema(
+              ActiveRecord::Base.connection_db_config, :sql, schema_file
+            )
+          end
+        end
+      rescue StandardError => e
+        raise(Apartment::SchemaLoadError,
+              "Failed to load schema for tenant '#{tenant}': #{e.class}: #{e.message}")
+      end
+
+      def resolve_schema_file
+        custom = Apartment.config.schema_file
+        return custom if custom
+
+        if defined?(Rails) && Rails.respond_to?(:root) && Rails.root
+          Rails.root.join('db/schema.rb').to_s
+        else
+          'db/schema.rb'
+        end
       end
     end
   end

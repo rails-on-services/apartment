@@ -2,6 +2,8 @@
 
 require('tmpdir')
 require('fileutils')
+require('erb')
+require('yaml')
 
 # Integration tests require real ActiveRecord + a database gem.
 # Run via appraisal:
@@ -139,6 +141,70 @@ module V4IntegrationHelper
       adapter.drop(tenant)
     rescue StandardError => e
       warn "[V4IntegrationHelper] cleanup_tenants! failed for '#{tenant}': #{e.message}"
+    end
+  end
+
+  # --- Scenario-based configs ---
+
+  Scenario = Struct.new(:name, :engine, :strategy, :adapter_class, :default_tenant,
+                        :connection)
+
+  def load_scenario(name)
+    path = File.join(__dir__, 'scenarios', "#{name}.yml")
+    raise(ArgumentError, "Scenario file not found: #{path}") unless File.exist?(path)
+
+    raw = YAML.safe_load(ERB.new(File.read(path)).result, permitted_classes: [Symbol])
+    Scenario.new(
+      name: raw['name'],
+      engine: raw['engine'],
+      strategy: raw['strategy'].to_sym,
+      adapter_class: raw['adapter_class'],
+      default_tenant: raw['default_tenant'],
+      connection: raw['connection'].transform_keys(&:to_s)
+    )
+  end
+
+  def scenarios_for_engine
+    Dir[File.join(__dir__, 'scenarios', '*.yml')].filter_map do |path|
+      scenario_name = File.basename(path, '.yml')
+      scenario = load_scenario(scenario_name)
+      scenario if scenario.engine == database_engine
+    end
+  end
+
+  def each_scenario(&)
+    scenarios_for_engine.each(&)
+  end
+end
+
+if V4_INTEGRATION_AVAILABLE
+  RSpec.configure do |config|
+    # Swap ConnectionHandler per test for hermetic isolation.
+    # Skip for :stress-tagged tests — concurrent threads race with handler swap teardown.
+    config.around(:each, :integration) do |example|
+      if example.metadata[:stress]
+        example.run
+        next
+      end
+
+      old_handler = ActiveRecord::Base.connection_handler
+      new_handler = ActiveRecord::ConnectionAdapters::ConnectionHandler.new
+      ActiveRecord::Base.connection_handler = new_handler
+
+      # Re-establish the default connection on the fresh handler.
+      default_config = V4IntegrationHelper.default_connection_config
+      ActiveRecord::Base.establish_connection(default_config) if default_config
+
+      example.run
+    ensure
+      unless example.metadata[:stress]
+        begin
+          new_handler&.clear_all_connections!
+        rescue StandardError
+          nil
+        end
+        ActiveRecord::Base.connection_handler = old_handler
+      end
     end
   end
 end

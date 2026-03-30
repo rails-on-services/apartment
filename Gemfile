@@ -5,6 +5,7 @@ source 'https://rubygems.org'
 gemspec
 
 gem 'appraisal', '~> 2.5'
+gem 'rack-test', require: false
 gem 'rspec', '~> 3.10'
 
 group :development do
@@ -14,4 +15,9 @@ group :development do
   gem 'rubocop-rake', require: false
   gem 'rubocop-rspec', require: false
   gem 'rubocop-thread_safety', require: false
+end
+
+group :development, :test do
+  gem 'simplecov', require: false
+  gem 'test-prof', require: false
 end

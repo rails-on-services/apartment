@@ -22,7 +22,7 @@ lib/apartment/
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md)
 ├── patches/               # [v4] ActiveRecord patches for tenant-aware connections
 │   └── connection_handling.rb # [v4] Prepends on AR::Base — tenant-aware connection_pool
-├── tasks/                 # Rake task utilities, parallel migrations (see CLAUDE.md)
+├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
 ├── config.rb              # [v4] Configuration with validate!/freeze!
 ├── current.rb             # [v4] Fiber-safe tenant context (CurrentAttributes)
 ├── errors.rb              # [v4] Exception hierarchy
@@ -36,7 +36,8 @@ lib/apartment/
 ├── log_subscriber.rb      # [v3] ActiveRecord log subscriber
 ├── migrator.rb            # [v3] Tenant migration runner
 ├── model.rb               # [v3] Excluded model behavior (v4 handling in abstract_adapter.rb)
-├── railtie.rb             # [v3] Rails initialization hooks
+├── railtie.rb             # [v4] Rails initialization (activate!, middleware, rake tasks)
+├── tenant_name_validator.rb  # [v4] Pure in-memory tenant name format validation
 └── version.rb             # Gem version constant
 ```
 
@@ -76,9 +77,18 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 - **TrilogyAdapter** — Empty subclass of MySQL2Adapter (alternative MySQL driver).
 - **SQLite3Adapter** — `database` key with file path. `FileUtils.mkdir_p` for create, `FileUtils.rm_f` for drop.
 
-## v3 Files (still active, replaced incrementally)
+### railtie.rb — v4 Rails Integration
 
-- **railtie.rb** — Rails boot integration, excluded model setup, rake task loading
+Three hooks in Rails boot order:
+1. `config.after_initialize` — Guards on `Apartment.config.nil?`, warns if isolation_level is `:thread`, calls `activate!` and `Tenant.init`
+2. `config.app_middleware.use` — Inserts elevator if `config.elevator` set, resolves class via `constantize`
+3. `rake_tasks` — Loads `tasks/v4.rake` (apartment:create, :drop, :migrate, :seed, :rollback)
+
+### tenant_name_validator.rb — Name Validation
+
+Pure module, no IO. `validate!(name, strategy:, adapter_name:)` checks common rules (non-empty, no NUL, no whitespace, max 255) then engine-specific: PG identifiers (max 63, no `pg_` prefix), MySQL names (max 64, no leading digit), SQLite paths (no traversal).
+
+## v3 Files (still active, replaced incrementally)
 - **migrator.rb** — Tenant migration iteration with parallel support
 - **model.rb** — Excluded model connection handling (v4 handling in abstract_adapter.rb)
 - **console.rb / custom_console.rb** — Rails console tenant helpers
@@ -87,7 +97,7 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 ## Data Flow
 
-**Tenant creation**: `Tenant.create` → `adapter.create` → callbacks → `create_tenant` (subclass) → instrumentation
+**Tenant creation**: `Tenant.create` → `adapter.create` → `TenantNameValidator.validate!` → callbacks → `create_tenant` (subclass) → `import_schema` (if configured) → instrumentation
 
 **Tenant switching (v4)**: `Tenant.switch` → `Current.tenant =` → yield → ensure restore. No SQL switching — connection pool resolved by `ConnectionHandling` patch (Phase 2.3).
 

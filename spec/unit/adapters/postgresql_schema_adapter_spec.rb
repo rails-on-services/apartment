@@ -23,6 +23,7 @@ RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
       c.tenant_strategy = :schema
       c.tenants_provider = -> { %w[t1 t2] }
       c.default_tenant = 'public'
+      c.schema_load_strategy = nil
     end
   end
 
@@ -33,6 +34,7 @@ RSpec.describe(Apartment::Adapters::PostgreSQLSchemaAdapter) do
       c.tenant_strategy = :schema
       c.tenants_provider = -> { %w[t1 t2] }
       c.default_tenant = 'public'
+      c.schema_load_strategy = nil
       overrides.each { |key, val| c.send(:"#{key}=", val) }
       block&.call(c)
     end

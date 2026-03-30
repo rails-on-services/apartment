@@ -27,6 +27,7 @@ Metrics/BlockLength:
   Exclude:
     - spec/**/*.rb
     - lib/tasks/**/*.rake
+    - lib/apartment/tasks/**/*.rake
     - Rakefile
 
 Metrics/MethodLength:
