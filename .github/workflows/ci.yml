@@ -8,6 +8,25 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      ruby:
+        description: 'Ruby version (all, 3.3, 3.4, 4.0)'
+        required: false
+        default: 'all'
+        type: choice
+        options: ['all', '3.3', '3.4', '4.0']
+      rails:
+        description: 'Rails version (all, 7.2, 8.0, 8.1)'
+        required: false
+        default: 'all'
+        type: choice
+        options: ['all', '7.2', '8.0', '8.1']
+      engine:
+        description: 'Database engine (all, postgresql, mysql, sqlite)'
+        required: false
+        default: 'all'
+        type: choice
+        options: ['all', 'postgresql', 'mysql', 'sqlite']
 
 jobs:
   # ── Unit tests (no database required) ──────────────────────────────
@@ -17,8 +36,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby: ['3.3', '3.4', '4.0']
-        rails: ['7.2', '8.0', '8.1']
+        ruby: ${{ github.event_name == 'workflow_dispatch' && inputs.ruby != 'all' && fromJSON(format('["{0}"]', inputs.ruby)) || fromJSON('["3.3","3.4","4.0"]') }}
+        rails: ${{ github.event_name == 'workflow_dispatch' && inputs.rails != 'all' && fromJSON(format('["{0}"]', inputs.rails)) || fromJSON('["7.2","8.0","8.1"]') }}
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_sqlite3.gemfile
     steps:
@@ -32,14 +51,15 @@ jobs:
 
   # ── PostgreSQL integration tests ───────────────────────────────────
   postgresql:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'postgresql' }}
     name: PG ${{ matrix.pg }} · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
     needs: unit
     strategy:
       fail-fast: false
       matrix:
-        ruby: ['3.3', '3.4', '4.0']
-        rails: ['7.2', '8.0', '8.1']
+        ruby: ${{ github.event_name == 'workflow_dispatch' && inputs.ruby != 'all' && fromJSON(format('["{0}"]', inputs.ruby)) || fromJSON('["3.3","3.4","4.0"]') }}
+        rails: ${{ github.event_name == 'workflow_dispatch' && inputs.rails != 'all' && fromJSON(format('["{0}"]', inputs.rails)) || fromJSON('["7.2","8.0","8.1"]') }}
         pg: ['16', '18']
         exclude:
           # Reduce matrix: test oldest PG with oldest Rails, newest with newest
@@ -84,14 +104,15 @@ jobs:
 
   # ── MySQL integration tests ────────────────────────────────────────
   mysql:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'mysql' }}
     name: MySQL 8.4 · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
     needs: unit
     strategy:
       fail-fast: false
       matrix:
-        ruby: ['3.3', '3.4', '4.0']
-        rails: ['7.2', '8.0', '8.1']
+        ruby: ${{ github.event_name == 'workflow_dispatch' && inputs.ruby != 'all' && fromJSON(format('["{0}"]', inputs.ruby)) || fromJSON('["3.3","3.4","4.0"]') }}
+        rails: ${{ github.event_name == 'workflow_dispatch' && inputs.rails != 'all' && fromJSON(format('["{0}"]', inputs.rails)) || fromJSON('["7.2","8.0","8.1"]') }}
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_mysql2.gemfile
       CI: true
@@ -128,14 +149,15 @@ jobs:
 
   # ── SQLite integration tests ───────────────────────────────────────
   sqlite:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'sqlite' }}
     name: SQLite · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
     needs: unit
     strategy:
       fail-fast: false
       matrix:
-        ruby: ['3.3', '3.4', '4.0']
-        rails: ['7.2', '8.0', '8.1']
+        ruby: ${{ github.event_name == 'workflow_dispatch' && inputs.ruby != 'all' && fromJSON(format('["{0}"]', inputs.ruby)) || fromJSON('["3.3","3.4","4.0"]') }}
+        rails: ${{ github.event_name == 'workflow_dispatch' && inputs.rails != 'all' && fromJSON(format('["{0}"]', inputs.rails)) || fromJSON('["7.2","8.0","8.1"]') }}
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_sqlite3.gemfile
       CI: true
