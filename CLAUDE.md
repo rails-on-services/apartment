@@ -100,7 +100,7 @@ v4 unit tests are in `spec/unit/` and require no database. See `spec/CLAUDE.md` 
 
 ## Gotchas
 
-- **v3/v4 coexistence**: v3 files and v4 files coexist in `lib/apartment/`. Zeitwerk `loader.ignore` directives in `lib/apartment.rb` control which files load. v3 files are replaced incrementally by phase.
+- **v3 removal**: v3 files were deleted as of Phase 2.5. `lib/apartment/` contains only v4 code. The v3 elevators in `lib/apartment/elevators/` remain Zeitwerk-ignored until Phase 3 replaces them.
 - **Frozen config**: `Apartment.config` is frozen after `Apartment.configure`. Tests that need different config values must call `Apartment.configure` again (not stub the frozen object).
 - **Monotonic clock**: `PoolManager` uses `Process.clock_gettime(Process::CLOCK_MONOTONIC)` for timestamps, not `Time.now`. Stats return `seconds_idle` (duration), not wall-clock times.
 - **schema_load_strategy**: Defaults to `nil` (no schema loading on create). Set to `:schema_rb` or `:sql` to auto-load schema into new tenants.

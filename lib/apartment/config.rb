@@ -77,14 +77,14 @@ module Apartment
 
     # Configure PostgreSQL-specific options via block.
     def configure_postgres
-      @postgres_config = Configs::PostgreSQLConfig.new
+      @postgres_config = Configs::PostgresqlConfig.new
       yield(@postgres_config) if block_given?
       @postgres_config
     end
 
     # Configure MySQL-specific options via block.
     def configure_mysql
-      @mysql_config = Configs::MySQLConfig.new
+      @mysql_config = Configs::MysqlConfig.new
       yield(@mysql_config) if block_given?
       @mysql_config
     end

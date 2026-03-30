@@ -68,13 +68,13 @@ RSpec.describe(Apartment::Config) do
   end
 
   describe '#configure_postgres' do
-    it 'creates a PostgreSQLConfig' do
+    it 'creates a PostgresqlConfig' do
       pg = config.configure_postgres do |pg|
         pg.persistent_schemas = ['shared']
         pg.enforce_search_path_reset = true
       end
 
-      expect(pg).to(be_a(Apartment::Configs::PostgreSQLConfig))
+      expect(pg).to(be_a(Apartment::Configs::PostgresqlConfig))
       expect(pg.persistent_schemas).to(eq(['shared']))
       expect(pg.enforce_search_path_reset).to(be(true))
       expect(config.postgres_config).to(eq(pg))
@@ -82,9 +82,9 @@ RSpec.describe(Apartment::Config) do
   end
 
   describe '#configure_mysql' do
-    it 'creates a MySQLConfig' do
+    it 'creates a MysqlConfig' do
       my = config.configure_mysql
-      expect(my).to(be_a(Apartment::Configs::MySQLConfig))
+      expect(my).to(be_a(Apartment::Configs::MysqlConfig))
       expect(config.mysql_config).to(eq(my))
     end
   end

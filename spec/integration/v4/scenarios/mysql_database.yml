@@ -1,7 +1,7 @@
 name: mysql_database
 engine: mysql
 strategy: database_name
-adapter_class: MySQL2Adapter
+adapter_class: Mysql2Adapter
 default_tenant: apartment_v4_test
 connection:
   adapter: mysql2

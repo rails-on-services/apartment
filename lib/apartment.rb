@@ -7,31 +7,19 @@ require 'active_support/current_attributes'
 # Set up Zeitwerk autoloader for the Apartment namespace.
 # Must happen before requiring files that define constants in the Apartment module.
 loader = Zeitwerk::Loader.for_gem(warn_on_extra_files: false)
-loader.inflector.inflect(
-  'mysql_config' => 'MySQLConfig',
-  'postgresql_config' => 'PostgreSQLConfig'
-)
 
 # errors.rb defines multiple constants (not a single Errors class),
 # so it must be loaded explicitly rather than autoloaded.
 loader.ignore("#{__dir__}/apartment/errors.rb")
 
-# Ignore v3 files that haven't been replaced yet.
-%w[
-  railtie
-  deprecation
-  log_subscriber
-  console
-  custom_console
-  migrator
-  model
-].each { |f| loader.ignore("#{__dir__}/apartment/#{f}.rb") }
+# Railtie is loaded explicitly via require_relative at the bottom of this file.
+loader.ignore("#{__dir__}/apartment/railtie.rb")
 
-loader.ignore("#{__dir__}/apartment/adapters")
+# v3 elevators — will be replaced in Phase 3.
 loader.ignore("#{__dir__}/apartment/elevators")
-loader.ignore("#{__dir__}/apartment/patches")
+
+# Rake tasks are loaded by the Railtie, not autoloaded.
 loader.ignore("#{__dir__}/apartment/tasks")
-loader.ignore("#{__dir__}/apartment/active_record")
 
 loader.setup
 
@@ -145,21 +133,21 @@ module Apartment
       klass = case strategy
               when :schema
                 require_relative('apartment/adapters/postgresql_schema_adapter')
-                Adapters::PostgreSQLSchemaAdapter
+                Adapters::PostgresqlSchemaAdapter
               when :database_name
                 case db_adapter
                 when /postgresql/, /postgis/
                   require_relative('apartment/adapters/postgresql_database_adapter')
-                  Adapters::PostgreSQLDatabaseAdapter
+                  Adapters::PostgresqlDatabaseAdapter
                 when /mysql2/
                   require_relative('apartment/adapters/mysql2_adapter')
-                  Adapters::MySQL2Adapter
+                  Adapters::Mysql2Adapter
                 when /trilogy/
                   require_relative('apartment/adapters/trilogy_adapter')
                   Adapters::TrilogyAdapter
                 when /sqlite/
                   require_relative('apartment/adapters/sqlite3_adapter')
-                  Adapters::SQLite3Adapter
+                  Adapters::Sqlite3Adapter
                 else
                   raise(AdapterNotFound, "No adapter for database: #{db_adapter}")
                 end

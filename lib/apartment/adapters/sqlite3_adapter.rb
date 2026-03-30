@@ -11,7 +11,7 @@ module Apartment
     # file path from the base config's directory and the environmentified
     # tenant name. SQLite creates the file on first connection, so create_tenant
     # only ensures the directory exists.
-    class SQLite3Adapter < AbstractAdapter
+    class Sqlite3Adapter < AbstractAdapter
       def resolve_connection_config(tenant)
         base_config.merge('database' => database_file(tenant))
       end

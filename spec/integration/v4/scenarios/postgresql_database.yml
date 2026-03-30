@@ -1,7 +1,7 @@
 name: postgresql_database
 engine: postgresql
 strategy: database_name
-adapter_class: PostgreSQLDatabaseAdapter
+adapter_class: PostgresqlDatabaseAdapter
 default_tenant: apartment_v4_test
 connection:
   adapter: postgresql

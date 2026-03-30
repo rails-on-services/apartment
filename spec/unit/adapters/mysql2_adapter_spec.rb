@@ -169,7 +169,7 @@ RSpec.shared_examples('a MySQL adapter') do
   end
 end
 
-RSpec.describe(Apartment::Adapters::MySQL2Adapter) do
+RSpec.describe(Apartment::Adapters::Mysql2Adapter) do
   describe 'inheritance' do
     it 'is a subclass of AbstractAdapter' do
       expect(described_class).to(be < Apartment::Adapters::AbstractAdapter)
@@ -183,8 +183,8 @@ end
 
 RSpec.describe(Apartment::Adapters::TrilogyAdapter) do
   describe 'inheritance' do
-    it 'is a subclass of MySQL2Adapter' do
-      expect(described_class).to(be < Apartment::Adapters::MySQL2Adapter)
+    it 'is a subclass of Mysql2Adapter' do
+      expect(described_class).to(be < Apartment::Adapters::Mysql2Adapter)
     end
 
     it 'is a subclass of AbstractAdapter' do

@@ -1,43 +1,34 @@
 # lib/apartment/ - Core Implementation Directory
 
-This directory contains v3 and v4 code side by side. Zeitwerk `loader.ignore` directives in `lib/apartment.rb` control which files load. v3 files are being replaced incrementally — see `docs/designs/apartment-v4.md` for the v4 architecture.
+This directory contains v4 implementation files. v3 files have been deleted as of Phase 2.5. See `docs/designs/apartment-v4.md` for the v4 architecture.
 
 ## Directory Structure
 
 ```
 lib/apartment/
 ├── adapters/              # Database-specific tenant isolation (see CLAUDE.md)
-│   ├── abstract_adapter.rb    # [v4] Base adapter: lifecycle, callbacks, resolve_connection_config, base_config
-│   ├── postgresql_schema_adapter.rb  # [v4] Schema-per-tenant (CREATE/DROP SCHEMA, schema_search_path)
-│   ├── postgresql_database_adapter.rb # [v4] Database-per-tenant on PostgreSQL (CREATE/DROP DATABASE)
-│   ├── mysql2_adapter.rb      # [v4] Database-per-tenant on MySQL (mysql2 driver)
-│   ├── trilogy_adapter.rb     # [v4] Database-per-tenant on MySQL (trilogy driver, inherits MySQL2Adapter)
-│   ├── sqlite3_adapter.rb     # [v4] File-per-tenant (FileUtils lifecycle)
-│   ├── postgresql_adapter.rb  # [v3] PostgreSQL schema switching (legacy, Zeitwerk-ignored)
-│   └── *_jdbc_*.rb            # [v3] JRuby adapters (dropped in v4, Zeitwerk-ignored)
-├── configs/               # [v4] Database-specific config objects
-│   ├── postgresql_config.rb   # persistent_schemas, enforce_search_path_reset
-│   └── mysql_config.rb        # placeholder
-├── active_record/         # [v3] ActiveRecord patches (to be replaced Phase 2.3)
+│   ├── abstract_adapter.rb    # Base adapter: lifecycle, callbacks, resolve_connection_config, base_config
+│   ├── postgresql_schema_adapter.rb  # Schema-per-tenant (CREATE/DROP SCHEMA, schema_search_path)
+│   ├── postgresql_database_adapter.rb # Database-per-tenant on PostgreSQL (CREATE/DROP DATABASE)
+│   ├── mysql2_adapter.rb      # Database-per-tenant on MySQL (mysql2 driver)
+│   ├── trilogy_adapter.rb     # Database-per-tenant on MySQL (trilogy driver, inherits Mysql2Adapter)
+│   └── sqlite3_adapter.rb     # File-per-tenant (FileUtils lifecycle)
+├── configs/               # Database-specific config objects
+│   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, enforce_search_path_reset
+│   └── mysql_config.rb        # MysqlConfig: placeholder
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md)
-├── patches/               # [v4] ActiveRecord patches for tenant-aware connections
-│   └── connection_handling.rb # [v4] Prepends on AR::Base — tenant-aware connection_pool
+├── patches/               # ActiveRecord patches for tenant-aware connections
+│   └── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
 ├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
-├── config.rb              # [v4] Configuration with validate!/freeze!
-├── current.rb             # [v4] Fiber-safe tenant context (CurrentAttributes)
-├── errors.rb              # [v4] Exception hierarchy
-├── instrumentation.rb     # [v4] ActiveSupport::Notifications wrapper
-├── pool_manager.rb        # [v4] Concurrent::Map pool cache with monotonic timestamps
-├── pool_reaper.rb         # [v4] Background idle/LRU pool eviction
-├── tenant.rb              # [v4] Public API facade (switch, current, reset, lifecycle)
-├── console.rb             # [v3] Rails console helpers
-├── custom_console.rb      # [v3] Enhanced console with tenant prompt
-├── deprecation.rb         # [v3] Deprecation warnings
-├── log_subscriber.rb      # [v3] ActiveRecord log subscriber
-├── migrator.rb            # [v3] Tenant migration runner
-├── model.rb               # [v3] Excluded model behavior (v4 handling in abstract_adapter.rb)
-├── railtie.rb             # [v4] Rails initialization (activate!, middleware, rake tasks)
-├── tenant_name_validator.rb  # [v4] Pure in-memory tenant name format validation
+├── config.rb              # Configuration with validate!/freeze!
+├── current.rb             # Fiber-safe tenant context (CurrentAttributes)
+├── errors.rb              # Exception hierarchy
+├── instrumentation.rb     # ActiveSupport::Notifications wrapper
+├── pool_manager.rb        # Concurrent::Map pool cache with monotonic timestamps
+├── pool_reaper.rb         # Background idle/LRU pool eviction
+├── railtie.rb             # Rails initialization (activate!, middleware, rake tasks)
+├── tenant.rb              # Public API facade (switch, current, reset, lifecycle)
+├── tenant_name_validator.rb  # Pure in-memory tenant name format validation
 └── version.rb             # Gem version constant
 ```
 
@@ -71,11 +62,11 @@ Lifecycle ops (`create`, `drop`, `migrate`, `seed`), `ActiveSupport::Callbacks` 
 
 All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `create_tenant`, `drop_tenant`.
 
-- **PostgreSQLSchemaAdapter** — `schema_search_path` with persistent schemas. Does NOT environmentify (schemas are named directly). `CREATE/DROP SCHEMA IF EXISTS ... CASCADE`.
-- **PostgreSQLDatabaseAdapter** — `database` key with environmentified name. `CREATE/DROP DATABASE IF EXISTS`.
-- **MySQL2Adapter** — Same pattern as PostgreSQLDatabaseAdapter. `CREATE/DROP DATABASE IF EXISTS`.
-- **TrilogyAdapter** — Empty subclass of MySQL2Adapter (alternative MySQL driver).
-- **SQLite3Adapter** — `database` key with file path. `FileUtils.mkdir_p` for create, `FileUtils.rm_f` for drop.
+- **PostgresqlSchemaAdapter** — `schema_search_path` with persistent schemas. Does NOT environmentify (schemas are named directly). `CREATE/DROP SCHEMA IF EXISTS ... CASCADE`.
+- **PostgresqlDatabaseAdapter** — `database` key with environmentified name. `CREATE/DROP DATABASE IF EXISTS`.
+- **Mysql2Adapter** — Same pattern as PostgresqlDatabaseAdapter. `CREATE/DROP DATABASE IF EXISTS`.
+- **TrilogyAdapter** — Empty subclass of Mysql2Adapter (alternative MySQL driver).
+- **Sqlite3Adapter** — `database` key with file path. `FileUtils.mkdir_p` for create, `FileUtils.rm_f` for drop.
 
 ### railtie.rb — v4 Rails Integration
 
@@ -87,13 +78,6 @@ Three hooks in Rails boot order:
 ### tenant_name_validator.rb — Name Validation
 
 Pure module, no IO. `validate!(name, strategy:, adapter_name:)` checks common rules (non-empty, no NUL, no whitespace, max 255) then engine-specific: PG identifiers (max 63, no `pg_` prefix), MySQL names (max 64, no leading digit), SQLite paths (no traversal).
-
-## v3 Files (still active, replaced incrementally)
-- **migrator.rb** — Tenant migration iteration with parallel support
-- **model.rb** — Excluded model connection handling (v4 handling in abstract_adapter.rb)
-- **console.rb / custom_console.rb** — Rails console tenant helpers
-- **active_record/** — v3 AR patches (to be removed; replaced by v4 patches/connection_handling.rb)
-- **adapters/postgresql_adapter.rb** — v3 schema switching (Zeitwerk-ignored, replaced by v4 PostgreSQLSchemaAdapter)
 
 ## Data Flow
 

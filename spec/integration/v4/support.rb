@@ -81,13 +81,13 @@ module V4IntegrationHelper
     case database_engine
     when 'postgresql'
       require('apartment/adapters/postgresql_schema_adapter')
-      Apartment::Adapters::PostgreSQLSchemaAdapter.new(connection_config.transform_keys(&:to_sym))
+      Apartment::Adapters::PostgresqlSchemaAdapter.new(connection_config.transform_keys(&:to_sym))
     when 'mysql'
       require('apartment/adapters/mysql2_adapter')
-      Apartment::Adapters::MySQL2Adapter.new(connection_config.transform_keys(&:to_sym))
+      Apartment::Adapters::Mysql2Adapter.new(connection_config.transform_keys(&:to_sym))
     else
       require('apartment/adapters/sqlite3_adapter')
-      Apartment::Adapters::SQLite3Adapter.new(connection_config.transform_keys(&:to_sym))
+      Apartment::Adapters::Sqlite3Adapter.new(connection_config.transform_keys(&:to_sym))
     end
   end
 

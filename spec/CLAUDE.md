@@ -1,6 +1,6 @@
 # spec/ - Apartment Test Suite
 
-> **Note**: This file primarily describes the v3 test suite. v4 unit tests live in `spec/unit/` (273 specs). v4 integration tests live in `spec/integration/v4/` (39 specs across SQLite/PostgreSQL/MySQL: switching, lifecycle, excluded models, edge cases, stress/concurrency, PG schemas, MySQL databases). Request lifecycle tests in `spec/integration/v4/request_lifecycle_spec.rb` exercise the full elevator-to-response flow through a dummy Rails app. Scenario-based YAML configs in `spec/integration/v4/scenarios/` define per-engine database settings. Integration tests use a ConnectionHandler swap for hermetic isolation (no cross-test pool leakage). Coverage via SimpleCov (opt-in: `COVERAGE=1`) and profiling via TestProf (`FPROF=1`, `EVENT_PROF=`). Run unit tests with `bundle exec rspec spec/unit/`. Run integration tests with `bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/` (SQLite), `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/` (PG), or `DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/` (MySQL). v3 specs in other directories remain for v3 code that hasn't been replaced yet.
+> **Note**: v4 unit tests live in `spec/unit/` (273 specs). v4 integration tests live in `spec/integration/v4/` (39 specs across SQLite/PostgreSQL/MySQL: switching, lifecycle, excluded models, edge cases, stress/concurrency, PG schemas, MySQL databases). Request lifecycle tests in `spec/integration/v4/request_lifecycle_spec.rb` exercise the full elevator-to-response flow through a dummy Rails app. Scenario-based YAML configs in `spec/integration/v4/scenarios/` define per-engine database settings. Integration tests use a ConnectionHandler swap for hermetic isolation (no cross-test pool leakage). Coverage via SimpleCov (opt-in: `COVERAGE=1`) and profiling via TestProf (`FPROF=1`, `EVENT_PROF=`). Run unit tests with `bundle exec rspec spec/unit/`. Run integration tests with `bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/` (SQLite), `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/` (PG), or `DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/` (MySQL).
 
 This directory contains the test suite for Apartment, covering adapters, elevators, configuration, and integration scenarios.
 
@@ -8,19 +8,18 @@ This directory contains the test suite for Apartment, covering adapters, elevato
 
 ```
 spec/
-├── adapters/              # Database adapter specs (PostgreSQL, MySQL, SQLite)
 ├── apartment/             # Core module specs
 ├── config/                # Database configuration for tests
 ├── dummy/                 # Rails dummy app for integration testing
 ├── dummy_engine/          # Rails engine for testing engine integration
 ├── examples/              # Shared example groups for adapter testing
-├── integration/           # Full-stack integration tests
-│   └── v4/scenarios/      # YAML scenario configs (postgresql_schema, postgresql_database, mysql_database, sqlite_file)
+├── integration/
+│   └── v4/                # Full-stack integration tests
+│       └── scenarios/     # YAML scenario configs (postgresql_schema, postgresql_database, mysql_database, sqlite_file)
 ├── schemas/               # Test schema fixtures
 ├── shared_examples/       # Reusable RSpec shared examples
 ├── support/               # Test helpers and configuration
-├── tasks/                 # Rake task specs
-├── unit/                  # Unit tests (elevators, migrator, config)
+├── unit/                  # Unit tests (elevators, adapters, config, tenant_name_validator)
 ├── apartment_spec.rb      # Main Apartment module specs
 ├── spec_helper.rb         # RSpec configuration
 └── tenant_spec.rb         # Apartment::Tenant public API specs
@@ -28,26 +27,20 @@ spec/
 
 ## Test Organization
 
-### Adapter Tests (spec/adapters/)
+### Adapter Tests (spec/unit/)
 
-**Purpose**: Test database-specific tenant operations
+**Purpose**: Test database-specific tenant operations (unit level, no real DB required)
 
-**Files**:
-- `postgresql_adapter_spec.rb` - PostgreSQL schema isolation
-- `mysql2_adapter_spec.rb` - MySQL database isolation
-- `sqlite3_adapter_spec.rb` - SQLite file isolation
-- `trilogy_adapter_spec.rb` - Trilogy MySQL driver
-- `abstract_adapter_spec.rb` - Shared adapter behavior
+**Files** (under `spec/unit/`):
+- `adapters/abstract_adapter_spec.rb` - Shared adapter behavior, callbacks, lifecycle
+- `adapters/postgresql_schema_adapter_spec.rb` - PostgreSQL schema isolation
+- `adapters/postgresql_database_adapter_spec.rb` - PostgreSQL database isolation
+- `adapters/mysql2_adapter_spec.rb` - MySQL database isolation
+- `adapters/sqlite3_adapter_spec.rb` - SQLite file isolation
 
-**What's tested**:
-- Tenant creation/deletion
-- Schema import and seeding
-- Tenant switching
-- Error handling (TenantExists, TenantNotFound)
-- Excluded model behavior
-- Callbacks
+**Integration adapter tests**: `spec/integration/v4/` (requires real databases)
 
-**See**: `spec/adapters/` for test implementations.
+**See**: `spec/unit/` for unit test implementations, `spec/integration/v4/` for full-stack tests.
 
 ### Elevator Tests (spec/unit/elevators/)
 
@@ -80,7 +73,7 @@ spec/
 - Concurrent tenant access
 - Migration scenarios
 
-**See**: `spec/integration/` for test implementations.
+**See**: `spec/integration/v4/` for test implementations.
 
 ### Dummy App (spec/dummy/)
 
@@ -166,7 +159,7 @@ Create multiple tenants, add data in one, verify it doesn't appear in others. Se
 
 ### Testing Callbacks
 
-Set callbacks on adapter, trigger tenant operations, verify callbacks execute. See `spec/adapters/abstract_adapter_spec.rb`.
+Set callbacks on adapter, trigger tenant operations, verify callbacks execute. See `spec/unit/adapters/abstract_adapter_spec.rb`.
 
 ### Testing Error Handling
 
@@ -208,7 +201,7 @@ Use FactoryBot within tenant switch blocks. Define factories in `spec/support/fa
 
 **Problem**: PostgreSQL-only tests run on all databases
 
-**Fix**: Use conditional tests with `if: postgresql?` guards. See `spec/adapters/` for examples.
+**Fix**: Use conditional tests with `if: postgresql?` guards. See `spec/unit/` and `spec/integration/v4/` for examples.
 
 ## Debugging Tests
 
