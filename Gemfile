@@ -16,3 +16,8 @@ group :development do
   gem 'rubocop-rspec', require: false
   gem 'rubocop-thread_safety', require: false
 end
+
+group :development, :test do
+  gem 'simplecov', require: false
+  gem 'test-prof', require: false
+end

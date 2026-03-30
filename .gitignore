@@ -19,3 +19,4 @@ spec/dummy/db/*.sqlite3
 .claude/settings.local.json
 # Firecrawl working data
 .firecrawl/
+coverage/
