@@ -15,6 +15,7 @@ Do NOT use `docs/superpowers/specs/` or `docs/superpowers/plans/` — those are 
 
 **Key documents:**
 - `docs/designs/apartment-v4.md` — v4 design spec
+- `docs/designs/v4-railtie-test-infra.md` — Railtie + test infrastructure design
 - `docs/plans/apartment-v4/phase-2-adapters.md` — Current phase plan (includes deferred review items)
 
 ## Where to Start
@@ -46,6 +47,16 @@ bundle exec rubocop
 
 # Build gem
 gem build ros-apartment.gemspec
+
+# Coverage report (opt-in)
+COVERAGE=1 bundle exec rspec spec/unit/
+
+# Test profiling
+FPROF=1 bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/
+EVENT_PROF=sql.active_record bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/
+
+# Request lifecycle tests (requires PostgreSQL)
+DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/request_lifecycle_spec.rb
 ```
 
 **CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1 × PG 16+18, MySQL 8.4, SQLite3. See `.github/workflows/ci.yml`.
@@ -66,6 +77,7 @@ See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strat
 - **Adapter pattern**: Abstract base class with database-specific subclasses. Unified API hides DB differences.
 - **Callbacks**: `ActiveSupport::Callbacks` on `:create` and `:switch` for logging/notification hooks.
 - **Dynamic tenant discovery**: `tenants_provider` is a callable (proc/lambda) that queries the database at runtime.
+- **Tenant name validation**: `TenantNameValidator` does pure in-memory format checks (no DB queries). Enforced in `AbstractAdapter#create` and `ConnectionHandling#connection_pool`. Engine-specific rules for PG identifiers, MySQL names, SQLite paths.
 
 ## Testing
 
@@ -84,10 +96,12 @@ v4 unit tests are in `spec/unit/` and require no database. See `spec/CLAUDE.md` 
 
 **Why v4**: Fixes thread-local tenant leakage (e.g., ActionCable shared thread pool bugs). Adds fiber safety, PgBouncer/RDS Proxy transaction mode compatibility, and a simpler mental model.
 
-**Status**: Phases 1, 2.1, 2.2, 2.3 merged. Phase 2.4 (excluded models improvements, integration tests) in progress. See `docs/plans/apartment-v4/` for full plan and deferred items.
+**Status**: Phases 1, 2.1, 2.2, 2.3 merged. Phase 2.4 merged. Railtie + test infrastructure complete. See `docs/plans/apartment-v4/` for full plan.
 
 ## Gotchas
 
 - **v3/v4 coexistence**: v3 files and v4 files coexist in `lib/apartment/`. Zeitwerk `loader.ignore` directives in `lib/apartment.rb` control which files load. v3 files are replaced incrementally by phase.
 - **Frozen config**: `Apartment.config` is frozen after `Apartment.configure`. Tests that need different config values must call `Apartment.configure` again (not stub the frozen object).
 - **Monotonic clock**: `PoolManager` uses `Process.clock_gettime(Process::CLOCK_MONOTONIC)` for timestamps, not `Time.now`. Stats return `seconds_idle` (duration), not wall-clock times.
+- **schema_load_strategy**: Defaults to `nil` (no schema loading on create). Set to `:schema_rb` or `:sql` to auto-load schema into new tenants.
+- **v4 Railtie**: `lib/apartment/railtie.rb` is now v4. It auto-wires `activate!`, `init`, middleware, and rake tasks after `Apartment.configure` runs. No manual middleware insertion needed.
