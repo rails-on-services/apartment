@@ -70,6 +70,7 @@ jobs:
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_postgresql.gemfile
       CI: true
+      RAILS_ENV: test
       DATABASE_ENGINE: postgresql
     services:
       postgres:
@@ -114,6 +115,7 @@ jobs:
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_mysql2.gemfile
       CI: true
+      RAILS_ENV: test
       DATABASE_ENGINE: mysql
     services:
       mysql:
@@ -156,6 +158,7 @@ jobs:
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_sqlite3.gemfile
       CI: true
+      RAILS_ENV: test
       DATABASE_ENGINE: sqlite
     steps:
       - uses: actions/checkout@v4
