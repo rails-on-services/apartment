@@ -5,6 +5,7 @@ source 'https://rubygems.org'
 gemspec
 
 gem 'appraisal', '~> 2.5'
+gem 'rack-test', require: false
 gem 'rspec', '~> 3.10'
 
 group :development do
