@@ -161,10 +161,12 @@ initializer 'apartment.middleware' do |app|
   opts = Apartment.config.elevator_options || {}
 
   if elevator_class <= Apartment::Elevators::Header && !opts[:trusted]
-    warn '[Apartment] WARNING: Header elevator with trusted: false. ' \
-         'Header-based tenant resolution trusts the client to provide the correct tenant. ' \
-         'Only use this when the header is injected by trusted infrastructure (CDN, reverse proxy) ' \
-         'that strips client-supplied values.'
+    warn <<~WARNING
+      [Apartment] WARNING: Header elevator with trusted: false.
+      Header-based tenant resolution trusts the client to provide the correct tenant.
+      Only use this when the header is injected by trusted infrastructure (CDN, reverse proxy)
+      that strips client-supplied values.
+    WARNING
   end
 
   app.middleware.use(elevator_class, **opts)
@@ -186,8 +188,7 @@ def self.resolve_elevator_class(elevator)
   class_name.constantize
 rescue NameError, LoadError => e
   available = Dir[File.join(__dir__, 'elevators', '*.rb')]
-    .map { |f| File.basename(f, '.rb') }
-    .reject { |n| n == 'generic' }
+    .filter_map { |f| name = File.basename(f, '.rb'); name unless name == 'generic' }
   raise(Apartment::ConfigurationError,
         "Unknown elevator '#{elevator}': #{e.message}. " \
         "Available elevators: #{available.join(', ')}")
