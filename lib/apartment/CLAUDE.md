@@ -16,7 +16,7 @@ lib/apartment/
 ├── configs/               # Database-specific config objects
 │   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, enforce_search_path_reset
 │   └── mysql_config.rb        # MysqlConfig: placeholder
-├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md)
+├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md); v4 uses constructor keyword args, no class-level state; Generic, Subdomain, FirstSubdomain, Domain, Host, HostHash, Header
 ├── patches/               # ActiveRecord patches for tenant-aware connections
 │   └── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
 ├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
@@ -72,7 +72,7 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 Three hooks in Rails boot order:
 1. `config.after_initialize` — Guards on `Apartment.config.nil?`, warns if isolation_level is `:thread`, calls `activate!` and `Tenant.init`
-2. `config.app_middleware.use` — Inserts elevator if `config.elevator` set, resolves class via `constantize`
+2. `initializer 'apartment.middleware'` — Inserts elevator if `config.elevator` set, resolves via `resolve_elevator_class` (symbols, strings, or classes), passes `elevator_options` as keyword args, emits boot-time trust warning for Header elevator without `trusted: true`
 3. `rake_tasks` — Loads `tasks/v4.rake` (apartment:create, :drop, :migrate, :seed, :rollback)
 
 ### tenant_name_validator.rb — Name Validation

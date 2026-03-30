@@ -15,9 +15,6 @@ loader.ignore("#{__dir__}/apartment/errors.rb")
 # Railtie is loaded explicitly via require_relative at the bottom of this file.
 loader.ignore("#{__dir__}/apartment/railtie.rb")
 
-# v3 elevators — will be replaced in Phase 3.
-loader.ignore("#{__dir__}/apartment/elevators")
-
 # Rake tasks are loaded by the Railtie, not autoloaded.
 loader.ignore("#{__dir__}/apartment/tasks")
 

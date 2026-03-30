@@ -34,5 +34,40 @@ RSpec.describe('Apartment::Railtie') do
       expect { Apartment::Railtie.resolve_elevator_class(:nonexistent) }
         .to(raise_error(Apartment::ConfigurationError, /subdomain/))
     end
+
+    it 'passes through a class without resolution' do
+      klass = Apartment::Railtie.resolve_elevator_class(Apartment::Elevators::Subdomain)
+      expect(klass).to(eq(Apartment::Elevators::Subdomain))
+    end
+
+    it 'passes through any custom class' do
+      custom_class = Class.new(Apartment::Elevators::Generic)
+      klass = Apartment::Railtie.resolve_elevator_class(custom_class)
+      expect(klass).to(eq(custom_class))
+    end
+
+    it 'resolves :header to Apartment::Elevators::Header' do
+      klass = Apartment::Railtie.resolve_elevator_class(:header)
+      expect(klass).to(eq(Apartment::Elevators::Header))
+    end
+  end
+
+  describe '.header_trust_warning?' do
+    it 'returns true for Header with trusted: false' do
+      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, {})).to(be(true))
+    end
+
+    it 'returns false for Header with trusted: true' do
+      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, { trusted: true })).to(be(false))
+    end
+
+    it 'returns true for Header subclass with trusted: false' do
+      subclass = Class.new(Apartment::Elevators::Header)
+      expect(Apartment::Railtie.header_trust_warning?(subclass, {})).to(be(true))
+    end
+
+    it 'returns false for non-Header elevator' do
+      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Subdomain, {})).to(be(false))
+    end
   end
 end

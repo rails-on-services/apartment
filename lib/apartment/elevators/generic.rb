@@ -8,7 +8,7 @@ module Apartment
     #   Provides a rack based tenant switching solution based on request
     #
     class Generic
-      def initialize(app, processor = nil)
+      def initialize(app, processor = nil, **_options)
         @app = app
         @processor = processor || method(:parse_tenant_name)
       end
@@ -26,7 +26,7 @@ module Apartment
       end
 
       def parse_tenant_name(_request)
-        raise('Override')
+        raise(NotImplementedError, "#{self.class}#parse_tenant_name must be implemented")
       end
     end
   end

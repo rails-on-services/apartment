@@ -19,7 +19,8 @@ elevators/
 ├── first_subdomain.rb   # Switch based on first subdomain in chain
 ├── domain.rb            # Switch based on domain (excluding www and TLD)
 ├── host.rb              # Switch based on full hostname
-└── host_hash.rb         # Switch based on hostname → tenant hash mapping
+├── host_hash.rb         # Switch based on hostname -> tenant hash mapping
+└── header.rb            # Switch based on HTTP header (e.g., X-Tenant-Id)
 ```
 
 ## How Elevators Work
@@ -28,9 +29,20 @@ elevators/
 
 All elevators are Rack middleware that intercept requests, extract tenant identifier, switch context, invoke next middleware, and ensure cleanup. See `generic.rb` for base implementation.
 
+### v4 Constructor Pattern
+
+v4 elevators use constructor keyword args — no class-level mutable state. Options are passed at middleware insertion time:
+
+```ruby
+config.middleware.use Apartment::Elevators::Subdomain, excluded_subdomains: %w[www api]
+config.middleware.use Apartment::Elevators::Header, header: 'X-Tenant-Id'
+```
+
+This replaces the v3 pattern of setting class attributes (`Subdomain.excluded_subdomains = [...]`) after adding to the stack. Each instance carries its own config.
+
 ### Request Lifecycle with Elevator
 
-HTTP Request → Elevator extracts tenant → Switch to tenant → Application processes → Automatic cleanup (ensure block) → HTTP Response
+HTTP Request -> Elevator extracts tenant -> Switch to tenant -> Application processes -> Automatic cleanup (ensure block) -> HTTP Response
 
 **See**: `Generic#call` method for middleware call pattern.
 
@@ -64,11 +76,11 @@ Extract first subdomain from hostname.
 
 ### Implementation
 
-Uses `request.subdomain` and checks against `excluded_subdomains` class attribute. Returns nil for excluded subdomains. See `Subdomain#parse_tenant_name` in `subdomain.rb`.
+Extracts subdomain via `PublicSuffix` and checks against `@excluded_subdomains` instance variable. Returns nil for excluded subdomains. See `Subdomain#parse_tenant_name` in `subdomain.rb`.
 
 ### Configuration
 
-Add to middleware stack in `application.rb` and configure `excluded_subdomains` class attribute. See README.md for examples.
+Pass `excluded_subdomains:` keyword arg when adding to middleware stack. See README.md for examples.
 
 ### Behavior
 
@@ -100,7 +112,7 @@ Splits subdomain on `.` and takes first part. See `FirstSubdomain#parse_tenant_n
 
 ### Configuration
 
-Add to middleware stack and configure excluded subdomains. See README.md for configuration.
+Pass `excluded_subdomains:` keyword arg when adding to middleware stack. See README.md for configuration.
 
 ### Use Case
 
@@ -111,7 +123,7 @@ Multi-level subdomain structures where tenant is always leftmost:
 
 ### Note
 
-In current v3 implementation, `Subdomain` and `FirstSubdomain` may behave identically depending on Rails version due to how `request.subdomain` works. For true nested support, test thoroughly or use custom elevator.
+In single-subdomain cases, `Subdomain` and `FirstSubdomain` behave identically. `FirstSubdomain` is relevant for nested structures where the tenant is always the leftmost label (e.g., `{tenant}.api.example.com`).
 
 ## Domain Elevator
 
@@ -149,7 +161,7 @@ Uses full hostname as tenant, optionally ignoring specified first subdomains. Se
 
 ### Configuration
 
-Add to middleware stack and configure `ignored_first_subdomains`. See README.md.
+Pass `ignored_first_subdomains:` keyword arg when adding to middleware stack. See README.md.
 
 ### Use Case
 
@@ -171,7 +183,7 @@ Accepts hash mapping hostnames to tenant names. See `HostHash` implementation in
 
 ### Configuration
 
-Pass hash to HostHash initializer when adding to middleware stack. See README.md for examples.
+Pass `hash:` keyword arg when adding to middleware stack. See README.md for examples.
 
 ### Use Cases
 
@@ -190,6 +202,30 @@ Pass hash to HostHash initializer when adding to middleware stack. See README.md
 - ❌ Requires manual configuration per tenant
 - ❌ Not dynamic (requires app restart for changes)
 - ❌ Doesn't scale to hundreds of tenants
+
+## Header Elevator
+
+**Location**: `header.rb`
+
+### Strategy
+
+Read a named HTTP header to identify the tenant. Suitable for infrastructure where tenant identity is injected at the edge (CloudFront, Nginx, API gateway).
+
+### Implementation
+
+Normalizes the header name to Rack's `HTTP_*` convention at init time. See `Header#parse_tenant_name` in `header.rb`.
+
+### Configuration
+
+Pass `header:` keyword arg (defaults to `'X-Tenant-Id'`):
+
+```ruby
+config.middleware.use Apartment::Elevators::Header, header: 'X-Tenant-Id'
+```
+
+### Security Note
+
+The `Header` elevator trusts whatever value is in the header. Ensure the header cannot be set by untrusted clients (terminate at a trusted proxy).
 
 ## Middleware Positioning
 

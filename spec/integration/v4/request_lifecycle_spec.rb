@@ -83,4 +83,30 @@ RSpec.describe('v4 Request lifecycle', :request_lifecycle,
     body = JSON.parse(last_response.body)
     expect(body['tenant']).to(eq('public'))
   end
+
+  context 'with Header elevator' do
+    around do |example|
+      Rails.application.middleware.use(Apartment::Elevators::Header, header: 'X-Tenant-Id')
+      example.run
+    ensure
+      Rails.application.middleware.delete(Apartment::Elevators::Header)
+    end
+
+    it 'switches tenant based on X-Tenant-Id header' do
+      header 'X-Tenant-Id', 'acme'
+      header 'Host', 'example.com'
+      get '/tenant_info'
+      expect(last_response).to(be_ok)
+      body = JSON.parse(last_response.body)
+      expect(body['tenant']).to(eq('acme'))
+    end
+
+    it 'falls through to default tenant when header is absent' do
+      header 'Host', 'example.com'
+      get '/tenant_info'
+      expect(last_response).to(be_ok)
+      body = JSON.parse(last_response.body)
+      expect(body['tenant']).to(eq('public'))
+    end
+  end
 end
