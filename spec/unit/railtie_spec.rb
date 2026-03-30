@@ -51,4 +51,23 @@ RSpec.describe('Apartment::Railtie') do
       expect(klass).to(eq(Apartment::Elevators::Header))
     end
   end
+
+  describe '.header_trust_warning?' do
+    it 'returns true for Header with trusted: false' do
+      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, {})).to(be(true))
+    end
+
+    it 'returns false for Header with trusted: true' do
+      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, { trusted: true })).to(be(false))
+    end
+
+    it 'returns true for Header subclass with trusted: false' do
+      subclass = Class.new(Apartment::Elevators::Header)
+      expect(Apartment::Railtie.header_trust_warning?(subclass, {})).to(be(true))
+    end
+
+    it 'returns false for non-Header elevator' do
+      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Subdomain, {})).to(be(false))
+    end
+  end
 end

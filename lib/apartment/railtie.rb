@@ -31,7 +31,7 @@ module Apartment
       elevator_class = Apartment::Railtie.resolve_elevator_class(Apartment.config.elevator)
       opts = Apartment.config.elevator_options || {}
 
-      if elevator_class <= Apartment::Elevators::Header && !opts[:trusted]
+      if Apartment::Railtie.header_trust_warning?(elevator_class, opts)
         warn <<~WARNING
           [Apartment] WARNING: Header elevator with trusted: false.
           Header-based tenant resolution trusts the client to provide the correct tenant.
@@ -45,6 +45,11 @@ module Apartment
 
     rake_tasks do
       load File.expand_path('tasks/v4.rake', __dir__)
+    end
+
+    # Whether the Header elevator trust warning should fire. Class method for testability.
+    def self.header_trust_warning?(elevator_class, opts)
+      elevator_class <= Apartment::Elevators::Header && !opts[:trusted]
     end
 
     # Resolve an elevator symbol/string to its class. Class method for testability.
