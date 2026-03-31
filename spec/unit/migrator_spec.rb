@@ -154,4 +154,84 @@ RSpec.describe(Apartment::Migrator) do
       expect(migrator.instance_variable_get(:@migration_db_config)).to(eq(:db_manager))
     end
   end
+
+  describe '#run' do
+    let(:migrator) { described_class.new(threads: 0) }
+    let(:mock_adapter) { instance_double('Apartment::Adapters::AbstractAdapter') }
+    let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
+    let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
+
+    before do
+      allow(Apartment).to(receive(:adapter).and_return(mock_adapter))
+      allow(mock_adapter).to(receive(:resolve_connection_config)) do |tenant|
+        { 'adapter' => 'postgresql', 'schema_search_path' => tenant }
+      end
+
+      allow_any_instance_of(Apartment::PoolManager).to(receive(:fetch_or_create).and_return(mock_pool))
+      allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
+      allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:disconnect!))
+      allow(mock_migration_context).to(receive(:needs_migration?).and_return(true))
+      allow(mock_migration_context).to(receive(:migrate).and_return([]))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+    end
+
+    it 'returns a MigrationRun' do
+      result = migrator.run
+      expect(result).to(be_a(Apartment::Migrator::MigrationRun))
+    end
+
+    it 'includes primary and tenant results' do
+      result = migrator.run
+      tenants = result.results.map(&:tenant)
+      expect(tenants).to(include('public'))
+      expect(tenants).to(include('acme'))
+      expect(tenants).to(include('beta'))
+    end
+
+    it 'primary result comes first' do
+      result = migrator.run
+      expect(result.results.first.tenant).to(eq('public'))
+    end
+
+    it 'returns :skipped for tenants with no pending migrations' do
+      allow(mock_migration_context).to(receive(:needs_migration?).and_return(false))
+      result = migrator.run
+      expect(result.results.map(&:status)).to(all(eq(:skipped)))
+    end
+
+    it 'captures errors without halting the run' do
+      call_count = 0
+      allow(mock_migration_context).to(receive(:migrate)) do
+        call_count += 1
+        raise(StandardError, 'boom') if call_count == 1
+        []
+      end
+      result = migrator.run
+      expect(result.failed.size).to(be >= 1)
+      expect(result.results.size).to(eq(3))
+    end
+
+    it 'instruments each migration' do
+      expect(Apartment::Instrumentation).to(receive(:instrument)
+        .with(:migrate_tenant, hash_including(:tenant)).at_least(3).times)
+      migrator.run
+    end
+
+    it 'clears the pool manager after run' do
+      pool_manager = migrator.instance_variable_get(:@pool_manager)
+      expect(pool_manager).to(receive(:clear))
+      migrator.run
+    end
+
+    it 'handles empty tenant list' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.default_tenant = 'public'
+      end
+      result = migrator.run
+      expect(result.results.size).to(eq(1))
+    end
+  end
 end
