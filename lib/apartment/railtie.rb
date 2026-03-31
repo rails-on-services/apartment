@@ -19,6 +19,10 @@ module Apartment
       begin
         Apartment.activate!
         Apartment::Tenant.init
+
+        # Apply schema dumper patch for Rails 8.1+ (public. prefix stripping)
+        require 'apartment/schema_dumper_patch'
+        Apartment::SchemaDumperPatch.apply!
       rescue ActiveRecord::NoDatabaseError
         warn '[Apartment] Database not found during init — skipping. Run db:create first.'
       end
