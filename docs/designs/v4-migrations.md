@@ -4,7 +4,7 @@
 
 This spec covers the Migrator, schema dumper patch, schema cache generation, and rake/Thor task integration for Apartment v4. The Migrator is a standalone orchestrator that runs ActiveRecord migrations across all tenants with optional thread-based parallelism, using its own ephemeral connection pools with configurable credentials (RBAC support).
 
-**Primary goal:** `Apartment::Migrator` migrates the public schema and all tenant schemas, with per-tenant result tracking, thread parallelism, and RBAC credential separation — without relying on v4's runtime pool-per-tenant infrastructure or dynamic `SET search_path` switching.
+**Primary goal:** `Apartment::Migrator` migrates the primary database and all tenant schemas/databases, with per-tenant result tracking, thread parallelism, and RBAC credential separation — without relying on v4's runtime pool-per-tenant infrastructure or dynamic `SET search_path` switching.
 
 **Secondary goals:**
 - Fix Rails 8.1 `public.` prefix regression in `schema.rb` dumps
@@ -66,21 +66,32 @@ Apartment::Migrator.new(
 
 ```
 Migrator#run
-  ├── Phase 1: Migrate public schema (migration_db_config, blocking)
-  ├── Phase 2: Migrate tenant schemas (parallel or sequential)
+  ├── Phase 1: Migrate primary database (migration_db_config, blocking)
+  │     For PostgreSQL schemas: migrates the public schema
+  │     For MySQL/SQLite: migrates the primary database/file
+  │     Checks for pending migrations; skips if up-to-date
+  ├── Phase 2: Migrate tenants (parallel or sequential)
   │     ├── Resolve tenants from tenants_provider
   │     ├── For each tenant:
   │     │     ├── adapter.resolve_connection_config(tenant)
   │     │     ├── Overlay migration_db_config credentials (if set)
   │     │     ├── Create ephemeral pool from merged config
-  │     │     ├── Run ActiveRecord::MigrationContext#migrate(version)
+  │     │     ├── Obtain MigrationContext from the ephemeral pool
+  │     │     ├── Run MigrationContext#migrate(version)
   │     │     ├── Record Result (success/failure + timing)
   │     │     └── Disconnect pool
   │     └── Collect Results
   ├── Phase 3: Dump schema (schema.rb or structure.sql)
+  │     Runs after Phase 1 succeeds; does not depend on Phase 2 completion
+  │     A tenant failure does not prevent schema dump
   ├── Phase 4: Generate schema cache (if configured)
   └── Return MigrationRun (summary + per-tenant results)
 ```
+
+**Adapter-specific behavior in Phase 1:**
+- **PostgreSQL (schemas):** Migrates the public schema. Phase 2 migrates each tenant schema.
+- **MySQL (databases):** Migrates the primary database. Phase 2 migrates each tenant database.
+- **SQLite (files):** Migrates the primary database file. Phase 2 migrates each tenant file. `migration_db_config` credential overlay is a no-op (SQLite has no credentials).
 
 ### Connection Config Resolution
 
@@ -98,7 +109,7 @@ The Migrator creates a dedicated `PoolManager` instance in its constructor. Pool
 
 ### Thread Coordination
 
-Work-stealing via `Queue` (stdlib, thread-safe). Each thread pops a tenant from the queue, migrates it, records the result, and pops the next. Results collected in a `Concurrent::Array`. No shared mutable state beyond these two thread-safe structures.
+Work-stealing via `Queue` (stdlib, thread-safe). Each thread pops a tenant from the queue, migrates it, records the result, and pops the next. Results collected in a `Concurrent::Array` (requires `concurrent-ruby`, already a v4 dependency via `PoolManager`). No shared mutable state beyond these two thread-safe structures.
 
 ```ruby
 work_queue = Queue.new
@@ -147,15 +158,15 @@ MigrationRun = Data.define(
   :results,          # Array<Result>
   :total_duration,   # Float — wall clock for entire run
   :threads           # Integer — concurrency used
-)
-
-def succeeded = results.select { _1.status == :success }
-def failed    = results.select { _1.status == :failed }
-def skipped   = results.select { _1.status == :skipped }
-def success?  = failed.empty?
+) do
+  def succeeded = results.select { _1.status == :success }
+  def failed    = results.select { _1.status == :failed }
+  def skipped   = results.select { _1.status == :skipped }
+  def success?  = failed.empty?
+end
 ```
 
-**Reporting:** `MigrationRun#summary` returns a formatted string for logging. The Migrator emits `ActiveSupport::Notifications` events (`apartment.migrate_tenant`) per tenant, consistent with v4's instrumentation pattern.
+**Reporting:** `MigrationRun#summary` returns a formatted string for logging. The Migrator emits `ActiveSupport::Notifications` events (`migrate_tenant.apartment`) per tenant, following v4's `verb.namespace` convention (e.g., `switch.apartment`, `create.apartment`).
 
 **Failure handling:** A failed tenant does not halt the run. All tenants are attempted. The caller inspects `migration_run.success?` and decides the response (raise, log, alert).
 
@@ -169,13 +180,21 @@ Rails 8.1 added schema-qualified table names to `schema.rb` output (e.g., `creat
 
 Patch `ActiveRecord::SchemaDumper` to strip the `public.` prefix during dump. Applied conditionally (Rails >= 8.1 only). The dumped `schema.rb` is schema-agnostic — works for both public and tenant schemas.
 
-`structure.sql` is unaffected: raw SQL `CREATE TABLE users` (without schema qualification) defaults to the current `search_path`.
+`structure.sql` behavior depends on `pg_dump` flags. Rails' `db:structure:dump` may produce schema-qualified DDL (e.g., `CREATE TABLE public.users`) depending on the Rails version and `pg_dump` configuration. If Rails 8.1 changed `schema.rb` output to include `public.` prefixes, the `structure.sql` dump should also be verified. The Migrator should control or document the expected `pg_dump` flags to ensure clean output. If `structure.sql` contains `public.` prefixes, the same stripping logic may need to apply during schema load (but not during dump, since the dump reflects the actual database state).
 
 ### `include_schemas_in_dump`
 
-Config option: array of schema names that retain their prefix in `schema.rb` dumps. Tables in these schemas keep the qualified name (e.g., `"extensions.some_table"`). Tables in `public` get stripped.
+This option already exists in `PostgresqlConfig` (accessed via `configure_postgres`). It specifies non-public schemas whose tables should retain their schema prefix in `schema.rb` dumps (e.g., `%w[ext shared]`). Tables in `public` always get their prefix stripped by the patch.
 
-Default: `[]` (strip all `public.` prefixes).
+```ruby
+Apartment.configure do |c|
+  c.configure_postgres do |pg|
+    pg.include_schemas_in_dump = %w[ext shared]
+  end
+end
+```
+
+Default: `[]` (strip all `public.` prefixes; no non-public schemas retained).
 
 ## Schema Cache
 
@@ -213,9 +232,9 @@ Thor commands are the canonical interface (Phase 6). Rake tasks are convenience 
 ### Rake tasks (Phase 4)
 
 ```
-apartment:migrate                    # uses config defaults
-apartment:migrate VERSION=20260401   # specific version
-apartment:rollback STEP=2
+apartment:migrate                       # uses config defaults
+apartment:migrate VERSION=20260401      # specific version
+apartment:rollback[2]                   # rollback 2 steps (matches existing v4.rake argument syntax)
 ```
 
 These delegate to the Migrator. The existing v4.rake tasks are updated to wire through the Migrator instead of direct adapter calls.
@@ -225,6 +244,8 @@ These delegate to the Migrator. The existing v4.rake tasks are updated to wire t
 When Apartment is loaded, the Railtie enhances `db:migrate:primary` (or whatever the primary database config is named) to also invoke `apartment:migrate`. This provides Rails-native compatibility without requiring users to know about Apartment's task namespace.
 
 The enhancement must not interfere with other database configs (e.g., `db:migrate:ddl_workspace`).
+
+**Idempotency:** If `db:migrate:primary` triggers `apartment:migrate`, and the user then runs `apartment:migrate` directly, the Migrator checks for pending migrations per tenant. Tenants already up-to-date return `:skipped`. Phase 1 (primary database migration) also checks for pending migrations before executing. Running the Migrator twice is safe and fast.
 
 ### Composability with existing Thor tasks
 
@@ -242,15 +263,21 @@ Apartment.configure do |c|
   c.migration_db_config = :db_manager   # Symbol — database.yml config name for DDL credentials (nil = use tenant's own)
   c.parallel_migration_threads = 8      # Integer — 0 = sequential (default)
 
-  # Schema dump
-  c.include_schemas_in_dump = []         # Array<String> — schemas that retain public. prefix in schema.rb
-
   # Schema cache
   c.schema_cache_per_tenant = false      # Boolean — per-tenant cache files vs single canonical
+
+  # PostgreSQL-specific (already exists in PostgresqlConfig)
+  c.configure_postgres do |pg|
+    pg.include_schemas_in_dump = %w[ext shared]  # schemas that retain prefix in schema.rb dumps
+  end
 end
 ```
 
-Dropped from design: `parallel_strategy`, `:processes`, `:auto`.
+**New config keys:** `migration_db_config`, `schema_cache_per_tenant`. Both added to `Config` with validation in `validate!`:
+- `migration_db_config`: must be `nil` or a Symbol matching a key in `ActiveRecord::Base.configurations` for the current environment. Validated eagerly at configure time to fail fast rather than during pool creation.
+- `schema_cache_per_tenant`: boolean, default `false`.
+
+**Removed from Config:** `parallel_strategy` and `VALID_PARALLEL_STRATEGIES` are removed. The `parallel_migration_threads` attribute (already exists, default `0`) is the sole parallelism control. Threads are the only parallelism primitive.
 
 Designed-in but deferred to Phase 5: `app_role` (PostgreSQL RBAC privilege grants on tenant create).
 
@@ -258,7 +285,7 @@ Designed-in but deferred to Phase 5: `app_role` (PostgreSQL RBAC privilege grant
 
 Development-only runtime check. When a tenant's connection pool is created and the tenant has pending migrations, raise `Apartment::PendingMigrationError`. Gated behind `Rails.env.local?` (covers development and test). In production, migrations should have already run in the deploy pipeline.
 
-Deferred to Phase 5 (runtime concern, not a Migrator concern).
+Deferred to Phase 5 (runtime concern, not a Migrator concern). Requires adding `Apartment::PendingMigrationError` to `errors.rb` in that phase.
 
 ## Testing Strategy
 
