@@ -234,4 +234,42 @@ RSpec.describe(Apartment::Migrator) do
       expect(result.results.size).to(eq(1))
     end
   end
+
+  describe '#run with threads > 0' do
+    let(:migrator) { described_class.new(threads: 4) }
+    let(:mock_adapter) { instance_double('Apartment::Adapters::AbstractAdapter') }
+    let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
+    let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
+
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { (1..8).map { |i| "tenant_#{i}" } }
+        c.default_tenant = 'public'
+      end
+
+      allow(Apartment).to(receive(:adapter).and_return(mock_adapter))
+      allow(mock_adapter).to(receive(:resolve_connection_config)) do |tenant|
+        { 'adapter' => 'postgresql', 'schema_search_path' => tenant }
+      end
+      allow_any_instance_of(Apartment::PoolManager).to(receive(:fetch_or_create).and_return(mock_pool))
+      allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
+      allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:disconnect!))
+      allow(mock_migration_context).to(receive(:needs_migration?).and_return(true))
+      allow(mock_migration_context).to(receive(:migrate).and_return([]))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+    end
+
+    it 'migrates all tenants plus primary' do
+      result = migrator.run
+      # 8 tenants + 1 primary = 9
+      expect(result.results.size).to(eq(9))
+    end
+
+    it 'records thread count in MigrationRun' do
+      result = migrator.run
+      expect(result.threads).to(eq(4))
+    end
+  end
 end

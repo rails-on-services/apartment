@@ -140,6 +140,25 @@ module Apartment
       tenants.map { |tenant| migrate_tenant(tenant) }
     end
 
+    def run_parallel(tenants)
+      work_queue = Queue.new
+      tenants.each { |t| work_queue << t }
+      @threads.times { work_queue << :done }
+
+      results = Concurrent::Array.new
+
+      workers = @threads.times.map do
+        Thread.new do
+          while (tenant = work_queue.pop) != :done
+            results << migrate_tenant(tenant)
+          end
+        end
+      end
+
+      workers.each(&:join)
+      results.to_a
+    end
+
     def resolve_migration_db_config
       return nil if @migration_db_config.nil?
 
