@@ -17,7 +17,6 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.seed_data_file).to(be_nil) }
     it { expect(config.parallel_migration_threads).to(eq(0)) }
     it { expect(config.migration_db_config).to(be_nil) }
-    it { expect(config.schema_cache_per_tenant).to(be(false)) }
     it { expect(config.environmentify_strategy).to(be_nil) }
     it { expect(config.elevator).to(be_nil) }
     it { expect(config.elevator_options).to(eq({})) }
@@ -56,18 +55,6 @@ RSpec.describe(Apartment::Config) do
       expect { config.migration_db_config = 'primary' }.to(
         raise_error(Apartment::ConfigurationError, /migration_db_config must be nil or a Symbol/)
       )
-    end
-  end
-
-  describe '#schema_cache_per_tenant=' do
-    it 'accepts true' do
-      expect { config.schema_cache_per_tenant = true }.not_to(raise_error)
-      expect(config.schema_cache_per_tenant).to(be(true))
-    end
-
-    it 'accepts false' do
-      expect { config.schema_cache_per_tenant = false }.not_to(raise_error)
-      expect(config.schema_cache_per_tenant).to(be(false))
     end
   end
 

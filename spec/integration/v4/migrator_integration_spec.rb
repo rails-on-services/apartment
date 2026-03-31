@@ -13,6 +13,7 @@ RSpec.describe('v4 Migrator integration', :integration) do
   before(:all) do
     skip('requires ActiveRecord + database gem') unless V4_INTEGRATION_AVAILABLE
   end
+
   include V4IntegrationHelper
 
   let(:tmp_dir) { Dir.mktmpdir('apartment_migrator') }
@@ -86,7 +87,7 @@ RSpec.describe('v4 Migrator integration', :integration) do
 
       run.results.each do |result|
         expect(result).to(be_a(Apartment::Migrator::Result))
-        expect(%i[success skipped]).to(include(result.status))
+        expect(result.status).to(be_in(%i[success skipped]))
         expect(result.error).to(be_nil)
         expect(result.duration).to(be >= 0)
       end
@@ -97,7 +98,7 @@ RSpec.describe('v4 Migrator integration', :integration) do
 
       primary = run.results.find { |r| r.tenant == Apartment.config.default_tenant }
       expect(primary).not_to(be_nil)
-      expect(%i[success skipped]).to(include(primary.status))
+      expect(primary.status).to(be_in(%i[success skipped]))
     end
 
     it 'returns a non-empty summary string' do
@@ -109,7 +110,8 @@ RSpec.describe('v4 Migrator integration', :integration) do
     end
   end
 
-  describe 'parallel migration (threads: 2)', skip: (V4IntegrationHelper.sqlite? ? 'SQLite does not support concurrent connections' : false) do
+  describe 'parallel migration (threads: 2)',
+           skip: (V4IntegrationHelper.sqlite? ? 'SQLite does not support concurrent connections' : false) do
     it 'returns a MigrationRun covering all tenants' do
       migrator = Apartment::Migrator.new(threads: 2)
       run = migrator.run
@@ -133,7 +135,7 @@ RSpec.describe('v4 Migrator integration', :integration) do
       run = Apartment::Migrator.new(threads: 2).run
 
       run.results.each do |result|
-        expect(%i[success skipped]).to(include(result.status))
+        expect(result.status).to(be_in(%i[success skipped]))
         expect(result.error).to(be_nil)
       end
     end
@@ -148,8 +150,8 @@ RSpec.describe('v4 Migrator integration', :integration) do
       expect(second_run).to(be_success)
 
       second_run.results.each do |result|
-        expect(result.status).to eq(:skipped),
-                               "Expected '#{result.tenant}' to be :skipped on second run, got :#{result.status}"
+        expect(result.status).to(eq(:skipped),
+                                 "Expected '#{result.tenant}' to be :skipped on second run, got :#{result.status}")
       end
     end
 

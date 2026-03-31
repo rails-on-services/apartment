@@ -10,7 +10,7 @@ RSpec.describe(Apartment::Migrator::Result) do
       status: :success,
       duration: 1.23,
       error: nil,
-      versions_run: [20260401000000, 20260402000000]
+      versions_run: [20_260_401_000_000, 20_260_402_000_000]
     )
   end
 
@@ -23,11 +23,19 @@ RSpec.describe(Apartment::Migrator::Result) do
     expect(result.status).to(eq(:success))
     expect(result.duration).to(eq(1.23))
     expect(result.error).to(be_nil)
-    expect(result.versions_run).to(eq([20260401000000, 20260402000000]))
+    expect(result.versions_run).to(eq([20_260_401_000_000, 20_260_402_000_000]))
   end
 end
 
 RSpec.describe(Apartment::Migrator::MigrationRun) do
+  subject(:run) do
+    described_class.new(
+      results: [success_result, failed_result, skipped_result],
+      total_duration: 2.5,
+      threads: 4
+    )
+  end
+
   let(:success_result) do
     Apartment::Migrator::Result.new(
       tenant: 'acme', status: :success, duration: 1.0, error: nil, versions_run: [1]
@@ -42,14 +50,6 @@ RSpec.describe(Apartment::Migrator::MigrationRun) do
   let(:skipped_result) do
     Apartment::Migrator::Result.new(
       tenant: 'current', status: :skipped, duration: 0.01, error: nil, versions_run: []
-    )
-  end
-
-  subject(:run) do
-    described_class.new(
-      results: [success_result, failed_result, skipped_result],
-      total_duration: 2.5,
-      threads: 4
     )
   end
 
@@ -93,6 +93,8 @@ RSpec.describe(Apartment::Migrator::MigrationRun) do
       expect(summary).to(include('1 failed'))
       expect(summary).to(include('1 skipped'))
       expect(summary).to(include('broken'))
+      expect(summary).to(include('StandardError'))
+      expect(summary).to(include('boom'))
     end
   end
 end
@@ -171,8 +173,7 @@ RSpec.describe(Apartment::Migrator) do
       allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_pool).to(receive(:disconnect!))
-      allow(mock_migration_context).to(receive(:needs_migration?).and_return(true))
-      allow(mock_migration_context).to(receive(:migrate).and_return([]))
+      allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
     end
 
@@ -200,16 +201,27 @@ RSpec.describe(Apartment::Migrator) do
       expect(result.results.map(&:status)).to(all(eq(:skipped)))
     end
 
-    it 'captures errors without halting the run' do
+    it 'captures errors without halting the run when a tenant fails' do
       call_count = 0
       allow(mock_migration_context).to(receive(:migrate)) do
         call_count += 1
-        raise(StandardError, 'boom') if call_count == 1
+
+        # Fail a tenant migration (call_count > 1 means primary already ran)
+        raise(StandardError, 'boom') if call_count == 2
+
         []
       end
       result = migrator.run
       expect(result.failed.size).to(be >= 1)
       expect(result.results.size).to(eq(3))
+    end
+
+    it 'aborts and returns only the primary result when primary migration fails' do
+      allow(mock_migration_context).to(receive(:migrate).and_raise(StandardError, 'db down'))
+      result = migrator.run
+      expect(result.results.size).to(eq(1))
+      expect(result.results.first.status).to(eq(:failed))
+      expect(result).not_to(be_success)
     end
 
     it 'instruments each migration' do
@@ -256,8 +268,7 @@ RSpec.describe(Apartment::Migrator) do
       allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_pool).to(receive(:disconnect!))
-      allow(mock_migration_context).to(receive(:needs_migration?).and_return(true))
-      allow(mock_migration_context).to(receive(:migrate).and_return([]))
+      allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
     end
 
@@ -270,6 +281,18 @@ RSpec.describe(Apartment::Migrator) do
     it 'records thread count in MigrationRun' do
       result = migrator.run
       expect(result.threads).to(eq(4))
+    end
+
+    it 'captures tenant errors without halting parallel run' do
+      call_count = Concurrent::AtomicFixnum.new(0)
+      allow(mock_migration_context).to(receive(:migrate)) do
+        raise(StandardError, 'boom') if call_count.increment == 3
+
+        []
+      end
+      result = migrator.run
+      expect(result.failed.size).to(eq(1))
+      expect(result.results.size).to(eq(9))
     end
   end
 end
