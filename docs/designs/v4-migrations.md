@@ -237,7 +237,7 @@ apartment:migrate VERSION=20260401      # specific version
 apartment:rollback[2]                   # rollback 2 steps (matches existing v4.rake argument syntax)
 ```
 
-These delegate to the Migrator. The existing v4.rake tasks are updated to wire through the Migrator instead of direct adapter calls.
+These delegate to the Migrator. The existing v4.rake tasks are updated to wire through the Migrator instead of direct adapter calls. The rake task checks `ActiveRecord.dump_schema_after_migration` before invoking the Migrator's schema dump phase (the module-level accessor, not the removed `ActiveRecord::Base` method; see [ros-apartment#342](https://github.com/rails-on-services/apartment/pull/342)).
 
 ### `db:migrate:DBNAME` enhancement
 
