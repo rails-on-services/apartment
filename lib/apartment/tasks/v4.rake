@@ -23,12 +23,26 @@ namespace :apartment do
 
   desc 'Run migrations for all tenants'
   task migrate: :environment do
-    tenants = Apartment.config.tenants_provider.call
-    tenants.each do |tenant|
-      puts "Migrating tenant: #{tenant}"
-      Apartment::Tenant.migrate(tenant)
-    rescue StandardError => e
-      warn "  FAILED: #{e.message}"
+    require 'apartment/migrator'
+
+    threads = Apartment.config.parallel_migration_threads
+    migration_db_config = Apartment.config.migration_db_config
+
+    migrator = Apartment::Migrator.new(
+      threads: threads,
+      migration_db_config: migration_db_config
+    )
+
+    result = migrator.run
+    puts result.summary
+
+    unless result.success?
+      abort "apartment:migrate failed for #{result.failed.size} tenant(s)"
+    end
+
+    # Schema dump (respects ActiveRecord.dump_schema_after_migration)
+    if ActiveRecord.dump_schema_after_migration
+      Rake::Task['db:schema:dump'].invoke if Rake::Task.task_defined?('db:schema:dump')
     end
   end
 
