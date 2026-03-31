@@ -9,8 +9,10 @@ require 'apartment/migrator'
 #   bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/migrator_integration_spec.rb
 #
 # PostgreSQL and MySQL also work; SQLite is simplest (no external DB).
-RSpec.describe('v4 Migrator integration', :integration,
-               skip: (V4_INTEGRATION_AVAILABLE ? false : 'requires ActiveRecord + database gem')) do
+RSpec.describe('v4 Migrator integration', :integration) do
+  before(:all) do
+    skip('requires ActiveRecord + database gem') unless V4_INTEGRATION_AVAILABLE
+  end
   include V4IntegrationHelper
 
   let(:tmp_dir) { Dir.mktmpdir('apartment_migrator') }
@@ -107,7 +109,7 @@ RSpec.describe('v4 Migrator integration', :integration,
     end
   end
 
-  describe 'parallel migration (threads: 2)' do
+  describe 'parallel migration (threads: 2)', skip: (V4IntegrationHelper.sqlite? ? 'SQLite does not support concurrent connections' : false) do
     it 'returns a MigrationRun covering all tenants' do
       migrator = Apartment::Migrator.new(threads: 2)
       run = migrator.run
@@ -146,12 +148,13 @@ RSpec.describe('v4 Migrator integration', :integration,
       expect(second_run).to(be_success)
 
       second_run.results.each do |result|
-        expect(result.status).to(eq(:skipped)),
-          "Expected '#{result.tenant}' to be :skipped on second run, got :#{result.status}"
+        expect(result.status).to eq(:skipped),
+                               "Expected '#{result.tenant}' to be :skipped on second run, got :#{result.status}"
       end
     end
 
-    it 'idempotency holds under parallel execution as well' do
+    it 'idempotency holds under parallel execution as well',
+       skip: (V4IntegrationHelper.sqlite? ? 'SQLite does not support concurrent connections' : false) do
       Apartment::Migrator.new(threads: 2).run
 
       second_run = Apartment::Migrator.new(threads: 2).run
