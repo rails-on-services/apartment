@@ -35,4 +35,15 @@ module Apartment
 
   # Raised when schema loading fails during tenant creation.
   class SchemaLoadError < ApartmentError; end
+
+  # Raised when a tenant migration fails. Wraps the original exception.
+  class MigrationError < ApartmentError
+    attr_reader :tenant, :original_error
+
+    def initialize(tenant, original_error)
+      @tenant = tenant
+      @original_error = original_error
+      super("Migration failed for tenant '#{tenant}': #{original_error.class}: #{original_error.message}")
+    end
+  end
 end
