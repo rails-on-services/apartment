@@ -9,17 +9,17 @@ module Apartment
   # Created via Apartment.configure block; validated after the block yields.
   class Config
     VALID_STRATEGIES = %i[schema database_name shard database_config].freeze
-    VALID_PARALLEL_STRATEGIES = %i[auto threads processes].freeze
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
     attr_reader :tenant_strategy, :postgres_config, :mysql_config,
-                :parallel_strategy, :environmentify_strategy
+                :migration_db_config, :environmentify_strategy
 
     attr_accessor :tenants_provider, :default_tenant, :excluded_models,
                   :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
                   :seed_after_create, :seed_data_file,
                   :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
+                  :schema_cache_per_tenant,
                   :elevator, :elevator_options,
                   :tenant_not_found_handler, :active_record_log,
                   :shard_key_prefix
@@ -37,7 +37,8 @@ module Apartment
       @schema_load_strategy = nil
       @schema_file = nil
       @parallel_migration_threads = 0
-      @parallel_strategy = :auto
+      @migration_db_config = nil
+      @schema_cache_per_tenant = false
       @environmentify_strategy = nil
       @elevator = nil
       @elevator_options = {}
@@ -57,13 +58,13 @@ module Apartment
       @tenant_strategy = strategy
     end
 
-    def parallel_strategy=(strategy)
-      unless VALID_PARALLEL_STRATEGIES.include?(strategy)
-        raise(ConfigurationError, "Invalid parallel_strategy: #{strategy.inspect}. " \
-                                  "Must be one of: #{VALID_PARALLEL_STRATEGIES.join(', ')}")
+    def migration_db_config=(value)
+      unless value.nil? || value.is_a?(Symbol)
+        raise(ConfigurationError, "migration_db_config must be nil or a Symbol referencing a database.yml config, " \
+                                  "got: #{value.inspect}")
       end
 
-      @parallel_strategy = strategy
+      @migration_db_config = value
     end
 
     def environmentify_strategy=(strategy)

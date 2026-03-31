@@ -16,7 +16,8 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.seed_after_create).to(be(false)) }
     it { expect(config.seed_data_file).to(be_nil) }
     it { expect(config.parallel_migration_threads).to(eq(0)) }
-    it { expect(config.parallel_strategy).to(eq(:auto)) }
+    it { expect(config.migration_db_config).to(be_nil) }
+    it { expect(config.schema_cache_per_tenant).to(be(false)) }
     it { expect(config.environmentify_strategy).to(be_nil) }
     it { expect(config.elevator).to(be_nil) }
     it { expect(config.elevator_options).to(eq({})) }
@@ -41,11 +42,32 @@ RSpec.describe(Apartment::Config) do
     end
   end
 
-  describe '#parallel_strategy=' do
-    it 'rejects invalid strategies' do
-      expect { config.parallel_strategy = :bad }.to(raise_error(
-                                                      Apartment::ConfigurationError, /Invalid parallel_strategy/
-                                                    ))
+  describe '#migration_db_config=' do
+    it 'accepts nil' do
+      expect { config.migration_db_config = nil }.not_to(raise_error)
+    end
+
+    it 'accepts a symbol' do
+      expect { config.migration_db_config = :primary }.not_to(raise_error)
+      expect(config.migration_db_config).to(eq(:primary))
+    end
+
+    it 'rejects a string' do
+      expect { config.migration_db_config = 'primary' }.to(
+        raise_error(Apartment::ConfigurationError, /migration_db_config must be nil or a Symbol/)
+      )
+    end
+  end
+
+  describe '#schema_cache_per_tenant=' do
+    it 'accepts true' do
+      expect { config.schema_cache_per_tenant = true }.not_to(raise_error)
+      expect(config.schema_cache_per_tenant).to(be(true))
+    end
+
+    it 'accepts false' do
+      expect { config.schema_cache_per_tenant = false }.not_to(raise_error)
+      expect(config.schema_cache_per_tenant).to(be(false))
     end
   end
 
