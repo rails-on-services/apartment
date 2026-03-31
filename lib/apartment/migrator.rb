@@ -206,7 +206,7 @@ module Apartment
       )
       handler = ActiveRecord::Base.connection_handler
       @spec_names << spec_name
-      handler.establish_connection(db_config)
+      handler.establish_connection(db_config, owner_name: spec_name)
     end
 
     # Best-effort deregistration of ephemeral migration pools from AR's global
