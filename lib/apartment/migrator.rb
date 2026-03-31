@@ -25,7 +25,7 @@ module Apartment
       def skipped   = results.select { _1.status == :skipped }
       def success?  = failed.empty?
 
-      def summary
+      def summary # rubocop:disable Metrics/AbcSize
         lines = []
         lines << "Migrated #{results.size} tenants in #{total_duration.round(1)}s (#{threads} threads)"
         lines << "  #{succeeded.size} succeeded" if succeeded.any?
@@ -43,13 +43,13 @@ module Apartment
       @pool_manager = PoolManager.new
     end
 
-    def run
+    def run # rubocop:disable Metrics/MethodLength
       start = monotonic_now
 
       primary_result = migrate_primary
 
       tenants = Apartment.config.tenants_provider.call
-      tenant_results = if @threads > 0
+      tenant_results = if @threads.positive?
                          run_parallel(tenants)
                        else
                          run_sequential(tenants)
@@ -68,7 +68,7 @@ module Apartment
 
     private
 
-    def migrate_primary
+    def migrate_primary # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       tenant_name = Apartment.config.default_tenant || 'public'
       start = monotonic_now
 
@@ -102,7 +102,7 @@ module Apartment
       )
     end
 
-    def migrate_tenant(tenant)
+    def migrate_tenant(tenant) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       start = monotonic_now
 
       config = Apartment.adapter.resolve_connection_config(tenant)
@@ -147,8 +147,8 @@ module Apartment
 
       results = Concurrent::Array.new
 
-      workers = @threads.times.map do
-        Thread.new do
+      workers = Array.new(@threads) do
+        Thread.new do # rubocop:disable ThreadSafety/NewThread
           while (tenant = work_queue.pop) != :done
             results << migrate_tenant(tenant)
           end
@@ -169,7 +169,7 @@ module Apartment
 
       unless db_config
         raise(ConfigurationError,
-          "No database configuration found for env_name: #{env_name}, name: #{@migration_db_config}")
+              "No database configuration found for env_name: #{env_name}, name: #{@migration_db_config}")
       end
 
       db_config.configuration_hash

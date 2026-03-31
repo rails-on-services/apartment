@@ -36,13 +36,11 @@ namespace :apartment do
     result = migrator.run
     puts result.summary
 
-    unless result.success?
-      abort "apartment:migrate failed for #{result.failed.size} tenant(s)"
-    end
+    abort "apartment:migrate failed for #{result.failed.size} tenant(s)" unless result.success?
 
     # Schema dump (respects ActiveRecord.dump_schema_after_migration)
-    if ActiveRecord.dump_schema_after_migration
-      Rake::Task['db:schema:dump'].invoke if Rake::Task.task_defined?('db:schema:dump')
+    if ActiveRecord.dump_schema_after_migration && Rake::Task.task_defined?('db:schema:dump')
+      Rake::Task['db:schema:dump'].invoke
     end
   end
 
