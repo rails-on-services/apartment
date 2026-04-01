@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
 require 'concurrent'
-require_relative 'pool_manager'
 require_relative 'instrumentation'
 require_relative 'errors'
 
 module Apartment
-  class Migrator # rubocop:disable Metrics/ClassLength
+  class Migrator
     Result = Data.define(
       :tenant,
       :status,
@@ -43,11 +42,9 @@ module Apartment
     def initialize(threads: 0, migration_db_config: nil)
       @threads = threads
       @migration_db_config = migration_db_config
-      @pool_manager = PoolManager.new
-      @spec_names = Concurrent::Array.new
     end
 
-    def run # rubocop:disable Metrics/MethodLength, Metrics/AbcSize
+    def run # rubocop:disable Metrics/MethodLength
       start = monotonic_now
 
       primary_result = migrate_primary
@@ -74,27 +71,17 @@ module Apartment
         total_duration: monotonic_now - start,
         threads: @threads
       )
-    ensure
-      begin
-        @pool_manager.clear
-      rescue StandardError => e
-        warn "[Apartment::Migrator] Error during pool cleanup: #{e.class}: #{e.message}"
-      end
-      deregister_migration_pools
     end
 
     private
 
+    # Migrate the primary (default) tenant using AR::Base's existing pool.
+    # No tenant switch needed — the default connection is already correct.
     def migrate_primary # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       tenant_name = Apartment.config.default_tenant || 'public'
       start = monotonic_now
 
-      config = Apartment.adapter.resolve_connection_config(tenant_name)
-      migration_config = resolve_migration_db_config
-      config = resolve_migration_config(config, migration_config)
-
-      pool = @pool_manager.fetch_or_create('__primary__') { create_pool(config) }
-      context = pool.migration_context
+      context = ActiveRecord::Base.connection_pool.migration_context
 
       unless context.needs_migration?
         return Result.new(
@@ -119,33 +106,33 @@ module Apartment
       )
     end
 
+    # Migrate a single tenant by switching via Apartment::Tenant.switch.
+    # The ConnectionHandling patch routes AR::Base.connection_pool to the
+    # tenant's pool, so Rails' migration machinery (which always goes through
+    # AR::Base) uses the correct connection automatically.
     def migrate_tenant(tenant) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       start = monotonic_now
 
-      config = Apartment.adapter.resolve_connection_config(tenant)
-      migration_config = resolve_migration_db_config
-      config = resolve_migration_config(config, migration_config)
+      Apartment::Tenant.switch(tenant) do
+        context = ActiveRecord::Base.connection_pool.migration_context
 
-      pool_key = "apartment_migrate_#{config['schema_search_path'] || config['database']}"
-      pool = @pool_manager.fetch_or_create(pool_key) { create_pool(config) }
-      context = pool.migration_context
+        unless context.needs_migration?
+          return Result.new(
+            tenant: tenant, status: :skipped,
+            duration: monotonic_now - start, error: nil, versions_run: []
+          )
+        end
 
-      unless context.needs_migration?
-        return Result.new(
-          tenant: tenant, status: :skipped,
-          duration: monotonic_now - start, error: nil, versions_run: []
+        raw_versions = context.migrate
+        versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
+
+        Instrumentation.instrument(:migrate_tenant, tenant: tenant, versions: versions)
+
+        Result.new(
+          tenant: tenant, status: :success,
+          duration: monotonic_now - start, error: nil, versions_run: versions
         )
       end
-
-      raw_versions = context.migrate
-      versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
-
-      Instrumentation.instrument(:migrate_tenant, tenant: tenant, versions: versions)
-
-      Result.new(
-        tenant: tenant, status: :success,
-        duration: monotonic_now - start, error: nil, versions_run: versions
-      )
     rescue StandardError => e
       Result.new(
         tenant: tenant, status: :failed,
@@ -157,7 +144,7 @@ module Apartment
       tenants.map { |tenant| migrate_tenant(tenant) }
     end
 
-    def run_parallel(tenants) # rubocop:disable Metrics/MethodLength, Metrics/AbcSize
+    def run_parallel(tenants) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       work_queue = Queue.new
       tenants.each { |t| work_queue << t }
       @threads.times { work_queue << :done }
@@ -195,30 +182,6 @@ module Apartment
       end
 
       db_config.configuration_hash
-    end
-
-    def create_pool(config)
-      spec_name = "apartment_migrate_#{config['schema_search_path'] || config['database']}"
-      db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
-        defined?(Rails) ? Rails.env : 'default_env',
-        spec_name,
-        config.transform_keys(&:to_sym)
-      )
-      handler = ActiveRecord::Base.connection_handler
-      @spec_names << spec_name
-      handler.establish_connection(db_config)
-    end
-
-    # Best-effort deregistration of ephemeral migration pools from AR's global
-    # ConnectionHandler. Pools are already disconnected by pool_manager.clear;
-    # this removes the ghost entries to prevent accumulation across runs.
-    def deregister_migration_pools
-      handler = ActiveRecord::Base.connection_handler
-      @spec_names.each do |name|
-        handler.remove_connection_pool(name)
-      rescue StandardError
-        nil
-      end
     end
 
     # Overlay migration credentials onto a tenant's base connection config.

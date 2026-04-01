@@ -159,22 +159,18 @@ RSpec.describe(Apartment::Migrator) do
 
   describe '#run' do
     let(:migrator) { described_class.new(threads: 0) }
-    let(:mock_adapter) { instance_double('Apartment::Adapters::AbstractAdapter') }
     let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
     let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
 
     before do
-      allow(Apartment).to(receive(:adapter).and_return(mock_adapter))
-      allow(mock_adapter).to(receive(:resolve_connection_config)) do |tenant|
-        { 'adapter' => 'postgresql', 'schema_search_path' => tenant }
-      end
-
-      allow_any_instance_of(Apartment::PoolManager).to(receive(:fetch_or_create).and_return(mock_pool))
-      allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
-      allow(mock_pool).to(receive(:disconnect!))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
+
+      # Tenant.switch yields the block with Current.tenant set.
+      # In unit tests, we stub it to just yield (no real connection swap).
+      allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
     end
 
     it 'returns a MigrationRun' do
@@ -230,9 +226,9 @@ RSpec.describe(Apartment::Migrator) do
       migrator.run
     end
 
-    it 'clears the pool manager after run' do
-      pool_manager = migrator.instance_variable_get(:@pool_manager)
-      expect(pool_manager).to(receive(:clear))
+    it 'switches tenant for each tenant migration' do
+      expect(Apartment::Tenant).to(receive(:switch).with('acme'))
+      expect(Apartment::Tenant).to(receive(:switch).with('beta'))
       migrator.run
     end
 
@@ -249,7 +245,6 @@ RSpec.describe(Apartment::Migrator) do
 
   describe '#run with threads > 0' do
     let(:migrator) { described_class.new(threads: 4) }
-    let(:mock_adapter) { instance_double('Apartment::Adapters::AbstractAdapter') }
     let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
     let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
 
@@ -260,16 +255,11 @@ RSpec.describe(Apartment::Migrator) do
         c.default_tenant = 'public'
       end
 
-      allow(Apartment).to(receive(:adapter).and_return(mock_adapter))
-      allow(mock_adapter).to(receive(:resolve_connection_config)) do |tenant|
-        { 'adapter' => 'postgresql', 'schema_search_path' => tenant }
-      end
-      allow_any_instance_of(Apartment::PoolManager).to(receive(:fetch_or_create).and_return(mock_pool))
-      allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
-      allow(mock_pool).to(receive(:disconnect!))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
     end
 
     it 'migrates all tenants plus primary' do
