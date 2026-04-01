@@ -51,6 +51,7 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
       c.tenant_strategy = :database_name
       c.tenants_provider = -> { [] }
       c.default_tenant = @config['database'] # e.g. 'apartment_v4_test'
+      c.check_pending_migrations = false
     end
 
     require 'apartment/adapters/postgresql_database_adapter'
@@ -157,6 +158,7 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
         c.tenants_provider = -> { [] }
         c.default_tenant = @config['database']
         c.environmentify_strategy = :prepend
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = Apartment::Adapters::PostgresqlDatabaseAdapter.new(
@@ -180,6 +182,7 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
         c.tenants_provider = -> { [] }
         c.default_tenant = @config['database']
         c.environmentify_strategy = :prepend
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = Apartment::Adapters::PostgresqlDatabaseAdapter.new(

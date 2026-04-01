@@ -49,6 +49,7 @@ RSpec.describe('v4 Migrator integration', :integration) do
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
       c.tenants_provider = -> { test_tenants }
       c.default_tenant = V4IntegrationHelper.default_tenant
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
