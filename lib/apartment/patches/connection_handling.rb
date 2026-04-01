@@ -9,7 +9,7 @@ module Apartment
     # returns a tenant-specific pool keyed by "tenant:role", with config
     # resolved by the adapter using the current role's base config.
     module ConnectionHandling
-      def connection_pool # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+      def connection_pool # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity
         tenant = Apartment::Current.tenant
         cfg = Apartment.config
 
@@ -41,13 +41,9 @@ module Apartment
             shard: shard_key
           )
 
-          if check_pending_migrations?(pool)
-            raise(Apartment::PendingMigrationError.new(tenant))
-          end
+          raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
 
-          if cfg.schema_cache_per_tenant
-            load_tenant_schema_cache(tenant, pool)
-          end
+          load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
 
           pool
         end
@@ -62,14 +58,14 @@ module Apartment
 
       def check_pending_migrations?(pool)
         return false unless Apartment.config.check_pending_migrations
-        return false unless defined?(Rails) && Rails.env.local?
+        return false unless defined?(Rails) && Rails.env.local? # rubocop:disable Rails/UnknownEnv
         return false if Apartment::Current.migrating
 
         pool.migration_context.needs_migration?
       end
 
       def load_tenant_schema_cache(tenant, pool)
-        require_relative '../schema_cache'
+        require_relative('../schema_cache')
         cache_path = Apartment::SchemaCache.cache_path_for(tenant)
         return unless File.exist?(cache_path)
 

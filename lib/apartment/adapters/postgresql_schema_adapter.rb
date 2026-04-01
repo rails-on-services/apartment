@@ -34,7 +34,7 @@ module Apartment
 
       private
 
-      def grant_privileges(tenant, connection, role_name)
+      def grant_privileges(tenant, connection, role_name) # rubocop:disable Metrics/MethodLength
         quoted_schema = connection.quote_table_name(tenant)
         quoted_role = connection.quote_table_name(role_name)
 

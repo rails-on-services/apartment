@@ -24,7 +24,7 @@ module Apartment
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations
 
-    def initialize
+    def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
       @tenants_provider = nil
       @default_tenant = nil

@@ -43,8 +43,11 @@ module Apartment
     def initialize(tenant = nil)
       @tenant = tenant
       super(
-        tenant ? "Tenant '#{tenant}' has pending migrations. Run apartment:migrate to update."
-               : 'Tenant has pending migrations. Run apartment:migrate to update.'
+        if tenant
+          "Tenant '#{tenant}' has pending migrations. Run apartment:migrate to update."
+        else
+          'Tenant has pending migrations. Run apartment:migrate to update.'
+        end
       )
     end
   end

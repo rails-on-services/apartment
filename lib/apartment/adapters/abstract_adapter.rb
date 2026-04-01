@@ -6,7 +6,7 @@ require_relative '../tenant_name_validator'
 
 module Apartment
   module Adapters
-    class AbstractAdapter
+    class AbstractAdapter # rubocop:disable Metrics/ClassLength
       include ActiveSupport::Callbacks
 
       define_callbacks :create, :switch
@@ -56,7 +56,7 @@ module Apartment
       end
 
       # Drop a tenant.
-      def drop(tenant)
+      def drop(tenant) # rubocop:disable Metrics/CyclomaticComplexity
         drop_tenant(tenant)
         removed_pools = Apartment.pool_manager&.remove_tenant(tenant) || []
         removed_pools.each do |pool_key, pool|
