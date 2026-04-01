@@ -138,6 +138,99 @@ RSpec.describe(Apartment::Config) do
       config.tenants_provider = -> { [] }
       expect { config.validate! }.not_to(raise_error)
     end
+
+    context 'migration_role validation' do
+      before do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      it 'rejects a non-symbol value' do
+        config.migration_role = 'db_manager'
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /migration_role/))
+      end
+
+      it 'accepts nil' do
+        config.migration_role = nil
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'accepts a symbol' do
+        config.migration_role = :db_manager
+        expect { config.validate! }.not_to(raise_error)
+      end
+    end
+
+    context 'app_role validation' do
+      before do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      it 'rejects a non-string non-callable value' do
+        config.app_role = 123
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /app_role/))
+      end
+
+      it 'accepts nil' do
+        config.app_role = nil
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'accepts a string' do
+        config.app_role = 'app_user'
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'accepts a callable' do
+        config.app_role = -> { 'dynamic_role' }
+        expect { config.validate! }.not_to(raise_error)
+      end
+    end
+
+    context 'schema_cache_per_tenant validation' do
+      before do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      it 'rejects a non-boolean value' do
+        config.schema_cache_per_tenant = 'yes'
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /schema_cache_per_tenant/))
+      end
+
+      it 'accepts true' do
+        config.schema_cache_per_tenant = true
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'accepts false' do
+        config.schema_cache_per_tenant = false
+        expect { config.validate! }.not_to(raise_error)
+      end
+    end
+
+    context 'check_pending_migrations validation' do
+      before do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      it 'rejects a non-boolean value' do
+        config.check_pending_migrations = 1
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /check_pending_migrations/))
+      end
+
+      it 'accepts true' do
+        config.check_pending_migrations = true
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'accepts false' do
+        config.check_pending_migrations = false
+        expect { config.validate! }.not_to(raise_error)
+      end
+    end
   end
 
   describe '#shard_key_prefix validation' do
@@ -208,6 +301,76 @@ RSpec.describe(Apartment::Config) do
           c.schema_load_strategy = :invalid
         end
       end.to(raise_error(Apartment::ConfigurationError, /Invalid schema_load_strategy/))
+    end
+  end
+
+  describe 'migration_role' do
+    it 'defaults to nil' do
+      expect(config.migration_role).to(be_nil)
+    end
+
+    it 'accepts nil' do
+      config.migration_role = nil
+      expect(config.migration_role).to(be_nil)
+    end
+
+    it 'accepts a symbol' do
+      config.migration_role = :db_manager
+      expect(config.migration_role).to(eq(:db_manager))
+    end
+  end
+
+  describe 'app_role' do
+    it 'defaults to nil' do
+      expect(config.app_role).to(be_nil)
+    end
+
+    it 'accepts nil' do
+      config.app_role = nil
+      expect(config.app_role).to(be_nil)
+    end
+
+    it 'accepts a string' do
+      config.app_role = 'app_user'
+      expect(config.app_role).to(eq('app_user'))
+    end
+
+    it 'accepts a callable' do
+      callable = -> { 'dynamic_role' }
+      config.app_role = callable
+      expect(config.app_role).to(eq(callable))
+    end
+  end
+
+  describe 'schema_cache_per_tenant' do
+    it 'defaults to false' do
+      expect(config.schema_cache_per_tenant).to(be(false))
+    end
+
+    it 'accepts true' do
+      config.schema_cache_per_tenant = true
+      expect(config.schema_cache_per_tenant).to(be(true))
+    end
+
+    it 'accepts false' do
+      config.schema_cache_per_tenant = false
+      expect(config.schema_cache_per_tenant).to(be(false))
+    end
+  end
+
+  describe 'check_pending_migrations' do
+    it 'defaults to true' do
+      expect(config.check_pending_migrations).to(be(true))
+    end
+
+    it 'accepts true' do
+      config.check_pending_migrations = true
+      expect(config.check_pending_migrations).to(be(true))
+    end
+
+    it 'accepts false' do
+      config.check_pending_migrations = false
+      expect(config.check_pending_migrations).to(be(false))
     end
   end
 

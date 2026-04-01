@@ -21,7 +21,8 @@ module Apartment
                   :parallel_migration_threads,
                   :elevator, :elevator_options,
                   :tenant_not_found_handler, :active_record_log,
-                  :shard_key_prefix
+                  :shard_key_prefix,
+                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations
 
     def initialize
       @tenant_strategy = nil
@@ -44,6 +45,10 @@ module Apartment
       @postgres_config = nil
       @mysql_config = nil
       @shard_key_prefix = 'apartment'
+      @migration_role = nil
+      @app_role = nil
+      @schema_cache_per_tenant = false
+      @check_pending_migrations = true
     end
 
     def tenant_strategy=(strategy)
@@ -86,6 +91,7 @@ module Apartment
       @postgres_config&.freeze!
       @mysql_config&.freeze!
       # schema_file is a simple string, no deep freeze needed
+      @app_role.freeze if @app_role.is_a?(String)
       freeze
     end
 
@@ -118,6 +124,24 @@ module Apartment
       unless [nil, :schema_rb, :sql].include?(@schema_load_strategy)
         raise(ConfigurationError, "Invalid schema_load_strategy: #{@schema_load_strategy.inspect}. " \
                                   'Must be nil, :schema_rb, or :sql')
+      end
+
+      if @migration_role && !@migration_role.is_a?(Symbol)
+        raise(ConfigurationError, "migration_role must be nil or a Symbol, got: #{@migration_role.inspect}")
+      end
+
+      if @app_role && !@app_role.is_a?(String) && !@app_role.respond_to?(:call)
+        raise(ConfigurationError, "app_role must be nil, a String, or a callable, got: #{@app_role.inspect}")
+      end
+
+      unless [true, false].include?(@schema_cache_per_tenant)
+        raise(ConfigurationError,
+              "schema_cache_per_tenant must be true or false, got: #{@schema_cache_per_tenant.inspect}")
+      end
+
+      unless [true, false].include?(@check_pending_migrations)
+        raise(ConfigurationError,
+              "check_pending_migrations must be true or false, got: #{@check_pending_migrations.inspect}")
       end
 
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)
