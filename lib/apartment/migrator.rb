@@ -111,10 +111,11 @@ module Apartment
     # tenant's pool, so Rails' migration machinery (which always goes through
     # AR::Base) uses the correct connection automatically.
     #
-    # Advisory locks are disabled for tenant migrations because PG schema-per-
-    # tenant shares one database — the database-wide advisory lock from one
-    # tenant would block all others. Each tenant's schema is independent, so
-    # concurrent schema-level migrations are safe.
+    # Advisory locks are disabled for tenant migrations. PG's advisory locks
+    # are database-wide, so they serialize all parallel tenant migrations into
+    # sequential execution. Disabling them is a known trade-off: a migration
+    # that performs cross-tenant operations could race, but schema-scoped locks
+    # wouldn't prevent that either (see apartment issue #298).
     def migrate_tenant(tenant) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       start = monotonic_now
 
