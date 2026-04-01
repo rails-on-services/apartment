@@ -9,7 +9,7 @@ module Apartment
     # returns a tenant-specific pool keyed by "tenant:role", with config
     # resolved by the adapter using the current role's base config.
     module ConnectionHandling
-      def connection_pool # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity
+      def connection_pool # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
         tenant = Apartment::Current.tenant
         cfg = Apartment.config
 
@@ -21,8 +21,19 @@ module Apartment
         pool_key = "#{tenant}:#{role}"
 
         Apartment.pool_manager.fetch_or_create(pool_key) do
-          default_pool = super
-          base = default_pool.db_config.configuration_hash.stringify_keys
+          # Resolve base config from the current role's default pool when available.
+          # Falls back to nil (adapter uses its own base_config) when the default pool
+          # is not accessible — e.g., in worker threads during parallel migration where
+          # the ConnectionHandler may not have the pool registered for this context.
+          # NOTE: `super` must be called here (not in a helper) because it refers to
+          # the original connection_pool method on AR::Base, which only resolves from
+          # the prepended method scope.
+          base = begin
+            default_pool = super
+            default_pool.db_config.configuration_hash.stringify_keys
+          rescue ActiveRecord::ConnectionNotEstablished
+            nil
+          end
 
           config = Apartment.adapter.validated_connection_config(tenant, base_config_override: base)
           prefix = cfg.shard_key_prefix
