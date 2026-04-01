@@ -35,4 +35,17 @@ module Apartment
 
   # Raised when schema loading fails during tenant creation.
   class SchemaLoadError < ApartmentError; end
+
+  # Raised in development when a tenant has pending migrations.
+  class PendingMigrationError < ApartmentError
+    attr_reader :tenant
+
+    def initialize(tenant = nil)
+      @tenant = tenant
+      super(
+        tenant ? "Tenant '#{tenant}' has pending migrations. Run apartment:migrate to update."
+               : 'Tenant has pending migrations. Run apartment:migrate to update.'
+      )
+    end
+  end
 end
