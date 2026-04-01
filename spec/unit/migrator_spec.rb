@@ -171,7 +171,6 @@ RSpec.describe(Apartment::Migrator) do
 
       allow_any_instance_of(Apartment::PoolManager).to(receive(:fetch_or_create).and_return(mock_pool))
       allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
-      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_pool).to(receive(:disconnect!))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
@@ -267,7 +266,6 @@ RSpec.describe(Apartment::Migrator) do
       end
       allow_any_instance_of(Apartment::PoolManager).to(receive(:fetch_or_create).and_return(mock_pool))
       allow_any_instance_of(Apartment::PoolManager).to(receive(:clear))
-      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_pool).to(receive(:disconnect!))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))

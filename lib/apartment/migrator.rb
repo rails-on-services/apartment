@@ -40,20 +40,11 @@ module Apartment
 
     CREDENTIAL_KEYS = %i[username password host].freeze
 
-    # Minimal duck type satisfying PoolConfig's connection_class/connection_descriptor
-    # interface across Rails 7.2–8.1. Avoids registering ephemeral migration pools
-    # in the global ConnectionHandler.
-    # Minimal duck type satisfying the connection_class/connection_descriptor
-    # contract across Rails 7.2–8.1 (ConnectionHandler::ConnectionDescriptor).
-    MigrationPoolOwner = Struct.new(:name) do
-      def primary_class? = false
-      def current_preventing_writes = false # rubocop:disable Naming/PredicateMethod
-    end
-
     def initialize(threads: 0, migration_db_config: nil)
       @threads = threads
       @migration_db_config = migration_db_config
       @pool_manager = PoolManager.new
+      @spec_names = Concurrent::Array.new
     end
 
     def run # rubocop:disable Metrics/MethodLength, Metrics/AbcSize
@@ -89,6 +80,7 @@ module Apartment
       rescue StandardError => e
         warn "[Apartment::Migrator] Error during pool cleanup: #{e.class}: #{e.message}"
       end
+      deregister_migration_pools
     end
 
     private
@@ -97,18 +89,11 @@ module Apartment
       tenant_name = Apartment.config.default_tenant || 'public'
       start = monotonic_now
 
+      config = Apartment.adapter.resolve_connection_config(tenant_name)
       migration_config = resolve_migration_db_config
+      config = resolve_migration_config(config, migration_config)
 
-      # Reuse ActiveRecord::Base's existing pool when no credential override is
-      # needed. Creating a second pool to the same database causes SQLite
-      # "database is locked" errors and is wasteful for other adapters.
-      pool = if migration_config
-               config = Apartment.adapter.resolve_connection_config(tenant_name)
-               config = resolve_migration_config(config, migration_config)
-               @pool_manager.fetch_or_create('__primary__') { create_pool(config) }
-             else
-               ActiveRecord::Base.connection_pool
-             end
+      pool = @pool_manager.fetch_or_create('__primary__') { create_pool(config) }
       context = pool.migration_context
 
       unless context.needs_migration?
@@ -212,10 +197,6 @@ module Apartment
       db_config.configuration_hash
     end
 
-    # Creates a standalone ConnectionPool not registered in the global
-    # ConnectionHandler. This avoids two problems:
-    # 1. Parallel pools overwriting each other's handler slot (PG/MySQL)
-    # 2. Duplicate pools to the same file causing "database is locked" (SQLite)
     def create_pool(config)
       spec_name = "apartment_migrate_#{config['schema_search_path'] || config['database']}"
       db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
@@ -223,13 +204,21 @@ module Apartment
         spec_name,
         config.transform_keys(&:to_sym)
       )
+      handler = ActiveRecord::Base.connection_handler
+      @spec_names << spec_name
+      handler.establish_connection(db_config)
+    end
 
-      owner = MigrationPoolOwner.new(spec_name)
-      pool_config = ActiveRecord::ConnectionAdapters::PoolConfig.new(
-        owner, db_config,
-        ActiveRecord::Base.current_role, ActiveRecord::Base.current_shard
-      )
-      ActiveRecord::ConnectionAdapters::ConnectionPool.new(pool_config)
+    # Best-effort deregistration of ephemeral migration pools from AR's global
+    # ConnectionHandler. Pools are already disconnected by pool_manager.clear;
+    # this removes the ghost entries to prevent accumulation across runs.
+    def deregister_migration_pools
+      handler = ActiveRecord::Base.connection_handler
+      @spec_names.each do |name|
+        handler.remove_connection_pool(name)
+      rescue StandardError
+        nil
+      end
     end
 
     # Overlay migration credentials onto a tenant's base connection config.
