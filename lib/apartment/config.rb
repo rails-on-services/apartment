@@ -9,11 +9,10 @@ module Apartment
   # Created via Apartment.configure block; validated after the block yields.
   class Config
     VALID_STRATEGIES = %i[schema database_name shard database_config].freeze
-    VALID_PARALLEL_STRATEGIES = %i[auto threads processes].freeze
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
     attr_reader :tenant_strategy, :postgres_config, :mysql_config,
-                :parallel_strategy, :environmentify_strategy
+                :environmentify_strategy
 
     attr_accessor :tenants_provider, :default_tenant, :excluded_models,
                   :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
@@ -24,7 +23,7 @@ module Apartment
                   :tenant_not_found_handler, :active_record_log,
                   :shard_key_prefix
 
-    def initialize # rubocop:disable Metrics/AbcSize
+    def initialize
       @tenant_strategy = nil
       @tenants_provider = nil
       @default_tenant = nil
@@ -37,7 +36,6 @@ module Apartment
       @schema_load_strategy = nil
       @schema_file = nil
       @parallel_migration_threads = 0
-      @parallel_strategy = :auto
       @environmentify_strategy = nil
       @elevator = nil
       @elevator_options = {}
@@ -55,15 +53,6 @@ module Apartment
       end
 
       @tenant_strategy = strategy
-    end
-
-    def parallel_strategy=(strategy)
-      unless VALID_PARALLEL_STRATEGIES.include?(strategy)
-        raise(ConfigurationError, "Invalid parallel_strategy: #{strategy.inspect}. " \
-                                  "Must be one of: #{VALID_PARALLEL_STRATEGIES.join(', ')}")
-      end
-
-      @parallel_strategy = strategy
     end
 
     def environmentify_strategy=(strategy)

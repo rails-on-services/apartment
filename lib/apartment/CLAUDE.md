@@ -24,9 +24,11 @@ lib/apartment/
 ├── current.rb             # Fiber-safe tenant context (CurrentAttributes)
 ├── errors.rb              # Exception hierarchy
 ├── instrumentation.rb     # ActiveSupport::Notifications wrapper
+├── migrator.rb            # Migration orchestrator: sequential/parallel, Result/MigrationRun value objects
 ├── pool_manager.rb        # Concurrent::Map pool cache with monotonic timestamps
 ├── pool_reaper.rb         # Background idle/LRU pool eviction
 ├── railtie.rb             # Rails initialization (activate!, middleware, rake tasks)
+├── schema_dumper_patch.rb # Rails 8.1 schema dump fix: strips public. prefix from table names
 ├── tenant.rb              # Public API facade (switch, current, reset, lifecycle)
 ├── tenant_name_validator.rb  # Pure in-memory tenant name format validation
 └── version.rb             # Gem version constant
@@ -75,6 +77,14 @@ Three hooks in Rails boot order:
 2. `initializer 'apartment.middleware'` — Inserts elevator if `config.elevator` set, resolves via `resolve_elevator_class` (symbols, strings, or classes), passes `elevator_options` as keyword args, emits boot-time trust warning for Header elevator without `trusted: true`
 3. `rake_tasks` — Loads `tasks/v4.rake` (apartment:create, :drop, :migrate, :seed, :rollback)
 
+### migrator.rb — Migration Orchestrator
+
+`Apartment::Migrator` runs migrations across all tenants with optional thread-based parallelism. Delegates to `Apartment::Tenant.switch` for each tenant — the `ConnectionHandling` patch routes `AR::Base.connection_pool` to the tenant's pool, so Rails' migration machinery (which hardcodes `AR::Base.lease_connection`) uses the correct connection automatically. No standalone pools or handler swaps. Disables PG advisory locks for tenant migrations (database-wide locks serialize parallel execution; see issue #298). `Result` (Data.define) tracks per-tenant success/failure/skip. `MigrationRun` aggregates results with `#success?`, `#summary`. Primary migration aborts the run on failure (tenants are never touched). Constructor accepts `threads:` (0=sequential). RBAC credential separation (`migration_db_config`) is deferred to Phase 5.
+
+### schema_dumper_patch.rb — Rails 8.1 Schema Fix
+
+Patches `ActiveRecord::SchemaDumper` to strip `public.` prefix from table names in `schema.rb` output. Applied conditionally for Rails 8.1+ via `SchemaDumperPatch.apply!` (called by Railtie). Respects `PostgresqlConfig#include_schemas_in_dump` for non-public schemas that should retain their prefix.
+
 ### tenant_name_validator.rb — Name Validation
 
 Pure module, no IO. `validate!(name, strategy:, adapter_name:)` checks common rules (non-empty, no NUL, no whitespace, max 255) then engine-specific: PG identifiers (max 63, no `pg_` prefix), MySQL names (max 64, no leading digit), SQLite paths (no traversal).
@@ -84,5 +94,7 @@ Pure module, no IO. `validate!(name, strategy:, adapter_name:)` checks common ru
 **Tenant creation**: `Tenant.create` → `adapter.create` → `TenantNameValidator.validate!` → callbacks → `create_tenant` (subclass) → `import_schema` (if configured) → instrumentation
 
 **Tenant switching (v4)**: `Tenant.switch` → `Current.tenant =` → yield → ensure restore. No SQL switching — connection pool resolved by `ConnectionHandling` patch (Phase 2.3).
+
+**Migration flow**: `Migrator#run` → Phase 1: migrate primary (default tenant) → Phase 2: migrate tenants (sequential or parallel via threads) → Phase 3: schema dump → return `MigrationRun`
 
 **Request flow**: HTTP → Elevator middleware → `Tenant.switch` → app processes → ensure cleanup

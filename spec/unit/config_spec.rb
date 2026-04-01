@@ -16,7 +16,6 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.seed_after_create).to(be(false)) }
     it { expect(config.seed_data_file).to(be_nil) }
     it { expect(config.parallel_migration_threads).to(eq(0)) }
-    it { expect(config.parallel_strategy).to(eq(:auto)) }
     it { expect(config.environmentify_strategy).to(be_nil) }
     it { expect(config.elevator).to(be_nil) }
     it { expect(config.elevator_options).to(eq({})) }
@@ -38,14 +37,6 @@ RSpec.describe(Apartment::Config) do
       expect { config.tenant_strategy = :invalid }.to(raise_error(
                                                         Apartment::ConfigurationError, /Invalid tenant_strategy/
                                                       ))
-    end
-  end
-
-  describe '#parallel_strategy=' do
-    it 'rejects invalid strategies' do
-      expect { config.parallel_strategy = :bad }.to(raise_error(
-                                                      Apartment::ConfigurationError, /Invalid parallel_strategy/
-                                                    ))
     end
   end
 

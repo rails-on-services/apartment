@@ -25,4 +25,6 @@ This directory contains v4 rake task definitions for Apartment tenant operations
 
 ## Notes
 
-v3 task helpers (`task_helper.rb`, `enhancements.rb`, `schema_dumper.rb`) and the top-level `lib/tasks/apartment.rake` have been deleted as of Phase 2.5. v4 tasks are simpler — sequential-only iteration, no parallel migration support (intentional; parallel migration adds complexity with marginal benefit for the v4 pool-per-tenant model).
+v3 task helpers (`task_helper.rb`, `enhancements.rb`, `schema_dumper.rb`) and the top-level `lib/tasks/apartment.rake` have been deleted as of Phase 2.5.
+
+`apartment:migrate` delegates to `Apartment::Migrator`, reading `parallel_migration_threads` from `Apartment.config`. Supports `VERSION=` env var for targeting a specific migration. When `parallel_migration_threads > 0`, migration runs across a thread pool of that size. After a successful run, schema dump is triggered only if `ActiveRecord.dump_schema_after_migration` is true (via `db:schema:dump` rake task). Failed tenants abort the task with a non-zero exit. All tasks (`create`, `seed`, `rollback`) abort non-zero on any tenant failure.

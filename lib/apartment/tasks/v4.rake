@@ -4,6 +4,7 @@ namespace :apartment do
   desc 'Create all tenant schemas/databases from tenants_provider'
   task create: :environment do
     tenants = Apartment.config.tenants_provider.call
+    failed = []
     tenants.each do |tenant|
       puts "Creating tenant: #{tenant}"
       Apartment::Tenant.create(tenant)
@@ -11,7 +12,9 @@ namespace :apartment do
       puts '  already exists, skipping'
     rescue StandardError => e
       warn "  FAILED: #{e.message}"
+      failed << tenant
     end
+    abort("apartment:create failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
 
   desc 'Drop a tenant schema/database'
@@ -23,30 +26,43 @@ namespace :apartment do
 
   desc 'Run migrations for all tenants'
   task migrate: :environment do
-    tenants = Apartment.config.tenants_provider.call
-    tenants.each do |tenant|
-      puts "Migrating tenant: #{tenant}"
-      Apartment::Tenant.migrate(tenant)
-    rescue StandardError => e
-      warn "  FAILED: #{e.message}"
+    require 'apartment/migrator'
+
+    threads = Apartment.config.parallel_migration_threads
+    version = ENV['VERSION']&.to_i
+
+    migrator = Apartment::Migrator.new(threads: threads, version: version)
+
+    result = migrator.run
+    puts result.summary
+
+    abort("apartment:migrate failed for #{result.failed.size} tenant(s)") unless result.success?
+
+    # Schema dump (respects ActiveRecord.dump_schema_after_migration)
+    if ActiveRecord.dump_schema_after_migration && Rake::Task.task_defined?('db:schema:dump')
+      Rake::Task['db:schema:dump'].invoke
     end
   end
 
   desc 'Seed all tenants'
   task seed: :environment do
     tenants = Apartment.config.tenants_provider.call
+    failed = []
     tenants.each do |tenant|
       puts "Seeding tenant: #{tenant}"
       Apartment::Tenant.seed(tenant)
     rescue StandardError => e
       warn "  FAILED: #{e.message}"
+      failed << tenant
     end
+    abort("apartment:seed failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
 
   desc 'Rollback migrations for all tenants'
   task :rollback, [:step] => :environment do |_t, args|
     step = (args[:step] || 1).to_i
     tenants = Apartment.config.tenants_provider.call
+    failed = []
     tenants.each do |tenant|
       puts "Rolling back tenant: #{tenant} (#{step} step(s))"
       Apartment::Tenant.switch(tenant) do
@@ -54,6 +70,8 @@ namespace :apartment do
       end
     rescue StandardError => e
       warn "  FAILED: #{e.message}"
+      failed << tenant
     end
+    abort("apartment:rollback failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
 end

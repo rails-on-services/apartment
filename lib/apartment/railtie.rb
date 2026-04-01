@@ -19,6 +19,10 @@ module Apartment
       begin
         Apartment.activate!
         Apartment::Tenant.init
+
+        # Apply schema dumper patch for Rails 8.1+ (public. prefix stripping)
+        require('apartment/schema_dumper_patch')
+        Apartment::SchemaDumperPatch.apply!
       rescue ActiveRecord::NoDatabaseError
         warn '[Apartment] Database not found during init — skipping. Run db:create first.'
       end
@@ -45,6 +49,20 @@ module Apartment
 
     rake_tasks do
       load File.expand_path('tasks/v4.rake', __dir__)
+
+      # Enhance db:migrate:DBNAME to also run apartment:migrate.
+      # configs_for and task_defined? are pure config/rake lookups — no DB
+      # connection is made, so no rescue is needed.
+      primary_db_name = ActiveRecord::Base.configurations
+        .configs_for(env_name: Rails.env)
+        .find { |c| c.name == 'primary' }
+        &.name || 'primary'
+
+      if Rake::Task.task_defined?("db:migrate:#{primary_db_name}")
+        Rake::Task["db:migrate:#{primary_db_name}"].enhance do
+          Rake::Task['apartment:migrate'].invoke if Rake::Task.task_defined?('apartment:migrate')
+        end
+      end
     end
 
     # Whether the Header elevator trust warning should fire. Class method for testability.
