@@ -247,25 +247,15 @@ RSpec.describe(Apartment::Migrator) do
       end
     end
   end
-end
 
-RSpec.describe(Apartment::Migrator, 'Current.migrating lifecycle') do
-  before do
-    Apartment.configure do |c|
-      c.tenant_strategy = :schema
-      c.tenants_provider = -> { %w[acme] }
-      c.default_tenant = 'public'
-    end
-  end
-
-  describe '#migrate_tenant' do
+  describe '#migrate_tenant Current.migrating lifecycle' do
     let(:mock_pool) { double('pool', migration_context: double(needs_migration?: false)) }
 
     it 'sets Current.migrating = true before Tenant.switch' do
       migrating_value_during_switch = nil
       allow(Apartment::Tenant).to(receive(:switch)) do |&block|
         migrating_value_during_switch = Apartment::Current.migrating
-        block.call if block
+        block&.call
       end
       allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
 
@@ -292,16 +282,6 @@ RSpec.describe(Apartment::Migrator, 'Current.migrating lifecycle') do
       migrator.send(:migrate_tenant, 'acme')
 
       expect(Apartment::Current.migrating).to(be_falsey)
-    end
-  end
-end
-
-RSpec.describe(Apartment::Migrator, 'Phase 5: migration_role') do
-  before do
-    Apartment.configure do |c|
-      c.tenant_strategy = :schema
-      c.tenants_provider = -> { [] }
-      c.default_tenant = 'public'
     end
   end
 
@@ -351,9 +331,7 @@ RSpec.describe(Apartment::Migrator, 'Phase 5: migration_role') do
       migrator.send(:evict_migration_pools)
     end
   end
-end
 
-RSpec.describe(Apartment::Migrator) do
   describe '#run with threads > 0' do
     let(:migrator) { described_class.new(threads: 4) }
     let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }

@@ -7,7 +7,8 @@ RSpec.describe('Apartment error hierarchy') do
     expect(Apartment::ApartmentError).to(be < StandardError)
   end
 
-  %i[TenantNotFound TenantExists AdapterNotFound ConfigurationError PoolExhausted SchemaLoadError PendingMigrationError].each do |klass|
+  %i[TenantNotFound TenantExists AdapterNotFound ConfigurationError PoolExhausted SchemaLoadError
+     PendingMigrationError].each do |klass|
     it "defines #{klass} as a subclass of ApartmentError" do
       expect(Apartment.const_get(klass)).to(be < Apartment::ApartmentError)
     end

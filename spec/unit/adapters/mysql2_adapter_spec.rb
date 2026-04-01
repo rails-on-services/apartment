@@ -142,7 +142,7 @@ RSpec.shared_examples('a MySQL adapter') do
     end
 
     it 'executes exactly 1 SQL statement' do
-      expect(connection).to(receive(:execute).exactly(1).times)
+      expect(connection).to(receive(:execute).once)
 
       adapter.send(:grant_privileges, 'acme', connection, 'app_user')
     end

@@ -38,7 +38,7 @@ RSpec.describe(Apartment::Current) do
 
   it 'stores and retrieves the migrating attribute' do
     described_class.migrating = true
-    expect(described_class.migrating).to(eq(true))
+    expect(described_class.migrating).to(be(true))
   end
 
   it 'defaults migrating to nil' do

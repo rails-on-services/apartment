@@ -31,9 +31,9 @@ RSpec.describe(Apartment::TenantNameValidator) do
     end
 
     it 'rejects names containing colons' do
-      expect {
+      expect do
         described_class.validate!('tenant:name', strategy: :schema)
-      }.to(raise_error(Apartment::ConfigurationError, /colon/))
+      end.to(raise_error(Apartment::ConfigurationError, /colon/))
     end
 
     it 'rejects names longer than 255 characters' do

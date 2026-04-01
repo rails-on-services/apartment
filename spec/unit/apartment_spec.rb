@@ -279,10 +279,10 @@ RSpec.describe(Apartment) do
 
       prefix = described_class.config.shard_key_prefix
       expect(handler).to(have_received(:remove_connection_pool).with(
-        'ActiveRecord::Base',
-        role: :db_manager,
-        shard: :"#{prefix}_acme:db_manager"
-      ))
+                           'ActiveRecord::Base',
+                           role: :db_manager,
+                           shard: :"#{prefix}_acme:db_manager"
+                         ))
     end
 
     it 'falls back to writing_role when pool_key has no colon' do
@@ -295,10 +295,10 @@ RSpec.describe(Apartment) do
 
       prefix = described_class.config.shard_key_prefix
       expect(handler).to(have_received(:remove_connection_pool).with(
-        'ActiveRecord::Base',
-        role: :writing,
-        shard: :"#{prefix}_acme"
-      ))
+                           'ActiveRecord::Base',
+                           role: :writing,
+                           shard: :"#{prefix}_acme"
+                         ))
     end
 
     it 'is a no-op when config is nil' do

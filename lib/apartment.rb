@@ -86,8 +86,8 @@ module Apartment
     def deregister_shard(pool_key)
       return unless @config && defined?(ActiveRecord::Base)
 
-      tenant_part, separator, role_str = pool_key.to_s.rpartition(':')
-      role = (separator.empty? || role_str.empty?) ? ActiveRecord.writing_role : role_str.to_sym
+      _, separator, role_str = pool_key.to_s.rpartition(':')
+      role = separator.empty? || role_str.empty? ? ActiveRecord.writing_role : role_str.to_sym
 
       shard_key = :"#{@config.shard_key_prefix}_#{pool_key}"
       ActiveRecord::Base.connection_handler.remove_connection_pool(
