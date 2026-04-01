@@ -6,7 +6,7 @@ require_relative '../tenant_name_validator'
 
 module Apartment
   module Adapters
-    class AbstractAdapter
+    class AbstractAdapter # rubocop:disable Metrics/ClassLength
       include ActiveSupport::Callbacks
 
       define_callbacks :create, :switch
@@ -21,18 +21,21 @@ module Apartment
 
       # Template method: validates tenant name then delegates to resolve_connection_config.
       # Called by ConnectionHandling — subclasses should NOT override this.
-      def validated_connection_config(tenant)
+      # base_config_override: when supplied (e.g. a role-specific config from ConnectionHandling),
+      # the adapter builds the tenant config on top of it instead of its own base_config.
+      def validated_connection_config(tenant, base_config_override: nil)
+        effective_base = base_config_override || base_config
         TenantNameValidator.validate!(
           tenant,
           strategy: Apartment.config.tenant_strategy,
-          adapter_name: base_config['adapter']
+          adapter_name: effective_base['adapter']
         )
-        resolve_connection_config(tenant)
+        resolve_connection_config(tenant, base_config: effective_base)
       end
 
       # Resolve a tenant-specific connection config hash.
       # Subclasses override to set strategy-specific keys.
-      def resolve_connection_config(tenant)
+      def resolve_connection_config(tenant, base_config: nil)
         raise(NotImplementedError)
       end
 
@@ -45,6 +48,7 @@ module Apartment
         )
         run_callbacks(:create) do
           create_tenant(tenant)
+          grant_tenant_privileges(tenant)
           import_schema(tenant) if Apartment.config.schema_load_strategy
           seed(tenant) if Apartment.config.seed_after_create
           Instrumentation.instrument(:create, tenant: tenant)
@@ -52,16 +56,21 @@ module Apartment
       end
 
       # Drop a tenant.
-      def drop(tenant)
+      def drop(tenant) # rubocop:disable Metrics/CyclomaticComplexity
         drop_tenant(tenant)
-        pool_key = tenant.to_s
-        pool = Apartment.pool_manager&.remove(pool_key)
-        begin
-          pool&.disconnect! if pool.respond_to?(:disconnect!)
-        rescue StandardError => e
-          warn "[Apartment] Pool disconnect failed for '#{tenant}': #{e.class}: #{e.message}"
+        removed_pools = Apartment.pool_manager&.remove_tenant(tenant) || []
+        removed_pools.each do |pool_key, pool|
+          begin
+            pool&.disconnect! if pool.respond_to?(:disconnect!)
+          rescue StandardError => e
+            warn "[Apartment] Pool disconnect failed for '#{pool_key}': #{e.class}: #{e.message}"
+          end
+          begin
+            deregister_shard_from_ar_handler(pool_key)
+          rescue StandardError => e
+            warn "[Apartment] Shard deregistration failed for '#{pool_key}': #{e.class}: #{e.message}"
+          end
         end
-        deregister_shard_from_ar_handler(tenant)
         Instrumentation.instrument(:drop, tenant: tenant)
       end
 
@@ -139,6 +148,23 @@ module Apartment
 
       private
 
+      def grant_tenant_privileges(tenant)
+        app_role = Apartment.config.app_role
+        return unless app_role
+
+        conn = ActiveRecord::Base.connection
+        if app_role.respond_to?(:call)
+          app_role.call(tenant, conn)
+        else
+          grant_privileges(tenant, conn, app_role)
+        end
+      end
+
+      # No-op base implementation — PG schema and MySQL adapters override.
+      def grant_privileges(tenant, connection, role_name)
+        # intentional no-op
+      end
+
       # Connection config with string keys (used by subclasses to build tenant configs).
       def base_config
         connection_config.transform_keys(&:to_s)
@@ -159,8 +185,8 @@ module Apartment
               "Excluded model '#{model_name}' could not be resolved: #{e.message}")
       end
 
-      def deregister_shard_from_ar_handler(tenant)
-        Apartment.deregister_shard(tenant)
+      def deregister_shard_from_ar_handler(pool_key)
+        Apartment.deregister_shard(pool_key)
       end
 
       def import_schema(tenant)

@@ -24,6 +24,7 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
       c.tenants_provider = -> { tenants }
       c.default_tenant = V4IntegrationHelper.default_tenant
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -58,9 +59,10 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
       Apartment::Tenant.switch('tenant_a') { Widget.create!(name: 'a') }
       Apartment::Tenant.switch('tenant_b') { Widget.create!(name: 'b') }
 
+      role = ActiveRecord::Base.current_role
       stats = Apartment::Tenant.pool_stats
       expect(stats[:total_pools]).to(be >= 2)
-      expect(stats[:tenants]).to(include('tenant_a', 'tenant_b'))
+      expect(stats[:tenants]).to(include("tenant_a:#{role}", "tenant_b:#{role}"))
     end
   end
 
@@ -70,7 +72,8 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
       Apartment::Tenant.switch('tenant_a') { Widget.create!(name: 'test') }
       sleep(0.1)
 
-      stats = Apartment.pool_manager.stats_for('tenant_a')
+      role = ActiveRecord::Base.current_role
+      stats = Apartment.pool_manager.stats_for("tenant_a:#{role}")
       expect(stats).to(be_a(Hash))
       expect(stats[:seconds_idle]).to(be >= 0.1)
     end
@@ -85,12 +88,13 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
     it 'returns the pool and refreshes its timestamp' do
       Apartment::Tenant.switch('tenant_a') { Widget.create!(name: 'a') }
       sleep(0.1)
-      idle_before = Apartment.pool_manager.stats_for('tenant_a')[:seconds_idle]
+      role = ActiveRecord::Base.current_role
+      idle_before = Apartment.pool_manager.stats_for("tenant_a:#{role}")[:seconds_idle]
 
-      pool = Apartment.pool_manager.get('tenant_a')
+      pool = Apartment.pool_manager.get("tenant_a:#{role}")
       expect(pool).not_to(be_nil)
 
-      idle_after = Apartment.pool_manager.stats_for('tenant_a')[:seconds_idle]
+      idle_after = Apartment.pool_manager.stats_for("tenant_a:#{role}")[:seconds_idle]
       expect(idle_after).to(be < idle_before)
     end
 
@@ -133,6 +137,7 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
         c.default_tenant = V4IntegrationHelper.default_tenant
         c.pool_idle_timeout = 300 # high — idle eviction won't trigger
         c.max_total_connections = 3
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -164,8 +169,9 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
       expect(stats[:total_pools]).to(be <= 3)
 
       # The most recently accessed tenants should survive
-      expect(Apartment.pool_manager.tracked?('lru_6')).to(be(true))
-      expect(Apartment.pool_manager.tracked?('lru_5')).to(be(true))
+      role = ActiveRecord::Base.current_role
+      expect(Apartment.pool_manager.tracked?("lru_6:#{role}")).to(be(true))
+      expect(Apartment.pool_manager.tracked?("lru_5:#{role}")).to(be(true))
     end
   end
 
@@ -242,6 +248,7 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
         c.tenants_provider = -> { tenants }
         c.default_tenant = V4IntegrationHelper.default_tenant
         c.excluded_models = ['SharedRecord']
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -267,9 +274,10 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
       sleep(0.05)
       Apartment::Tenant.switch('tenant_b') { Widget.create!(name: 'b') }
 
+      role = ActiveRecord::Base.current_role
       lru = Apartment.pool_manager.lru_tenants(count: 2)
       # tenant_a was accessed first, so it should appear before tenant_b
-      expect(lru.first).to(eq('tenant_a'))
+      expect(lru.first).to(eq("tenant_a:#{role}"))
     end
   end
 end

@@ -146,7 +146,8 @@ RSpec.describe(Apartment::Adapters::Sqlite3Adapter) do
 
     before do
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      allow(pool_manager).to(receive(:remove).and_return(nil))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([]))
+      allow(Apartment).to(receive(:deregister_shard))
     end
 
     it 'calls FileUtils.rm_f on the database file' do

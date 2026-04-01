@@ -146,7 +146,8 @@ RSpec.describe(Apartment::Adapters::PostgresqlDatabaseAdapter) do
     before do
       allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      allow(pool_manager).to(receive(:remove).and_return(nil))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([]))
+      allow(Apartment).to(receive(:deregister_shard))
     end
 
     it 'executes DROP DATABASE IF EXISTS with quoted environmentified name' do

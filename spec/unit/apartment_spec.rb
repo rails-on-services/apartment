@@ -261,6 +261,52 @@ RSpec.describe(Apartment) do
     end
   end
 
+  describe '.deregister_shard' do
+    before do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+    end
+
+    it 'calls remove_connection_pool with the role parsed from the composite key' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool))
+      allow(ActiveRecord).to(receive(:writing_role).and_return(:writing))
+
+      described_class.deregister_shard('acme:db_manager')
+
+      prefix = described_class.config.shard_key_prefix
+      expect(handler).to(have_received(:remove_connection_pool).with(
+                           'ActiveRecord::Base',
+                           role: :db_manager,
+                           shard: :"#{prefix}_acme:db_manager"
+                         ))
+    end
+
+    it 'falls back to writing_role when pool_key has no colon' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool))
+      allow(ActiveRecord).to(receive(:writing_role).and_return(:writing))
+
+      described_class.deregister_shard('acme')
+
+      prefix = described_class.config.shard_key_prefix
+      expect(handler).to(have_received(:remove_connection_pool).with(
+                           'ActiveRecord::Base',
+                           role: :writing,
+                           shard: :"#{prefix}_acme"
+                         ))
+    end
+
+    it 'is a no-op when config is nil' do
+      described_class.clear_config
+      expect { described_class.deregister_shard('acme') }.not_to(raise_error)
+    end
+  end
+
   describe '.detect_database_adapter (private)' do
     it 'returns the adapter string from ActiveRecord connection config' do
       db_config = double('db_config', adapter: 'postgresql')

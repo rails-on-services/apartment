@@ -18,6 +18,7 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
       c.tenant_strategy = :schema
       c.tenants_provider = -> { [] }
       c.default_tenant = 'public'
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -61,6 +62,7 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
         c.tenant_strategy = :schema
         c.tenants_provider = -> { [] }
         c.default_tenant = 'public'
+        c.check_pending_migrations = false
         c.configure_postgres do |pg|
           pg.persistent_schemas = ['extensions']
         end
@@ -154,6 +156,7 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
       c.tenants_provider = -> { [] }
       c.default_tenant = 'public'
       c.excluded_models = ['GlobalSetting']
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)

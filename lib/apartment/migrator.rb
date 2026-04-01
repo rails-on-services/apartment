@@ -5,7 +5,7 @@ require_relative 'instrumentation'
 require_relative 'errors'
 
 module Apartment
-  class Migrator
+  class Migrator # rubocop:disable Metrics/ClassLength
     Result = Data.define(
       :tenant,
       :status,
@@ -45,7 +45,7 @@ module Apartment
     def run # rubocop:disable Metrics/MethodLength
       start = monotonic_now
 
-      primary_result = migrate_primary
+      primary_result = with_migration_role { migrate_primary }
 
       if primary_result.status == :failed
         return MigrationRun.new(
@@ -69,6 +69,8 @@ module Apartment
         total_duration: monotonic_now - start,
         threads: @threads
       )
+    ensure
+      evict_migration_pools
     end
 
     private
@@ -116,27 +118,30 @@ module Apartment
     # wouldn't prevent that either (see apartment issue #298).
     def migrate_tenant(tenant) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       start = monotonic_now
+      Apartment::Current.migrating = true
 
-      Apartment::Tenant.switch(tenant) do
-        context = ActiveRecord::Base.connection_pool.migration_context
+      with_migration_role do
+        Apartment::Tenant.switch(tenant) do
+          context = ActiveRecord::Base.connection_pool.migration_context
 
-        unless @version || context.needs_migration?
-          return Result.new(
-            tenant: tenant, status: :skipped,
-            duration: monotonic_now - start, error: nil, versions_run: []
-          )
-        end
+          unless @version || context.needs_migration?
+            return Result.new(
+              tenant: tenant, status: :skipped,
+              duration: monotonic_now - start, error: nil, versions_run: []
+            )
+          end
 
-        with_advisory_locks_disabled do
-          raw_versions = context.migrate(@version)
-          versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
+          with_advisory_locks_disabled do
+            raw_versions = context.migrate(@version)
+            versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
 
-          Instrumentation.instrument(:migrate_tenant, tenant: tenant, versions: versions)
+            Instrumentation.instrument(:migrate_tenant, tenant: tenant, versions: versions)
 
-          Result.new(
-            tenant: tenant, status: :success,
-            duration: monotonic_now - start, error: nil, versions_run: versions
-          )
+            Result.new(
+              tenant: tenant, status: :success,
+              duration: monotonic_now - start, error: nil, versions_run: versions
+            )
+          end
         end
       end
     rescue StandardError => e
@@ -144,6 +149,8 @@ module Apartment
         tenant: tenant, status: :failed,
         duration: monotonic_now - start, error: e, versions_run: []
       )
+    ensure
+      Apartment::Current.migrating = false
     end
 
     def run_sequential(tenants)
@@ -172,6 +179,22 @@ module Apartment
       raise(fatal_errors.first) if fatal_errors.any?
 
       results.to_a
+    end
+
+    def with_migration_role(&)
+      role = Apartment.config.migration_role
+      role ? ActiveRecord::Base.connected_to(role: role, &) : yield
+    end
+
+    def evict_migration_pools
+      role = Apartment.config.migration_role
+      return unless role && Apartment.pool_manager
+
+      Apartment.pool_manager.evict_by_role(role).each do |pool_key, _pool| # rubocop:disable Style/HashEachMethods
+        Apartment.deregister_shard(pool_key)
+      end
+    rescue StandardError => e
+      warn "[Apartment::Migrator] Pool eviction failed: #{e.class}: #{e.message}"
     end
 
     # Disable advisory locks on the leased connection for the duration of the

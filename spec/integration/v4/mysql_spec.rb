@@ -29,6 +29,7 @@ RSpec.describe('v4 MySQL integration', :integration,
       c.tenant_strategy = :database_name
       c.tenants_provider = -> { [] }
       c.default_tenant = 'default'
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(@config)
@@ -143,6 +144,7 @@ RSpec.describe('v4 MySQL integration', :integration,
         c.tenants_provider = -> { [] }
         c.default_tenant = 'default'
         c.environmentify_strategy = :prepend
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(@config)
@@ -171,6 +173,7 @@ RSpec.describe('v4 MySQL integration', :integration,
           c.tenants_provider = -> { [] }
           c.default_tenant = 'default'
           c.environmentify_strategy = :prepend
+          c.check_pending_migrations = false
         end
 
         Apartment.adapter = V4IntegrationHelper.build_adapter(@config)

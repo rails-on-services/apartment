@@ -18,6 +18,7 @@ RSpec.describe('v4 Tenant lifecycle integration', :integration,
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
       c.tenants_provider = -> { [] }
       c.default_tenant = V4IntegrationHelper.default_tenant
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -52,11 +53,12 @@ RSpec.describe('v4 Tenant lifecycle integration', :integration,
       ActiveRecord::Base.connection.execute('SELECT 1')
     end
 
-    expect(Apartment.pool_manager.tracked?('doomed')).to(be(true))
+    role = ActiveRecord::Base.current_role
+    expect(Apartment.pool_manager.tracked?("doomed:#{role}")).to(be(true))
 
     Apartment.adapter.drop('doomed')
 
-    expect(Apartment.pool_manager.tracked?('doomed')).to(be(false))
+    expect(Apartment.pool_manager.tracked?("doomed:#{role}")).to(be(false))
   end
 
   it 'double drop does not raise' do

@@ -30,6 +30,12 @@ RSpec.describe(Apartment::TenantNameValidator) do
         .to(raise_error(Apartment::ConfigurationError, /whitespace/))
     end
 
+    it 'rejects names containing colons' do
+      expect do
+        described_class.validate!('tenant:name', strategy: :schema)
+      end.to(raise_error(Apartment::ConfigurationError, /colon/))
+    end
+
     it 'rejects names longer than 255 characters' do
       expect { described_class.validate!('a' * 256, strategy: :database_name, adapter_name: 'sqlite3') }
         .to(raise_error(Apartment::ConfigurationError, /too long.*256.*max 255/))

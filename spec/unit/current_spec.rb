@@ -35,4 +35,20 @@ RSpec.describe(Apartment::Current) do
     expect(described_class.tenant).to(eq('main_thread'))
     expect(thread_value).to(eq('other_thread'))
   end
+
+  it 'stores and retrieves the migrating attribute' do
+    described_class.migrating = true
+    expect(described_class.migrating).to(be(true))
+  end
+
+  it 'defaults migrating to nil' do
+    expect(described_class.migrating).to(be_nil)
+  end
+
+  it 'resets migrating attribute' do
+    described_class.migrating = true
+    described_class.reset
+
+    expect(described_class.migrating).to(be_nil)
+  end
 end

@@ -31,6 +31,30 @@ module Apartment
       pool
     end
 
+    def remove_tenant(tenant)
+      prefix = "#{tenant}:"
+      removed = []
+      @pools.each_key do |key|
+        next unless key.start_with?(prefix)
+
+        pool = remove(key)
+        removed << [key, pool] if pool
+      end
+      removed
+    end
+
+    def evict_by_role(role)
+      suffix = ":#{role}"
+      removed = []
+      @pools.each_key do |key|
+        next unless key.end_with?(suffix)
+
+        pool = remove(key)
+        removed << [key, pool] if pool
+      end
+      removed
+    end
+
     def tracked?(tenant_key)
       @pools.key?(tenant_key)
     end

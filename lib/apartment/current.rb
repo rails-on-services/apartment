@@ -6,6 +6,6 @@ module Apartment
   # Fiber-safe tenant context using ActiveSupport::CurrentAttributes.
   # Replaces the v3 Thread.current[:apartment_adapter] approach.
   class Current < ActiveSupport::CurrentAttributes
-    attribute :tenant, :previous_tenant
+    attribute :tenant, :previous_tenant, :migrating
   end
 end

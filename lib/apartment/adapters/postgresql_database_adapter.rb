@@ -10,8 +10,9 @@ module Apartment
     # to the environmentified tenant name. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class PostgresqlDatabaseAdapter < AbstractAdapter
-      def resolve_connection_config(tenant)
-        base_config.merge('database' => environmentify(tenant))
+      def resolve_connection_config(tenant, base_config: nil)
+        config = base_config || send(:base_config)
+        config.merge('database' => environmentify(tenant))
       end
 
       protected
@@ -35,6 +36,12 @@ module Apartment
           "DROP DATABASE IF EXISTS #{conn.quote_table_name(db_name)}"
         )
       end
+
+      # grant_privileges: inherits no-op from AbstractAdapter.
+      # Database-per-tenant RBAC grants require cross-database ordering
+      # (GRANT CONNECT on server, table grants inside tenant DB).
+      # Use the callable app_role escape hatch for this strategy.
+      # See docs/designs/v4-phase5-rbac-roles-schema-cache.md.
     end
   end
 end

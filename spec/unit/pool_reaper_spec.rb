@@ -138,6 +138,36 @@ RSpec.describe(Apartment::PoolReaper) do
     end
   end
 
+  describe 'default tenant composite key guard' do
+    let(:reaper) do
+      described_class.new(
+        pool_manager: pool_manager,
+        interval: 0.05,
+        idle_timeout: 1,
+        default_tenant: 'public',
+        on_evict: on_evict
+      )
+    end
+
+    it 'never evicts pools whose keys start with the default tenant prefix' do
+      pool_manager.fetch_or_create('public:writing') { 'pool_pw' }
+      pool_manager.fetch_or_create('public:reading') { 'pool_pr' }
+      pool_manager.instance_variable_get(:@timestamps)['public:writing'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 9999
+      pool_manager.instance_variable_get(:@timestamps)['public:reading'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 9999
+
+      reaper.start
+
+      sleep 0.2
+
+      expect(pool_manager.tracked?('public:writing')).to(be(true))
+      expect(pool_manager.tracked?('public:reading')).to(be(true))
+      expect(disconnect_calls).not_to(include('public:writing'))
+      expect(disconnect_calls).not_to(include('public:reading'))
+    end
+  end
+
   describe 'error resilience' do
     let(:bad_callback) { ->(_tenant, _pool) { raise('callback explosion') } }
     let(:reaper) do

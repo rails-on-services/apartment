@@ -248,6 +248,90 @@ RSpec.describe(Apartment::Migrator) do
     end
   end
 
+  describe '#migrate_tenant Current.migrating lifecycle' do
+    let(:mock_pool) { double('pool', migration_context: double(needs_migration?: false)) }
+
+    it 'sets Current.migrating = true before Tenant.switch' do
+      migrating_value_during_switch = nil
+      allow(Apartment::Tenant).to(receive(:switch)) do |&block|
+        migrating_value_during_switch = Apartment::Current.migrating
+        block&.call
+      end
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
+
+      migrator = described_class.new
+      migrator.send(:migrate_tenant, 'acme')
+
+      expect(migrating_value_during_switch).to(be(true))
+    end
+
+    it 'clears Current.migrating after migrate_tenant completes' do
+      allow(Apartment::Tenant).to(receive(:switch).and_yield)
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
+
+      migrator = described_class.new
+      migrator.send(:migrate_tenant, 'acme')
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+
+    it 'clears Current.migrating even on error' do
+      allow(Apartment::Tenant).to(receive(:switch).and_raise(StandardError, 'boom'))
+
+      migrator = described_class.new
+      migrator.send(:migrate_tenant, 'acme')
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+  end
+
+  describe '#with_migration_role' do
+    it 'yields without connected_to when migration_role is nil' do
+      migrator = described_class.new
+      expect(ActiveRecord::Base).not_to(receive(:connected_to))
+      migrator.send(:with_migration_role) { 'result' }
+    end
+
+    it 'wraps in connected_to when migration_role is set' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.default_tenant = 'public'
+        c.migration_role = :db_manager
+      end
+      migrator = described_class.new
+      expect(ActiveRecord::Base).to(receive(:connected_to).with(role: :db_manager).and_yield)
+      migrator.send(:with_migration_role) { 'result' }
+    end
+  end
+
+  describe '#evict_migration_pools' do
+    it 'evicts pools by migration_role and deregisters shards' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.default_tenant = 'public'
+        c.migration_role = :db_manager
+      end
+      pool_manager = instance_double(Apartment::PoolManager)
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+      allow(pool_manager).to(receive(:evict_by_role).with(:db_manager).and_return([['acme:db_manager', double]]))
+      allow(Apartment).to(receive(:deregister_shard))
+
+      migrator = described_class.new
+      migrator.send(:evict_migration_pools)
+
+      expect(pool_manager).to(have_received(:evict_by_role).with(:db_manager))
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+
+    it 'no-ops when migration_role is nil' do
+      migrator = described_class.new
+      expect(Apartment).not_to(receive(:pool_manager))
+      migrator.send(:evict_migration_pools)
+    end
+  end
+
   describe '#run with threads > 0' do
     let(:migrator) { described_class.new(threads: 4) }
     let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }

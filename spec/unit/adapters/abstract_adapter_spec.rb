@@ -13,8 +13,9 @@ class TestAdapter < Apartment::Adapters::AbstractAdapter
     @dropped_tenants = []
   end
 
-  def resolve_connection_config(tenant)
-    { adapter: 'postgresql', database: tenant }
+  def resolve_connection_config(tenant, base_config: nil)
+    config = base_config || { 'adapter' => 'postgresql', 'database' => tenant }
+    config.merge('database' => tenant)
   end
 
   protected
@@ -85,7 +86,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
   describe '#validated_connection_config' do
     it 'returns the resolved config for valid tenant names' do
       result = adapter.validated_connection_config('acme')
-      expect(result).to(eq(adapter: 'postgresql', database: 'acme'))
+      expect(result).to(eq('adapter' => 'postgresql', 'database' => 'acme', 'host' => 'localhost'))
     end
 
     it 'raises ConfigurationError for invalid tenant names' do
@@ -97,6 +98,11 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       expect { adapter.validated_connection_config('') }
         .to(raise_error(Apartment::ConfigurationError, /cannot be empty/))
     end
+
+    it 'falls back to base_config when base_config_override is nil' do
+      result = adapter.validated_connection_config('acme', base_config_override: nil)
+      expect(result).to(eq('adapter' => 'postgresql', 'database' => 'acme', 'host' => 'localhost'))
+    end
   end
 
   describe '#resolve_connection_config' do
@@ -106,7 +112,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
 
     it 'returns a config hash in the concrete subclass' do
-      expect(adapter.resolve_connection_config('t1')).to(eq(adapter: 'postgresql', database: 't1'))
+      expect(adapter.resolve_connection_config('t1')).to(eq('adapter' => 'postgresql', 'database' => 't1'))
     end
   end
 
@@ -154,15 +160,17 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       expect(adapter.dropped_tenants).to(eq(['acme']))
     end
 
-    it 'removes the pool from PoolManager' do
+    it 'removes all role-variant pools via remove_tenant on PoolManager' do
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      expect(pool_manager).to(receive(:remove).with('acme').and_return(nil))
+      allow(Apartment).to(receive(:deregister_shard))
+      expect(pool_manager).to(receive(:remove_tenant).with('acme').and_return([]))
       adapter.drop('acme')
     end
 
-    it 'disconnects the pool if it responds to disconnect!' do
+    it 'disconnects each pool returned by remove_tenant' do
       mock_pool = double('Pool', disconnect!: true)
-      allow(pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([['acme:primary', mock_pool]]))
+      allow(Apartment).to(receive(:deregister_shard))
       allow(Apartment::Instrumentation).to(receive(:instrument))
 
       expect(mock_pool).to(receive(:disconnect!))
@@ -171,7 +179,8 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
 
     it 'does not call disconnect! if pool does not respond to it' do
       mock_pool = double('Pool')
-      allow(pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([['acme:primary', mock_pool]]))
+      allow(Apartment).to(receive(:deregister_shard))
       allow(Apartment::Instrumentation).to(receive(:instrument))
 
       # Should not raise
@@ -179,15 +188,20 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
 
     it 'instruments the drop event' do
-      allow(pool_manager).to(receive(:remove).and_return(nil))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([]))
+      allow(Apartment).to(receive(:deregister_shard))
       expect(Apartment::Instrumentation).to(receive(:instrument).with(:drop, tenant: 'acme'))
       adapter.drop('acme')
     end
 
-    it 'deregisters the shard from AR ConnectionHandler' do
+    it 'deregisters each pool_key from AR ConnectionHandler' do
+      mock_pool = double('Pool', disconnect!: true)
+      removed = [['acme:primary', mock_pool], ['acme:replica', mock_pool]]
+      allow(pool_manager).to(receive(:remove_tenant).and_return(removed))
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      allow(Apartment.pool_manager).to(receive(:remove).and_return(nil))
-      expect(Apartment).to(receive(:deregister_shard).with('acme'))
+
+      expect(Apartment).to(receive(:deregister_shard).with('acme:primary'))
+      expect(Apartment).to(receive(:deregister_shard).with('acme:replica'))
       adapter.drop('acme')
     end
 
@@ -195,12 +209,20 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       mock_pool = double('Pool')
       allow(mock_pool).to(receive(:respond_to?).with(:disconnect!).and_return(true))
       allow(mock_pool).to(receive(:disconnect!).and_raise(RuntimeError, 'disconnect boom'))
-      allow(Apartment.pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([['acme:primary', mock_pool]]))
 
-      expect(Apartment).to(receive(:deregister_shard).with('acme'))
+      expect(Apartment).to(receive(:deregister_shard).with('acme:primary'))
       expect(Apartment::Instrumentation).to(receive(:instrument).with(:drop, tenant: 'acme'))
 
       adapter.drop('acme')
+    end
+
+    it 'handles nil pool_manager gracefully' do
+      allow(Apartment).to(receive(:pool_manager).and_return(nil))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+
+      # Should not raise even without a pool_manager
+      expect { adapter.drop('acme') }.not_to(raise_error)
     end
   end
 
@@ -294,7 +316,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
 
       reconfigure(excluded_models: ['GlobalUser'])
 
-      expected_config = { adapter: 'postgresql', database: 'public' }
+      expected_config = { 'adapter' => 'postgresql', 'database' => 'public' }
       expect(model_class).to(receive(:establish_connection)) do |arg|
         expect(arg).to(eq(expected_config))
       end
@@ -410,6 +432,58 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
   describe '#default_tenant' do
     it 'delegates to Apartment.config.default_tenant' do
       expect(adapter.default_tenant).to(eq('public'))
+    end
+  end
+
+  describe '#grant_tenant_privileges (private)' do
+    let(:connection) { double('Connection') }
+
+    before do
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+    end
+
+    context 'when app_role is a string' do
+      before { reconfigure(app_role: 'app_user') }
+
+      it 'calls grant_privileges with tenant, connection, and role_name' do
+        expect(adapter).to(receive(:grant_privileges).with('acme', connection, 'app_user'))
+        adapter.create('acme')
+      end
+    end
+
+    context 'when app_role is callable' do
+      it 'invokes the callable with (tenant, connection)' do
+        called_with = nil
+        reconfigure(app_role: ->(tenant, conn) { called_with = [tenant, conn] })
+
+        adapter.create('acme')
+
+        expect(called_with).to(eq(['acme', connection]))
+      end
+    end
+
+    context 'when app_role is nil' do
+      it 'does not call grant_privileges and does not raise' do
+        # Default config has app_role = nil
+        expect(adapter).not_to(receive(:grant_privileges))
+        expect { adapter.create('acme') }.not_to(raise_error)
+      end
+    end
+
+    context 'ordering: grants run after create_tenant, before import_schema' do
+      it 'calls create_tenant then grant_tenant_privileges then import_schema' do
+        reconfigure(app_role: 'app_user', schema_load_strategy: :schema_rb)
+        call_order = []
+
+        allow(adapter).to(receive(:create_tenant).with('acme') { call_order << :create_tenant })
+        allow(adapter).to(receive(:grant_privileges) { call_order << :grant_privileges })
+        allow(adapter).to(receive(:import_schema).with('acme') { call_order << :import_schema })
+
+        adapter.create('acme')
+
+        expect(call_order).to(eq(%i[create_tenant grant_privileges import_schema]))
+      end
     end
   end
 

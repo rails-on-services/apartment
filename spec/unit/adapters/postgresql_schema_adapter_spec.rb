@@ -154,7 +154,8 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     before do
       allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      allow(pool_manager).to(receive(:remove).and_return(nil))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([]))
+      allow(Apartment).to(receive(:deregister_shard))
     end
 
     it 'executes DROP SCHEMA IF EXISTS CASCADE with quoted tenant name' do
@@ -177,6 +178,100 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
       expect(connection).to(receive(:execute).with('DROP SCHEMA IF EXISTS "acme" CASCADE'))
 
       adapter.drop('acme')
+    end
+  end
+
+  describe '#grant_privileges (private)' do
+    let(:connection) { double('Connection') }
+
+    before do
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
+      allow(connection).to(receive(:quote_table_name).with('app_user').and_return('"app_user"'))
+      # Allow CREATE SCHEMA call from create_tenant
+      allow(connection).to(receive(:execute).with('CREATE SCHEMA IF NOT EXISTS "acme"'))
+    end
+
+    it 'executes exactly 6 SQL statements when app_role is set' do
+      reconfigure(app_role: 'app_user')
+      expect(connection).to(receive(:execute).exactly(6).times)
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'includes GRANT USAGE ON SCHEMA' do
+      expect(connection).to(receive(:execute).with('GRANT USAGE ON SCHEMA "acme" TO "app_user"'))
+      allow(connection).to(receive(:execute))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'includes ALTER DEFAULT PRIVILEGES for tables' do
+      expect(connection).to(receive(:execute)
+        .with('ALTER DEFAULT PRIVILEGES IN SCHEMA "acme" ' \
+              'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "app_user"'))
+      allow(connection).to(receive(:execute))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'includes ALTER DEFAULT PRIVILEGES for sequences' do
+      expect(connection).to(receive(:execute)
+        .with('ALTER DEFAULT PRIVILEGES IN SCHEMA "acme" ' \
+              'GRANT USAGE, SELECT ON SEQUENCES TO "app_user"'))
+      allow(connection).to(receive(:execute))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'includes ALTER DEFAULT PRIVILEGES for functions' do
+      expect(connection).to(receive(:execute)
+        .with('ALTER DEFAULT PRIVILEGES IN SCHEMA "acme" ' \
+              'GRANT EXECUTE ON FUNCTIONS TO "app_user"'))
+      allow(connection).to(receive(:execute))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'includes GRANT on ALL TABLES' do
+      expect(connection).to(receive(:execute)
+        .with('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "acme" TO "app_user"'))
+      allow(connection).to(receive(:execute))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'includes GRANT USAGE, SELECT on ALL SEQUENCES' do
+      expect(connection).to(receive(:execute)
+        .with('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "acme" TO "app_user"'))
+      allow(connection).to(receive(:execute))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+  end
+
+  describe '#validated_connection_config with base_config_override' do
+    it 'uses the override host and username instead of adapter base_config' do
+      override_config = {
+        'adapter' => 'postgresql',
+        'host' => 'replica.example.com',
+        'username' => 'readonly',
+        'database' => 'myapp',
+      }
+
+      result = adapter.validated_connection_config('acme', base_config_override: override_config)
+
+      expect(result['host']).to(eq('replica.example.com'))
+      expect(result['username']).to(eq('readonly'))
+      expect(result['schema_search_path']).to(eq('acme'))
+    end
+
+    it 'falls back to adapter base_config when override is nil' do
+      result = adapter.validated_connection_config('acme', base_config_override: nil)
+
+      expect(result['host']).to(eq('localhost'))
+      expect(result['schema_search_path']).to(eq('acme'))
     end
   end
 end

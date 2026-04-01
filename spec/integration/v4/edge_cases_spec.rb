@@ -24,6 +24,7 @@ RSpec.describe('v4 Edge cases integration', :integration,
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
       c.tenants_provider = -> { tenants }
       c.default_tenant = V4IntegrationHelper.default_tenant
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -130,6 +131,7 @@ RSpec.describe('v4 Edge cases integration', :integration,
         c.tenants_provider = -> { [seed_tenant] }
         c.default_tenant = V4IntegrationHelper.default_tenant
         c.seed_data_file = seed_file
+        c.check_pending_migrations = false
       end
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
       Apartment.activate!
@@ -157,6 +159,7 @@ RSpec.describe('v4 Edge cases integration', :integration,
         c.tenants_provider = -> { [seed_tenant] }
         c.default_tenant = V4IntegrationHelper.default_tenant
         c.seed_data_file = '/tmp/definitely_does_not_exist_xyz.rb'
+        c.check_pending_migrations = false
       end
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
       Apartment.activate!

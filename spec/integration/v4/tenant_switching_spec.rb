@@ -23,6 +23,7 @@ RSpec.describe('v4 Tenant switching integration', :integration,
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
       c.tenants_provider = -> { tenants }
       c.default_tenant = V4IntegrationHelper.default_tenant
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)

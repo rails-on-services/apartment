@@ -83,17 +83,20 @@ module Apartment
     # Deregister a single tenant's shard from AR's ConnectionHandler.
     # Safe to call when AR is not loaded or config is not set (no-op).
     # Used by PoolReaper eviction, AbstractAdapter#drop, and teardown.
-    def deregister_shard(tenant)
+    def deregister_shard(pool_key)
       return unless @config && defined?(ActiveRecord::Base)
 
-      shard_key = :"#{@config.shard_key_prefix}_#{tenant}"
+      _, separator, role_str = pool_key.to_s.rpartition(':')
+      role = separator.empty? || role_str.empty? ? ActiveRecord.writing_role : role_str.to_sym
+
+      shard_key = :"#{@config.shard_key_prefix}_#{pool_key}"
       ActiveRecord::Base.connection_handler.remove_connection_pool(
         'ActiveRecord::Base',
-        role: ActiveRecord::Base.current_role,
+        role: role,
         shard: shard_key
       )
     rescue StandardError => e
-      warn "[Apartment] Failed to deregister AR pool for #{tenant}: #{e.class}: #{e.message}"
+      warn "[Apartment] Failed to deregister AR pool for #{pool_key}: #{e.class}: #{e.message}"
     end
 
     private

@@ -22,8 +22,12 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
     before do
       V4IntegrationHelper.ensure_test_database! unless V4IntegrationHelper.sqlite?
       config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
-      # Bump pool size so 10 concurrent threads can share a single tenant pool
+      # Bump pool size so 10 concurrent threads can share a single tenant pool.
+      # Re-establish default connection with bumped pool so role-aware
+      # ConnectionHandling (which resolves base config from the default pool)
+      # propagates the larger pool size to tenant pools.
       config = config.merge('pool' => 15)
+      ActiveRecord::Base.establish_connection(config)
       V4IntegrationHelper.create_test_table!
 
       stub_const('Widget', Class.new(ActiveRecord::Base) { self.table_name = 'widgets' })
@@ -32,6 +36,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = V4IntegrationHelper.tenant_strategy
         c.tenants_provider = -> { tenants }
         c.default_tenant = V4IntegrationHelper.default_tenant
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -117,6 +122,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = V4IntegrationHelper.tenant_strategy
         c.tenants_provider = -> { many_tenants }
         c.default_tenant = V4IntegrationHelper.default_tenant
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(@config)
@@ -189,6 +195,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenants_provider = -> { %w[reap_me] }
         c.default_tenant = V4IntegrationHelper.default_tenant
         c.pool_idle_timeout = 0.5
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -200,16 +207,17 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         ActiveRecord::Base.connection.execute('SELECT 1')
       end
 
-      expect(Apartment.pool_manager.tracked?('reap_me')).to(be(true))
+      role = ActiveRecord::Base.current_role
+      expect(Apartment.pool_manager.tracked?("reap_me:#{role}")).to(be(true))
 
       # Poll until reaper evicts the idle pool or timeout
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
-      until !Apartment.pool_manager.tracked?('reap_me') ||
+      until !Apartment.pool_manager.tracked?("reap_me:#{role}") ||
             Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
         sleep(0.1)
       end
 
-      expect(Apartment.pool_manager.tracked?('reap_me')).to(be(false))
+      expect(Apartment.pool_manager.tracked?("reap_me:#{role}")).to(be(false))
     end
   end
 
@@ -227,6 +235,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = :schema
         c.tenants_provider = -> { tenants }
         c.default_tenant = 'public'
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -292,6 +301,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = :schema
         c.tenants_provider = -> { tenants }
         c.default_tenant = 'public'
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config.merge('pool' => 25))
@@ -349,6 +359,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = :database_name
         c.tenants_provider = -> { tenants }
         c.default_tenant = 'default'
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -398,6 +409,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = :database_name
         c.tenants_provider = -> { tenants }
         c.default_tenant = 'default'
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config.merge('pool' => 25))
@@ -453,6 +465,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = V4IntegrationHelper.tenant_strategy
         c.tenants_provider = -> { [tenant_name] }
         c.default_tenant = V4IntegrationHelper.default_tenant
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config)
@@ -568,6 +581,7 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
         c.tenant_strategy = V4IntegrationHelper.tenant_strategy
         c.tenants_provider = -> { storm_tenants }
         c.default_tenant = V4IntegrationHelper.default_tenant
+        c.check_pending_migrations = false
       end
 
       Apartment.adapter = V4IntegrationHelper.build_adapter(config.merge('pool' => 25))

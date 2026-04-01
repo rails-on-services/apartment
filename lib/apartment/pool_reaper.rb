@@ -68,7 +68,7 @@ module Apartment
 
     def evict_idle
       @pool_manager.idle_tenants(timeout: @idle_timeout).each do |tenant|
-        next if tenant == @default_tenant
+        next if default_tenant_pool?(tenant)
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -87,7 +87,7 @@ module Apartment
       evicted = 0
       candidates.each do |tenant|
         break if evicted >= excess
-        next if tenant == @default_tenant
+        next if default_tenant_pool?(tenant)
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -101,6 +101,12 @@ module Apartment
 
     def deregister_from_ar_handler(tenant)
       Apartment.deregister_shard(tenant)
+    end
+
+    def default_tenant_pool?(pool_key)
+      return false unless @default_tenant
+
+      pool_key == @default_tenant || pool_key.start_with?("#{@default_tenant}:")
     end
   end
 end

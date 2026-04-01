@@ -39,6 +39,7 @@ RSpec.describe('v4 Excluded models integration', :integration,
       c.tenants_provider = -> { %w[tenant_a] }
       c.default_tenant = V4IntegrationHelper.default_tenant
       c.excluded_models = ['GlobalSetting']
+      c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
