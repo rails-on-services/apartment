@@ -110,11 +110,17 @@ module Apartment
     # The ConnectionHandling patch routes AR::Base.connection_pool to the
     # tenant's pool, so Rails' migration machinery (which always goes through
     # AR::Base) uses the correct connection automatically.
+    #
+    # Advisory locks are disabled for tenant migrations because PG schema-per-
+    # tenant shares one database — the database-wide advisory lock from one
+    # tenant would block all others. Each tenant's schema is independent, so
+    # concurrent schema-level migrations are safe.
     def migrate_tenant(tenant) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       start = monotonic_now
 
       Apartment::Tenant.switch(tenant) do
-        context = ActiveRecord::Base.connection_pool.migration_context
+        pool = ActiveRecord::Base.connection_pool
+        context = pool.migration_context
 
         unless context.needs_migration?
           return Result.new(
@@ -123,6 +129,7 @@ module Apartment
           )
         end
 
+        pool.with_connection { |conn| conn.instance_variable_set(:@advisory_locks_enabled, false) }
         raw_versions = context.migrate
         versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
 

@@ -165,6 +165,7 @@ RSpec.describe(Apartment::Migrator) do
     before do
       allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:with_connection).and_yield(double('connection')))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
 
@@ -257,6 +258,7 @@ RSpec.describe(Apartment::Migrator) do
 
       allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:with_connection).and_yield(double('connection')))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
       allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
