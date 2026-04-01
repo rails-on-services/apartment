@@ -190,7 +190,7 @@ module Apartment
       role = Apartment.config.migration_role
       return unless role && Apartment.pool_manager
 
-      Apartment.pool_manager.evict_by_role(role).each do |pool_key, _pool|
+      Apartment.pool_manager.evict_by_role(role).each do |pool_key, _pool| # rubocop:disable Style/HashEachMethods
         Apartment.deregister_shard(pool_key)
       end
     rescue StandardError => e
