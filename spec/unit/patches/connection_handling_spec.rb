@@ -243,6 +243,29 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       end
     end
 
+    context 'role-aware pool keys' do
+      it 'includes current_role in the pool key' do
+        Apartment::Current.tenant = 'acme'
+        ActiveRecord::Base.connection_pool
+
+        # The pool key must be "tenant:role" — verify the role portion is present
+        # (real role name; stubbing an undefined AR role breaks super resolution)
+        role = ActiveRecord::Base.current_role
+        expect(Apartment.pool_manager.tracked?("acme:#{role}")).to(be(true))
+        # Confirm the key contains a colon-separated role, not just the tenant name
+        keys = Apartment.pool_manager.instance_variable_get(:@pools).keys
+        acme_key = keys.find { |k| k.start_with?('acme:') }
+        expect(acme_key).to(match(/\Aacme:.+\z/))
+      end
+    end
+
+    context 'pending migration check' do
+      it 'is suppressed when check_pending_migrations is false' do
+        Apartment::Current.tenant = 'acme'
+        expect { ActiveRecord::Base.connection_pool }.not_to(raise_error)
+      end
+    end
+
     context 'custom shard_key_prefix' do
       before do
         Apartment.configure do |config|

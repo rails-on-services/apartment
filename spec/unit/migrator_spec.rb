@@ -249,6 +249,53 @@ RSpec.describe(Apartment::Migrator) do
   end
 end
 
+RSpec.describe(Apartment::Migrator, 'Current.migrating lifecycle') do
+  before do
+    Apartment.configure do |c|
+      c.tenant_strategy = :schema
+      c.tenants_provider = -> { %w[acme] }
+      c.default_tenant = 'public'
+    end
+  end
+
+  describe '#migrate_tenant' do
+    let(:mock_pool) { double('pool', migration_context: double(needs_migration?: false)) }
+
+    it 'sets Current.migrating = true before Tenant.switch' do
+      migrating_value_during_switch = nil
+      allow(Apartment::Tenant).to(receive(:switch)) do |&block|
+        migrating_value_during_switch = Apartment::Current.migrating
+        block.call if block
+      end
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
+
+      migrator = described_class.new
+      migrator.send(:migrate_tenant, 'acme')
+
+      expect(migrating_value_during_switch).to(be(true))
+    end
+
+    it 'clears Current.migrating after migrate_tenant completes' do
+      allow(Apartment::Tenant).to(receive(:switch).and_yield)
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
+
+      migrator = described_class.new
+      migrator.send(:migrate_tenant, 'acme')
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+
+    it 'clears Current.migrating even on error' do
+      allow(Apartment::Tenant).to(receive(:switch).and_raise(StandardError, 'boom'))
+
+      migrator = described_class.new
+      migrator.send(:migrate_tenant, 'acme')
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+  end
+end
+
 RSpec.describe(Apartment::Migrator, 'Phase 5: migration_role') do
   before do
     Apartment.configure do |c|

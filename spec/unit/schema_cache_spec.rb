@@ -11,6 +11,15 @@ RSpec.describe(Apartment::SchemaCache) do
     end
   end
 
+  describe '.cache_path_for used by ConnectionHandling' do
+    it 'generates paths that File.exist? can check' do
+      path = described_class.cache_path_for('acme')
+      expect(path).to(be_a(String))
+      expect(path).not_to(be_empty)
+      expect(path).to(include('schema_cache_acme'))
+    end
+  end
+
   describe '.dump' do
     it 'switches to tenant and dumps schema cache' do
       schema_cache = double('schema_cache')
