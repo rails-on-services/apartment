@@ -30,7 +30,10 @@ module Apartment
       private
 
       def table(table_name, stream)
-        include_schemas = Apartment.config&.postgres_config&.include_schemas_in_dump || []
+        pg_config = Apartment.config&.postgres_config
+        return super unless pg_config
+
+        include_schemas = pg_config.include_schemas_in_dump || []
         stripped = SchemaDumperPatch.strip_public_prefix(table_name, include_schemas: include_schemas)
         super(stripped, stream)
       end

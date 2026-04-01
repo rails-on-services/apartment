@@ -108,38 +108,6 @@ RSpec.describe(Apartment::Migrator) do
     end
   end
 
-  describe '#resolve_migration_config' do
-    let(:migrator) { described_class.new(threads: 0) }
-
-    it 'returns base config when migration_db_config is nil' do
-      base = { 'adapter' => 'postgresql', 'database' => 'app_db', 'schema_search_path' => 'acme' }
-      result = migrator.send(:resolve_migration_config, base, nil)
-      expect(result).to(eq(base))
-    end
-
-    it 'overlays credentials from migration_db_config' do
-      base = { 'adapter' => 'postgresql', 'database' => 'app_db', 'schema_search_path' => 'acme',
-               'username' => 'app_user', 'password' => 'app_pass' }
-      migration_config = { adapter: 'postgresql', database: 'app_db',
-                           username: 'db_manager', password: 'mgr_pass' }
-
-      result = migrator.send(:resolve_migration_config, base, migration_config)
-
-      expect(result['username']).to(eq('db_manager'))
-      expect(result['password']).to(eq('mgr_pass'))
-      expect(result['schema_search_path']).to(eq('acme'))
-      expect(result['database']).to(eq('app_db'))
-    end
-
-    it 'overlays host when migration config specifies one' do
-      base = { 'adapter' => 'postgresql', 'host' => 'app-host', 'username' => 'app' }
-      migration_config = { adapter: 'postgresql', host: 'admin-host', username: 'admin', password: 'pass' }
-
-      result = migrator.send(:resolve_migration_config, base, migration_config)
-      expect(result['host']).to(eq('admin-host'))
-    end
-  end
-
   describe '#initialize' do
     it 'defaults to 0 threads' do
       migrator = described_class.new
@@ -150,22 +118,18 @@ RSpec.describe(Apartment::Migrator) do
       migrator = described_class.new(threads: 8)
       expect(migrator.instance_variable_get(:@threads)).to(eq(8))
     end
-
-    it 'accepts migration_db_config parameter' do
-      migrator = described_class.new(migration_db_config: :db_manager)
-      expect(migrator.instance_variable_get(:@migration_db_config)).to(eq(:db_manager))
-    end
   end
 
   describe '#run' do
     let(:migrator) { described_class.new(threads: 0) }
     let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
     let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
+    let(:mock_connection) { double('connection') }
 
     before do
-      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
+      allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
+      allow(mock_connection).to(receive(:instance_variable_set))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
-      allow(mock_pool).to(receive(:with_connection).and_yield(double('connection')))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
 
@@ -228,9 +192,16 @@ RSpec.describe(Apartment::Migrator) do
     end
 
     it 'switches tenant for each tenant migration' do
-      expect(Apartment::Tenant).to(receive(:switch).with('acme'))
-      expect(Apartment::Tenant).to(receive(:switch).with('beta'))
       migrator.run
+      expect(Apartment::Tenant).to(have_received(:switch).with('acme'))
+      expect(Apartment::Tenant).to(have_received(:switch).with('beta'))
+    end
+
+    it 'disables advisory locks for tenant migrations' do
+      migrator.run
+      # lease_connection is called for each tenant (not primary)
+      expect(mock_connection).to(have_received(:instance_variable_set)
+        .with(:@advisory_locks_enabled, false).at_least(:twice))
     end
 
     it 'handles empty tenant list' do
@@ -248,6 +219,7 @@ RSpec.describe(Apartment::Migrator) do
     let(:migrator) { described_class.new(threads: 4) }
     let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
     let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
+    let(:mock_connection) { double('connection') }
 
     before do
       Apartment.configure do |c|
@@ -256,9 +228,9 @@ RSpec.describe(Apartment::Migrator) do
         c.default_tenant = 'public'
       end
 
-      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
+      allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
+      allow(mock_connection).to(receive(:instance_variable_set))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
-      allow(mock_pool).to(receive(:with_connection).and_yield(double('connection')))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
       allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }

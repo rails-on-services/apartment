@@ -2,9 +2,9 @@
 
 ## Overview
 
-This spec covers the Migrator, schema dumper patch, schema cache generation, and rake/Thor task integration for Apartment v4. The Migrator is a standalone orchestrator that runs ActiveRecord migrations across all tenants with optional thread-based parallelism, using its own ephemeral connection pools with configurable credentials (RBAC support).
+This spec covers the Migrator, schema dumper patch, schema cache generation, and rake/Thor task integration for Apartment v4. The Migrator orchestrates ActiveRecord migrations across all tenants with optional thread-based parallelism.
 
-**Primary goal:** `Apartment::Migrator` migrates the primary database and all tenant schemas/databases, with per-tenant result tracking, thread parallelism, and RBAC credential separation — without relying on v4's runtime pool-per-tenant infrastructure or dynamic `SET search_path` switching.
+**Primary goal:** `Apartment::Migrator` migrates the primary database and all tenant schemas/databases, with per-tenant result tracking and thread parallelism.
 
 **Secondary goals:**
 - Fix Rails 8.1 `public.` prefix regression in `schema.rb` dumps
@@ -14,11 +14,13 @@ This spec covers the Migrator, schema dumper patch, schema cache generation, and
 
 ## Context & Motivation
 
-### Why a standalone Migrator?
+### Why Tenant.switch, not standalone pools?
 
-v4's runtime model is pool-per-tenant with `app_user` credentials and immutable connection configs. Migrations need different credentials (`db_manager` with DDL permissions) and a different lifecycle (ephemeral pools, created and destroyed within a single run). Mixing migration pools into the runtime PoolManager would conflate two distinct operational contexts.
+The original design proposed a standalone `PoolManager` with ephemeral per-tenant pools. During implementation, we discovered that Rails' migration machinery hardcodes `DatabaseTasks.migration_connection` → `ActiveRecord::Base.lease_connection`, bypassing any standalone pool. Three approaches were tried (standalone pools, handler registration with unique `owner_name:`, thread-local `ConnectionHandler` swaps) — all failed due to this coupling.
 
-The Migrator owns a dedicated `PoolManager` instance. Each pool bakes the tenant's schema into its connection config (no dynamic `search_path` switching), consistent with v4's core invariant: connection config is immutable per pool, tenant identity is baked in at pool creation.
+v4's `ConnectionHandling` patch already solves the routing problem: `Tenant.switch` sets `Current.tenant`, and the patch intercepts `AR::Base.connection_pool` to return the tenant's pool. Since `AR::Base.lease_connection` goes through `connection_pool`, Rails' migration runner automatically uses the correct tenant connection. No standalone pools, handler swaps, or monkey-patches needed.
+
+**RBAC credential separation** (`migration_db_config`) is deferred to Phase 5. The challenge: `Tenant.switch` uses runtime pools with `app_user` credentials, but DDL operations need `db_manager`. Phase 5 will address this by allowing the adapter to resolve credentials from a database.yml config name (e.g., `:db_manager`) during migration context, following the pattern established in CampusESP's `database.yml` where `db_manager` is a separate config with elevated credentials.
 
 ### Why threads only?
 
@@ -48,64 +50,45 @@ See: [rails-on-services/apartment#298](https://github.com/rails-on-services/apar
 
 ### `Apartment::Migrator`
 
-Standalone orchestrator. Owns its lifecycle, connection pools, and thread coordination.
+Orchestrator that delegates to `Tenant.switch` for connection routing and Rails' standard migration machinery for DDL execution.
 
 **Constructor:**
 
 ```ruby
 Apartment::Migrator.new(
   threads: 8,                          # 0 = sequential (default)
-  migration_db_config: :db_manager,    # database.yml config name for DDL credentials (nil = use tenant's own)
 )
 ```
 
 - `threads`: concurrency level. `0` means sequential (safe default for development, CI debugging).
-- `migration_db_config`: resolved via `ActiveRecord::Base.configurations`. When set, credentials (username, password, optionally host) are overlaid onto each tenant's resolved config. When `nil`, each tenant's config is used as-is (supports tenants that supply their own migration role).
 
 **Execution flow:**
 
 ```
 Migrator#run
-  ├── Phase 1: Migrate primary database (migration_db_config, blocking)
-  │     For PostgreSQL schemas: migrates the public schema
-  │     For MySQL/SQLite: migrates the primary database/file
+  ├── Phase 1: Migrate primary database (blocking)
+  │     Uses AR::Base.connection_pool directly (default connection)
   │     Checks for pending migrations; skips if up-to-date
+  │     Aborts entire run on failure (tenants are never touched)
   ├── Phase 2: Migrate tenants (parallel or sequential)
   │     ├── Resolve tenants from tenants_provider
   │     ├── For each tenant:
-  │     │     ├── adapter.resolve_connection_config(tenant)
-  │     │     ├── Overlay migration_db_config credentials (if set)
-  │     │     ├── Create ephemeral pool from merged config
-  │     │     ├── Obtain MigrationContext from the ephemeral pool
-  │     │     ├── Run MigrationContext#migrate(version)
+  │     │     ├── Tenant.switch(tenant) — ConnectionHandling patch routes AR::Base to tenant's pool
+  │     │     ├── Disable advisory locks on leased connection
+  │     │     ├── AR::Base.connection_pool.migration_context.migrate
   │     │     ├── Record Result (success/failure + timing)
-  │     │     └── Disconnect pool
+  │     │     └── Tenant.switch ensure block restores previous tenant
   │     └── Collect Results
-  ├── Phase 3: Dump schema (schema.rb or structure.sql)
-  │     Runs after Phase 1 succeeds; does not depend on Phase 2 completion
-  │     A tenant failure does not prevent schema dump
-  ├── Phase 4: Generate schema cache (if configured)
   └── Return MigrationRun (summary + per-tenant results)
 ```
 
-**Adapter-specific behavior in Phase 1:**
-- **PostgreSQL (schemas):** Migrates the public schema. Phase 2 migrates each tenant schema.
-- **MySQL (databases):** Migrates the primary database. Phase 2 migrates each tenant database.
-- **SQLite (files):** Migrates the primary database file. Phase 2 migrates each tenant file. `migration_db_config` credential overlay is a no-op (SQLite has no credentials).
+Schema dump (Phase 3) is handled by the rake task after `Migrator#run` returns, respecting `ActiveRecord.dump_schema_after_migration`. Schema cache generation (Phase 4) is deferred.
 
-### Connection Config Resolution
+### Connection Routing
 
-For each tenant, the Migrator builds an immutable connection config through three steps:
+The Migrator does not create its own pools. For each tenant, `Tenant.switch` sets `Current.tenant`, and the `ConnectionHandling` patch intercepts `AR::Base.connection_pool` to return the tenant's pool from v4's runtime `PoolManager`. Rails' migration runner calls `DatabaseTasks.migration_connection` → `AR::Base.lease_connection` → `connection_pool.lease_connection`, which resolves to the tenant's pool automatically.
 
-1. `adapter.resolve_connection_config(tenant)` — base config (host, database/schema, port)
-2. Overlay migration credentials — shallow merge of `username`, `password`, and optionally `host` from `migration_db_config`. Everything else (schema search_path, database name, port) comes from step 1.
-3. Create pool from merged config — immutable, tenant-specific, ephemeral
-
-If `migration_db_config` is nil, step 2 is a no-op. The overlay logic is adapter-agnostic; it only touches credentials. This design naturally supports future multi-shard scenarios where tenants specify their own database details and migration roles.
-
-### Pool Lifecycle
-
-The Migrator creates a dedicated `PoolManager` instance in its constructor. Pools are created on demand and kept alive for the duration of that tenant's migration sequence (multiple migration steps may reuse the connection). After all tenants complete, `PoolManager#clear` disconnects everything. No pool survives past `Migrator#run`. No PoolReaper is needed (pools are ephemeral and explicitly disconnected).
+This means migrations use the same pools (and credentials) as the runtime application. RBAC credential separation (`migration_db_config`) — where DDL runs with `db_manager` credentials instead of `app_user` — is deferred to Phase 5. The design point: the adapter's connection config resolution could accept an optional credential overlay from a database.yml entry (e.g., `:db_manager`), following CampusESP's pattern where `db_manager` is a separate config with elevated credentials.
 
 ### Thread Coordination
 
@@ -260,11 +243,7 @@ New config options added in Phase 4:
 ```ruby
 Apartment.configure do |c|
   # Migrator
-  c.migration_db_config = :db_manager   # Symbol — database.yml config name for DDL credentials (nil = use tenant's own)
   c.parallel_migration_threads = 8      # Integer — 0 = sequential (default)
-
-  # Schema cache
-  c.schema_cache_per_tenant = false      # Boolean — per-tenant cache files vs single canonical
 
   # PostgreSQL-specific (already exists in PostgresqlConfig)
   c.configure_postgres do |pg|
@@ -273,13 +252,12 @@ Apartment.configure do |c|
 end
 ```
 
-**New config keys:** `migration_db_config`, `schema_cache_per_tenant`. Both added to `Config` with validation in `validate!`:
-- `migration_db_config`: must be `nil` or a Symbol matching a key in `ActiveRecord::Base.configurations` for the current environment. Validated eagerly at configure time to fail fast rather than during pool creation.
-- `schema_cache_per_tenant`: boolean, default `false`.
-
 **Removed from Config:** `parallel_strategy` and `VALID_PARALLEL_STRATEGIES` are removed. The `parallel_migration_threads` attribute (already exists, default `0`) is the sole parallelism control. Threads are the only parallelism primitive.
 
-Designed-in but deferred to Phase 5: `app_role` (PostgreSQL RBAC privilege grants on tenant create).
+**Deferred to Phase 5:**
+- `migration_db_config` — Symbol referencing a database.yml config for DDL credentials (e.g., `:db_manager`). Requires adapter-level support for credential overlay within `Tenant.switch`.
+- `schema_cache_per_tenant` — Boolean for per-tenant cache files vs single canonical.
+- `app_role` — PostgreSQL RBAC privilege grants on tenant create.
 
 ## PendingMigrationError
 
@@ -293,12 +271,12 @@ Deferred to Phase 5 (runtime concern, not a Migrator concern). Requires adding `
 
 All Migrator core logic testable with mocks/stubs:
 
-- Config resolution and credential overlay
 - Thread coordination (work queue, sequential mode, empty tenant list)
 - Result tracking (`MigrationRun#success?`, `#summary`, all status states)
-- Pool lifecycle (create on demand, disconnect after run)
-- Schema dump dispatch (`:schema_rb` vs `:sql`, prefix stripping for `schema.rb` only)
-- Schema cache modes (shared vs per-tenant, generation skipped when unconfigured)
+- Tenant switching (verifies `Tenant.switch` called for each tenant)
+- Advisory lock disabling (verifies `@advisory_locks_enabled` set on leased connection)
+- Primary abort on failure (verifies early return, tenants not attempted)
+- Schema dumper prefix stripping and version gating
 - Failure isolation (one tenant's failure doesn't halt others)
 
 ### Integration tests (real databases)

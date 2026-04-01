@@ -12,7 +12,7 @@ module Apartment
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
     attr_reader :tenant_strategy, :postgres_config, :mysql_config,
-                :migration_db_config, :environmentify_strategy
+                :environmentify_strategy
 
     attr_accessor :tenants_provider, :default_tenant, :excluded_models,
                   :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
@@ -23,7 +23,7 @@ module Apartment
                   :tenant_not_found_handler, :active_record_log,
                   :shard_key_prefix
 
-    def initialize # rubocop:disable Metrics/AbcSize
+    def initialize
       @tenant_strategy = nil
       @tenants_provider = nil
       @default_tenant = nil
@@ -36,7 +36,6 @@ module Apartment
       @schema_load_strategy = nil
       @schema_file = nil
       @parallel_migration_threads = 0
-      @migration_db_config = nil
       @environmentify_strategy = nil
       @elevator = nil
       @elevator_options = {}
@@ -54,15 +53,6 @@ module Apartment
       end
 
       @tenant_strategy = strategy
-    end
-
-    def migration_db_config=(value)
-      unless value.nil? || value.is_a?(Symbol)
-        raise(ConfigurationError, 'migration_db_config must be nil or a Symbol referencing a database.yml config, ' \
-                                  "got: #{value.inspect}")
-      end
-
-      @migration_db_config = value
     end
 
     def environmentify_strategy=(strategy)

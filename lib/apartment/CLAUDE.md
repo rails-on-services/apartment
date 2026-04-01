@@ -79,7 +79,7 @@ Three hooks in Rails boot order:
 
 ### migrator.rb — Migration Orchestrator
 
-`Apartment::Migrator` runs migrations across all tenants with optional thread-based parallelism. Delegates to `Apartment::Tenant.switch` for each tenant — the `ConnectionHandling` patch routes `AR::Base.connection_pool` to the tenant's pool, so Rails' migration machinery (which hardcodes `AR::Base.lease_connection`) uses the correct connection automatically. No standalone pools or handler swaps. `Result` (Data.define) tracks per-tenant success/failure/skip. `MigrationRun` aggregates results with `#success?`, `#summary`. Primary migration aborts the run on failure (tenants are never touched). Constructor accepts `threads:` (0=sequential) and `migration_db_config:` (Symbol referencing database.yml config for DDL credentials).
+`Apartment::Migrator` runs migrations across all tenants with optional thread-based parallelism. Delegates to `Apartment::Tenant.switch` for each tenant — the `ConnectionHandling` patch routes `AR::Base.connection_pool` to the tenant's pool, so Rails' migration machinery (which hardcodes `AR::Base.lease_connection`) uses the correct connection automatically. No standalone pools or handler swaps. Disables PG advisory locks for tenant migrations (database-wide locks serialize parallel execution; see issue #298). `Result` (Data.define) tracks per-tenant success/failure/skip. `MigrationRun` aggregates results with `#success?`, `#summary`. Primary migration aborts the run on failure (tenants are never touched). Constructor accepts `threads:` (0=sequential). RBAC credential separation (`migration_db_config`) is deferred to Phase 5.
 
 ### schema_dumper_patch.rb — Rails 8.1 Schema Fix
 

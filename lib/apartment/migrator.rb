@@ -37,11 +37,8 @@ module Apartment
       end
     end
 
-    CREDENTIAL_KEYS = %i[username password host].freeze
-
-    def initialize(threads: 0, migration_db_config: nil)
+    def initialize(threads: 0)
       @threads = threads
-      @migration_db_config = migration_db_config
     end
 
     def run # rubocop:disable Metrics/MethodLength
@@ -130,7 +127,10 @@ module Apartment
           )
         end
 
-        pool.with_connection { |conn| conn.instance_variable_set(:@advisory_locks_enabled, false) }
+        # Disable advisory locks on the leased connection. lease_connection
+        # returns the same object for the current thread, so the flag is
+        # still set when context.migrate checks advisory_locks_enabled?.
+        ActiveRecord::Base.lease_connection.instance_variable_set(:@advisory_locks_enabled, false)
         raw_versions = context.migrate
         versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
 
@@ -174,32 +174,6 @@ module Apartment
       raise(fatal_errors.first) if fatal_errors.any?
 
       results.to_a
-    end
-
-    def resolve_migration_db_config
-      return nil if @migration_db_config.nil?
-
-      env_name = defined?(Rails) ? Rails.env : 'default_env'
-      db_config = ActiveRecord::Base.configurations.configs_for(
-        env_name: env_name, name: @migration_db_config.to_s
-      )
-
-      unless db_config
-        raise(ConfigurationError,
-              "No database configuration found for env_name: #{env_name}, name: #{@migration_db_config}")
-      end
-
-      db_config.configuration_hash
-    end
-
-    # Overlay migration credentials onto a tenant's base connection config.
-    # base_config has string keys (from adapter), migration_config has symbol keys
-    # (from configuration_hash). We normalize the overlay to string keys.
-    def resolve_migration_config(base_config, migration_config)
-      return base_config unless migration_config
-
-      overlay = migration_config.slice(*CREDENTIAL_KEYS).compact
-      base_config.merge(overlay.transform_keys(&:to_s))
     end
 
     def monotonic_now

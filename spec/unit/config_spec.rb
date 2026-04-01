@@ -16,7 +16,6 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.seed_after_create).to(be(false)) }
     it { expect(config.seed_data_file).to(be_nil) }
     it { expect(config.parallel_migration_threads).to(eq(0)) }
-    it { expect(config.migration_db_config).to(be_nil) }
     it { expect(config.environmentify_strategy).to(be_nil) }
     it { expect(config.elevator).to(be_nil) }
     it { expect(config.elevator_options).to(eq({})) }
@@ -38,23 +37,6 @@ RSpec.describe(Apartment::Config) do
       expect { config.tenant_strategy = :invalid }.to(raise_error(
                                                         Apartment::ConfigurationError, /Invalid tenant_strategy/
                                                       ))
-    end
-  end
-
-  describe '#migration_db_config=' do
-    it 'accepts nil' do
-      expect { config.migration_db_config = nil }.not_to(raise_error)
-    end
-
-    it 'accepts a symbol' do
-      expect { config.migration_db_config = :primary }.not_to(raise_error)
-      expect(config.migration_db_config).to(eq(:primary))
-    end
-
-    it 'rejects a string' do
-      expect { config.migration_db_config = 'primary' }.to(
-        raise_error(Apartment::ConfigurationError, /migration_db_config must be nil or a Symbol/)
-      )
     end
   end
 

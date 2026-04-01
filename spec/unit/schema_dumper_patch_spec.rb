@@ -29,10 +29,14 @@ RSpec.describe(Apartment::SchemaDumperPatch) do
   end
 
   describe '.should_patch?' do
-    it 'returns false when ActiveRecord::SchemaDumper is not defined' do
-      allow(described_class).to(receive(:defined?).with(ActiveRecord::SchemaDumper).and_return(false))
-      # Can't easily test this without undefining the class; just verify the method exists
-      expect(described_class).to(respond_to(:should_patch?))
+    it 'returns true when Rails >= 8.1 and SchemaDumper is defined' do
+      allow(ActiveRecord).to(receive(:gem_version).and_return(Gem::Version.new('8.1.0')))
+      expect(described_class.should_patch?).to(be(true))
+    end
+
+    it 'returns false when Rails < 8.1' do
+      allow(ActiveRecord).to(receive(:gem_version).and_return(Gem::Version.new('8.0.5')))
+      expect(described_class.should_patch?).to(be(false))
     end
   end
 end

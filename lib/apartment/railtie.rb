@@ -51,21 +51,17 @@ module Apartment
       load File.expand_path('tasks/v4.rake', __dir__)
 
       # Enhance db:migrate:DBNAME to also run apartment:migrate.
-      # Wrapped in begin/rescue to handle cases where the database
-      # doesn't exist yet (db:create).
-      begin
-        primary_db_name = ActiveRecord::Base.configurations
-          .configs_for(env_name: Rails.env)
-          .find { |c| c.name == 'primary' }
-          &.name || 'primary'
+      # configs_for and task_defined? are pure config/rake lookups — no DB
+      # connection is made, so no rescue is needed.
+      primary_db_name = ActiveRecord::Base.configurations
+        .configs_for(env_name: Rails.env)
+        .find { |c| c.name == 'primary' }
+        &.name || 'primary'
 
-        if Rake::Task.task_defined?("db:migrate:#{primary_db_name}")
-          Rake::Task["db:migrate:#{primary_db_name}"].enhance do
-            Rake::Task['apartment:migrate'].invoke if Rake::Task.task_defined?('apartment:migrate')
-          end
+      if Rake::Task.task_defined?("db:migrate:#{primary_db_name}")
+        Rake::Task["db:migrate:#{primary_db_name}"].enhance do
+          Rake::Task['apartment:migrate'].invoke if Rake::Task.task_defined?('apartment:migrate')
         end
-      rescue ActiveRecord::NoDatabaseError
-        # Database doesn't exist yet (e.g., during db:create). Skip enhancement.
       end
     end
 

@@ -4,6 +4,7 @@ namespace :apartment do
   desc 'Create all tenant schemas/databases from tenants_provider'
   task create: :environment do
     tenants = Apartment.config.tenants_provider.call
+    failed = []
     tenants.each do |tenant|
       puts "Creating tenant: #{tenant}"
       Apartment::Tenant.create(tenant)
@@ -11,7 +12,9 @@ namespace :apartment do
       puts '  already exists, skipping'
     rescue StandardError => e
       warn "  FAILED: #{e.message}"
+      failed << tenant
     end
+    abort("apartment:create failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
 
   desc 'Drop a tenant schema/database'
@@ -26,12 +29,8 @@ namespace :apartment do
     require 'apartment/migrator'
 
     threads = Apartment.config.parallel_migration_threads
-    migration_db_config = Apartment.config.migration_db_config
 
-    migrator = Apartment::Migrator.new(
-      threads: threads,
-      migration_db_config: migration_db_config
-    )
+    migrator = Apartment::Migrator.new(threads: threads)
 
     result = migrator.run
     puts result.summary
@@ -47,18 +46,22 @@ namespace :apartment do
   desc 'Seed all tenants'
   task seed: :environment do
     tenants = Apartment.config.tenants_provider.call
+    failed = []
     tenants.each do |tenant|
       puts "Seeding tenant: #{tenant}"
       Apartment::Tenant.seed(tenant)
     rescue StandardError => e
       warn "  FAILED: #{e.message}"
+      failed << tenant
     end
+    abort("apartment:seed failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
 
   desc 'Rollback migrations for all tenants'
   task :rollback, [:step] => :environment do |_t, args|
     step = (args[:step] || 1).to_i
     tenants = Apartment.config.tenants_provider.call
+    failed = []
     tenants.each do |tenant|
       puts "Rolling back tenant: #{tenant} (#{step} step(s))"
       Apartment::Tenant.switch(tenant) do
@@ -66,6 +69,8 @@ namespace :apartment do
       end
     rescue StandardError => e
       warn "  FAILED: #{e.message}"
+      failed << tenant
     end
+    abort("apartment:rollback failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
 end
