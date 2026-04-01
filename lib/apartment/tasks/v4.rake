@@ -74,4 +74,15 @@ namespace :apartment do
     end
     abort("apartment:rollback failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
+
+  namespace :schema do
+    namespace :cache do
+      desc 'Dump schema cache for each tenant'
+      task dump: :environment do
+        require 'apartment/schema_cache'
+        paths = Apartment::SchemaCache.dump_all
+        paths.each { |p| puts "Dumped: #{p}" }
+      end
+    end
+  end
 end
