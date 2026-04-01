@@ -29,13 +29,14 @@ namespace :apartment do
     require 'apartment/migrator'
 
     threads = Apartment.config.parallel_migration_threads
+    version = ENV['VERSION']&.to_i
 
-    migrator = Apartment::Migrator.new(threads: threads)
+    migrator = Apartment::Migrator.new(threads: threads, version: version)
 
     result = migrator.run
     puts result.summary
 
-    abort "apartment:migrate failed for #{result.failed.size} tenant(s)" unless result.success?
+    abort("apartment:migrate failed for #{result.failed.size} tenant(s)") unless result.success?
 
     # Schema dump (respects ActiveRecord.dump_schema_after_migration)
     if ActiveRecord.dump_schema_after_migration && Rake::Task.task_defined?('db:schema:dump')

@@ -234,7 +234,7 @@ The enhancement must not interfere with other database configs (e.g., `db:migrat
 
 CampusESP uses `schema:pristine` and `schema:baseline` Thor tasks for schema management. These operate on a separate `ddl_workspace` database config and use `db:migrate:ddl_workspace`. The Migrator's `db:migrate:primary` enhancement is scoped to the primary config only; these tasks are unaffected.
 
-The baseline loader migration uses `connection_db_config` to resolve credentials for `psql`. When running through the Migrator with `migration_db_config: :db_manager`, the pool's config flows through to `ActiveRecord::Base.connection_db_config`, so `psql` gets the elevated credentials.
+The baseline loader migration uses `connection_db_config` to resolve credentials for `psql`. Phase 5 will add `migration_db_config` support so the Migrator can use `db_manager` credentials for DDL operations, matching the pattern these Thor tasks already use.
 
 ## Configuration
 
@@ -284,11 +284,14 @@ All Migrator core logic testable with mocks/stubs:
 Against PostgreSQL (schema-based) and SQLite (file-based):
 
 - End-to-end migrate: create tenants, add migration, run Migrator, verify table exists in each schema
-- RBAC flow: `migration_db_config: :db_manager`, verify DDL runs with elevated credentials, runtime pools use `app_user` (PostgreSQL only)
-- Parallel correctness: 4+ tenants with `threads: 4`, verify no cross-tenant leakage, all tenants migrated
+- Parallel correctness: 4+ tenants with `threads: 2`, verify no cross-tenant leakage, all tenants migrated
 - Partial failure: one tenant has broken migration, others succeed, verify `MigrationRun` reflects both
 - Schema dump: run Migrator, verify `schema.rb` has no `public.` prefix; verify `structure.sql` is clean
 - Idempotency: run Migrator twice, second run returns all `:skipped` results
+- Version targeting: `VERSION=` env var passed through to `context.migrate`
+
+**Deferred to Phase 5:**
+- RBAC flow: `migration_db_config: :db_manager`, verify DDL runs with elevated credentials, runtime pools use `app_user` (PostgreSQL only)
 
 ### Out of scope
 

@@ -37,8 +37,9 @@ module Apartment
       end
     end
 
-    def initialize(threads: 0)
+    def initialize(threads: 0, version: nil)
       @threads = threads
+      @version = version
     end
 
     def run # rubocop:disable Metrics/MethodLength
@@ -80,14 +81,14 @@ module Apartment
 
       context = ActiveRecord::Base.connection_pool.migration_context
 
-      unless context.needs_migration?
+      unless @version || context.needs_migration?
         return Result.new(
           tenant: tenant_name, status: :skipped,
           duration: monotonic_now - start, error: nil, versions_run: []
         )
       end
 
-      raw_versions = context.migrate
+      raw_versions = context.migrate(@version)
       versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
 
       Instrumentation.instrument(:migrate_tenant, tenant: tenant_name, versions: versions)
@@ -117,29 +118,26 @@ module Apartment
       start = monotonic_now
 
       Apartment::Tenant.switch(tenant) do
-        pool = ActiveRecord::Base.connection_pool
-        context = pool.migration_context
+        context = ActiveRecord::Base.connection_pool.migration_context
 
-        unless context.needs_migration?
+        unless @version || context.needs_migration?
           return Result.new(
             tenant: tenant, status: :skipped,
             duration: monotonic_now - start, error: nil, versions_run: []
           )
         end
 
-        # Disable advisory locks on the leased connection. lease_connection
-        # returns the same object for the current thread, so the flag is
-        # still set when context.migrate checks advisory_locks_enabled?.
-        ActiveRecord::Base.lease_connection.instance_variable_set(:@advisory_locks_enabled, false)
-        raw_versions = context.migrate
-        versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
+        with_advisory_locks_disabled do
+          raw_versions = context.migrate(@version)
+          versions = Array(raw_versions).map { _1.respond_to?(:version) ? _1.version : _1 }
 
-        Instrumentation.instrument(:migrate_tenant, tenant: tenant, versions: versions)
+          Instrumentation.instrument(:migrate_tenant, tenant: tenant, versions: versions)
 
-        Result.new(
-          tenant: tenant, status: :success,
-          duration: monotonic_now - start, error: nil, versions_run: versions
-        )
+          Result.new(
+            tenant: tenant, status: :success,
+            duration: monotonic_now - start, error: nil, versions_run: versions
+          )
+        end
       end
     rescue StandardError => e
       Result.new(
@@ -174,6 +172,18 @@ module Apartment
       raise(fatal_errors.first) if fatal_errors.any?
 
       results.to_a
+    end
+
+    # Disable advisory locks on the leased connection for the duration of the
+    # block, then restore the original value. lease_connection returns the same
+    # connection object for the current thread (fiber-local via IsolatedExecutionState).
+    def with_advisory_locks_disabled
+      conn = ActiveRecord::Base.lease_connection
+      original = conn.instance_variable_get(:@advisory_locks_enabled)
+      conn.instance_variable_set(:@advisory_locks_enabled, false)
+      yield
+    ensure
+      conn&.instance_variable_set(:@advisory_locks_enabled, original)
     end
 
     def monotonic_now

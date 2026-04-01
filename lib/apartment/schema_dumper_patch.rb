@@ -17,7 +17,13 @@ module Apartment
     def self.apply!
       return unless should_patch?
 
-      ActiveRecord::SchemaDumper.prepend(DumperOverride)
+      # Rails 8.1+ adds schema-qualified names via `relation_name` in the
+      # PG-specific SchemaDumper (PR #50020). The prefix is applied to tables,
+      # foreign keys, enums, and indexes — all through `relation_name`. We
+      # intercept that single method rather than patching each call site.
+      return unless defined?(ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper)
+
+      ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper.prepend(DumperOverride)
     end
 
     def self.should_patch?
@@ -29,13 +35,13 @@ module Apartment
     module DumperOverride
       private
 
-      def table(table_name, stream)
+      def relation_name(name)
+        result = super
         pg_config = Apartment.config&.postgres_config
-        return super unless pg_config
+        return result unless pg_config
 
         include_schemas = pg_config.include_schemas_in_dump || []
-        stripped = SchemaDumperPatch.strip_public_prefix(table_name, include_schemas: include_schemas)
-        super(stripped, stream)
+        SchemaDumperPatch.strip_public_prefix(result, include_schemas: include_schemas)
       end
     end
   end

@@ -28,14 +28,6 @@ RSpec.describe(Apartment::Migrator::Result) do
 end
 
 RSpec.describe(Apartment::Migrator::MigrationRun) do
-  subject(:run) do
-    described_class.new(
-      results: [success_result, failed_result, skipped_result],
-      total_duration: 2.5,
-      threads: 4
-    )
-  end
-
   let(:success_result) do
     Apartment::Migrator::Result.new(
       tenant: 'acme', status: :success, duration: 1.0, error: nil, versions_run: [1]
@@ -53,48 +45,73 @@ RSpec.describe(Apartment::Migrator::MigrationRun) do
     )
   end
 
-  describe '#succeeded' do
-    it 'returns only success results' do
-      expect(run.succeeded.map(&:tenant)).to(eq(['acme']))
-    end
-  end
-
-  describe '#failed' do
-    it 'returns only failed results' do
-      expect(run.failed.map(&:tenant)).to(eq(['broken']))
-    end
-  end
-
-  describe '#skipped' do
-    it 'returns only skipped results' do
-      expect(run.skipped.map(&:tenant)).to(eq(['current']))
-    end
-  end
-
-  describe '#success?' do
-    it 'returns false when there are failures' do
-      expect(run.success?).to(be(false))
-    end
-
-    it 'returns true when no failures' do
-      all_good = described_class.new(
-        results: [success_result, skipped_result], total_duration: 1.0, threads: 2
+  describe 'with mixed results' do
+    subject(:run) do
+      described_class.new(
+        results: [success_result, failed_result, skipped_result],
+        total_duration: 2.5,
+        threads: 4
       )
-      expect(all_good.success?).to(be(true))
+    end
+
+    describe '#succeeded' do
+      it 'returns only success results' do
+        expect(run.succeeded.map(&:tenant)).to(eq(['acme']))
+      end
+    end
+
+    describe '#failed' do
+      it 'returns only failed results' do
+        expect(run.failed.map(&:tenant)).to(eq(['broken']))
+      end
+    end
+
+    describe '#skipped' do
+      it 'returns only skipped results' do
+        expect(run.skipped.map(&:tenant)).to(eq(['current']))
+      end
+    end
+
+    describe '#success?' do
+      it 'returns false when there are failures' do
+        expect(run.success?).to(be(false))
+      end
+    end
+
+    describe '#summary' do
+      it 'includes counts, timing, and error details' do
+        summary = run.summary
+        expect(summary).to(include('3 tenants'))
+        expect(summary).to(include('2.5s'))
+        expect(summary).to(include('1 succeeded'))
+        expect(summary).to(include('1 failed'))
+        expect(summary).to(include('1 skipped'))
+        expect(summary).to(include('broken'))
+        expect(summary).to(include('StandardError'))
+        expect(summary).to(include('boom'))
+      end
     end
   end
 
-  describe '#summary' do
-    it 'includes counts and timing' do
+  describe 'with all success' do
+    subject(:run) do
+      described_class.new(
+        results: [success_result, skipped_result],
+        total_duration: 1.0,
+        threads: 2
+      )
+    end
+
+    it '#success? returns true' do
+      expect(run.success?).to(be(true))
+    end
+
+    it '#summary omits failed section' do
       summary = run.summary
-      expect(summary).to(include('3 tenants'))
-      expect(summary).to(include('2.5s'))
+      expect(summary).to(include('2 tenants'))
       expect(summary).to(include('1 succeeded'))
-      expect(summary).to(include('1 failed'))
       expect(summary).to(include('1 skipped'))
-      expect(summary).to(include('broken'))
-      expect(summary).to(include('StandardError'))
-      expect(summary).to(include('boom'))
+      expect(summary).not_to(include('failed'))
     end
   end
 end
@@ -109,14 +126,16 @@ RSpec.describe(Apartment::Migrator) do
   end
 
   describe '#initialize' do
-    it 'defaults to 0 threads' do
+    it 'defaults to 0 threads and nil version' do
       migrator = described_class.new
       expect(migrator.instance_variable_get(:@threads)).to(eq(0))
+      expect(migrator.instance_variable_get(:@version)).to(be_nil)
     end
 
-    it 'accepts threads parameter' do
-      migrator = described_class.new(threads: 8)
+    it 'accepts threads and version parameters' do
+      migrator = described_class.new(threads: 8, version: 20_260_401_000_000)
       expect(migrator.instance_variable_get(:@threads)).to(eq(8))
+      expect(migrator.instance_variable_get(:@version)).to(eq(20_260_401_000_000))
     end
   end
 
@@ -128,13 +147,11 @@ RSpec.describe(Apartment::Migrator) do
 
     before do
       allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
+      allow(mock_connection).to(receive(:instance_variable_get).and_return(true))
       allow(mock_connection).to(receive(:instance_variable_set))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
-
-      # Tenant.switch yields the block with Current.tenant set.
-      # In unit tests, we stub it to just yield (no real connection swap).
       allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
     end
 
@@ -166,8 +183,6 @@ RSpec.describe(Apartment::Migrator) do
       call_count = 0
       allow(mock_migration_context).to(receive(:migrate)) do
         call_count += 1
-
-        # Fail a tenant migration (call_count > 1 means primary already ran)
         raise(StandardError, 'boom') if call_count == 2
 
         []
@@ -197,11 +212,12 @@ RSpec.describe(Apartment::Migrator) do
       expect(Apartment::Tenant).to(have_received(:switch).with('beta'))
     end
 
-    it 'disables advisory locks for tenant migrations' do
+    it 'disables advisory locks for tenant migrations and restores afterward' do
       migrator.run
-      # lease_connection is called for each tenant (not primary)
       expect(mock_connection).to(have_received(:instance_variable_set)
         .with(:@advisory_locks_enabled, false).at_least(:twice))
+      expect(mock_connection).to(have_received(:instance_variable_set)
+        .with(:@advisory_locks_enabled, true).at_least(:twice))
     end
 
     it 'handles empty tenant list' do
@@ -212,6 +228,23 @@ RSpec.describe(Apartment::Migrator) do
       end
       result = migrator.run
       expect(result.results.size).to(eq(1))
+    end
+
+    context 'with target version' do
+      let(:migrator) { described_class.new(threads: 0, version: 20_260_401_000_000) }
+
+      it 'passes version to migrate' do
+        expect(mock_migration_context).to(receive(:migrate).with(20_260_401_000_000).at_least(:once).and_return([]))
+        migrator.run
+      end
+
+      it 'does not skip based on needs_migration? when version is set' do
+        allow(mock_migration_context).to(receive(:needs_migration?).and_return(false))
+        result = migrator.run
+        # With a version target, migrate is called even if needs_migration? is false
+        # (could be a rollback to an older version)
+        expect(result.results.map(&:status)).to(all(eq(:success)))
+      end
     end
   end
 
@@ -229,6 +262,7 @@ RSpec.describe(Apartment::Migrator) do
       end
 
       allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
+      allow(mock_connection).to(receive(:instance_variable_get).and_return(true))
       allow(mock_connection).to(receive(:instance_variable_set))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
@@ -238,7 +272,6 @@ RSpec.describe(Apartment::Migrator) do
 
     it 'migrates all tenants plus primary' do
       result = migrator.run
-      # 8 tenants + 1 primary = 9
       expect(result.results.size).to(eq(9))
     end
 
