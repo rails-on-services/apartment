@@ -43,8 +43,11 @@ module Apartment
     # Minimal duck type satisfying PoolConfig's connection_class/connection_descriptor
     # interface across Rails 7.2–8.1. Avoids registering ephemeral migration pools
     # in the global ConnectionHandler.
+    # Minimal duck type satisfying the connection_class/connection_descriptor
+    # contract across Rails 7.2–8.1 (ConnectionHandler::ConnectionDescriptor).
     MigrationPoolOwner = Struct.new(:name) do
       def primary_class? = false
+      def current_preventing_writes = false # rubocop:disable Naming/PredicateMethod
     end
 
     def initialize(threads: 0, migration_db_config: nil)
