@@ -39,6 +39,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       config.tenant_strategy = :schema
       config.tenants_provider = -> { %w[acme widgets] }
       config.default_tenant = 'public'
+      config.check_pending_migrations = false
     end
     Apartment.adapter = mock_adapter
   end
@@ -112,6 +113,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         shard_key = :"#{Apartment.config.shard_key_prefix}_acme:#{role}"
         registered = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
           'ActiveRecord::Base',
+          role: role,
           shard: shard_key
         )
         expect(registered).not_to(be_nil)
@@ -137,7 +139,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         # Verify they exist
         %w[acme widgets].each do |t|
           expect(ActiveRecord::Base.connection_handler.retrieve_connection_pool(
-                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}:#{role}"
+                   'ActiveRecord::Base', role: role, shard: :"#{prefix}_#{t}:#{role}"
                  )).not_to(be_nil)
         end
 
@@ -147,7 +149,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         # Verify they're gone
         %w[acme widgets].each do |t|
           expect(ActiveRecord::Base.connection_handler.retrieve_connection_pool(
-                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}:#{role}"
+                   'ActiveRecord::Base', role: role, shard: :"#{prefix}_#{t}:#{role}"
                  )).to(be_nil)
         end
       end
@@ -204,6 +206,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
           config.tenant_strategy = :schema
           config.tenants_provider = -> { ['my-tenant'] }
           config.default_tenant = 'public'
+          config.check_pending_migrations = false
         end
         Apartment.adapter = mock_adapter_hyph
       end
@@ -247,6 +250,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
           config.tenants_provider = -> { %w[acme] }
           config.default_tenant = 'public'
           config.shard_key_prefix = 'myapp'
+          config.check_pending_migrations = false
         end
         Apartment.adapter = mock_adapter
       end
