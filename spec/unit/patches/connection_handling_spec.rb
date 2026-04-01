@@ -108,7 +108,8 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment::Current.tenant = 'acme'
         ActiveRecord::Base.connection_pool
 
-        shard_key = :"#{Apartment.config.shard_key_prefix}_acme"
+        role = ActiveRecord::Base.current_role
+        shard_key = :"#{Apartment.config.shard_key_prefix}_acme:#{role}"
         registered = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
           'ActiveRecord::Base',
           shard: shard_key
@@ -131,10 +132,12 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
 
         prefix = Apartment.config.shard_key_prefix
 
+        role = ActiveRecord::Base.current_role
+
         # Verify they exist
         %w[acme widgets].each do |t|
           expect(ActiveRecord::Base.connection_handler.retrieve_connection_pool(
-                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}"
+                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}:#{role}"
                  )).not_to(be_nil)
         end
 
@@ -144,7 +147,7 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         # Verify they're gone
         %w[acme widgets].each do |t|
           expect(ActiveRecord::Base.connection_handler.retrieve_connection_pool(
-                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}"
+                   'ActiveRecord::Base', shard: :"#{prefix}_#{t}:#{role}"
                  )).to(be_nil)
         end
       end
@@ -163,7 +166,8 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       it 'registers the pool in PoolManager' do
         Apartment::Current.tenant = 'acme'
         ActiveRecord::Base.connection_pool
-        expect(Apartment.pool_manager.tracked?('acme')).to(be(true))
+        role = ActiveRecord::Base.current_role
+        expect(Apartment.pool_manager.tracked?("acme:#{role}")).to(be(true))
       end
 
       it 'does not register the default tenant in PoolManager' do
@@ -214,7 +218,8 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       it 'pool is tracked in PoolManager under the hyphenated key' do
         Apartment::Current.tenant = 'my-tenant'
         ActiveRecord::Base.connection_pool
-        expect(Apartment.pool_manager.tracked?('my-tenant')).to(be(true))
+        role = ActiveRecord::Base.current_role
+        expect(Apartment.pool_manager.tracked?("my-tenant:#{role}")).to(be(true))
       end
     end
 
@@ -223,10 +228,11 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment::Current.tenant = 'acme'
         ActiveRecord::Base.connection_pool
 
-        shard_key = :"#{Apartment.config.shard_key_prefix}_acme"
+        role = ActiveRecord::Base.current_role
+        shard_key = :"#{Apartment.config.shard_key_prefix}_acme:#{role}"
         pool = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
           'ActiveRecord::Base',
-          role: ActiveRecord::Base.current_role,
+          role: role,
           shard: shard_key
         )
         expect(pool).not_to(be_nil)
@@ -249,10 +255,11 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment::Current.tenant = 'acme'
         ActiveRecord::Base.connection_pool
 
+        role = ActiveRecord::Base.current_role
         registered = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
           'ActiveRecord::Base',
-          role: ActiveRecord::Base.current_role,
-          shard: :myapp_acme
+          role: role,
+          shard: :"myapp_acme:#{role}"
         )
         expect(registered).not_to(be_nil)
       end
@@ -261,10 +268,11 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment::Current.tenant = 'acme'
         ActiveRecord::Base.connection_pool
 
+        role = ActiveRecord::Base.current_role
         registered = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
           'ActiveRecord::Base',
-          role: ActiveRecord::Base.current_role,
-          shard: :apartment_acme
+          role: role,
+          shard: :"apartment_acme:#{role}"
         )
         expect(registered).to(be_nil)
       end
