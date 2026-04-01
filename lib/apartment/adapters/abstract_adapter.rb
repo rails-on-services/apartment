@@ -64,7 +64,11 @@ module Apartment
           rescue StandardError => e
             warn "[Apartment] Pool disconnect failed for '#{pool_key}': #{e.class}: #{e.message}"
           end
-          deregister_shard_from_ar_handler(pool_key)
+          begin
+            deregister_shard_from_ar_handler(pool_key)
+          rescue StandardError => e
+            warn "[Apartment] Shard deregistration failed for '#{pool_key}': #{e.class}: #{e.message}"
+          end
         end
         Instrumentation.instrument(:drop, tenant: tenant)
       end

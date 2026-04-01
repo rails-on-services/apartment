@@ -14,7 +14,8 @@ class TestAdapter < Apartment::Adapters::AbstractAdapter
   end
 
   def resolve_connection_config(tenant, base_config: nil)
-    { adapter: 'postgresql', database: tenant }
+    config = base_config || { 'adapter' => 'postgresql', 'database' => tenant }
+    config.merge('database' => tenant)
   end
 
   protected
@@ -85,7 +86,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
   describe '#validated_connection_config' do
     it 'returns the resolved config for valid tenant names' do
       result = adapter.validated_connection_config('acme')
-      expect(result).to(eq(adapter: 'postgresql', database: 'acme'))
+      expect(result).to(eq('adapter' => 'postgresql', 'database' => 'acme', 'host' => 'localhost'))
     end
 
     it 'raises ConfigurationError for invalid tenant names' do
@@ -100,7 +101,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
 
     it 'falls back to base_config when base_config_override is nil' do
       result = adapter.validated_connection_config('acme', base_config_override: nil)
-      expect(result).to(eq(adapter: 'postgresql', database: 'acme'))
+      expect(result).to(eq('adapter' => 'postgresql', 'database' => 'acme', 'host' => 'localhost'))
     end
   end
 
@@ -111,7 +112,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
 
     it 'returns a config hash in the concrete subclass' do
-      expect(adapter.resolve_connection_config('t1')).to(eq(adapter: 'postgresql', database: 't1'))
+      expect(adapter.resolve_connection_config('t1')).to(eq('adapter' => 'postgresql', 'database' => 't1'))
     end
   end
 
@@ -315,7 +316,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
 
       reconfigure(excluded_models: ['GlobalUser'])
 
-      expected_config = { adapter: 'postgresql', database: 'public' }
+      expected_config = { 'adapter' => 'postgresql', 'database' => 'public' }
       expect(model_class).to(receive(:establish_connection)) do |arg|
         expect(arg).to(eq(expected_config))
       end
