@@ -22,8 +22,12 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
     before do
       V4IntegrationHelper.ensure_test_database! unless V4IntegrationHelper.sqlite?
       config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
-      # Bump pool size so 10 concurrent threads can share a single tenant pool
+      # Bump pool size so 10 concurrent threads can share a single tenant pool.
+      # Re-establish default connection with bumped pool so role-aware
+      # ConnectionHandling (which resolves base config from the default pool)
+      # propagates the larger pool size to tenant pools.
       config = config.merge('pool' => 15)
+      ActiveRecord::Base.establish_connection(config)
       V4IntegrationHelper.create_test_table!
 
       stub_const('Widget', Class.new(ActiveRecord::Base) { self.table_name = 'widgets' })
