@@ -10,8 +10,9 @@ module Apartment
     # to the environmentified tenant name. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class Mysql2Adapter < AbstractAdapter
-      def resolve_connection_config(tenant)
-        base_config.merge('database' => environmentify(tenant))
+      def resolve_connection_config(tenant, base_config: nil)
+        config = base_config || send(:base_config)
+        config.merge('database' => environmentify(tenant))
       end
 
       protected

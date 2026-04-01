@@ -12,11 +12,12 @@ module Apartment
     # Apartment.config.postgres_config. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class PostgresqlSchemaAdapter < AbstractAdapter
-      def resolve_connection_config(tenant)
+      def resolve_connection_config(tenant, base_config: nil)
+        config = base_config || send(:base_config)
         persistent = Apartment.config.postgres_config&.persistent_schemas || []
         search_path = [tenant, *persistent].join(',')
 
-        base_config.merge('schema_search_path' => search_path)
+        config.merge('schema_search_path' => search_path)
       end
 
       protected

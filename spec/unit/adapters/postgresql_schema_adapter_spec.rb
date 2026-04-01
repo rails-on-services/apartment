@@ -154,7 +154,8 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     before do
       allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      allow(pool_manager).to(receive(:remove).and_return(nil))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([]))
+      allow(Apartment).to(receive(:deregister_shard))
     end
 
     it 'executes DROP SCHEMA IF EXISTS CASCADE with quoted tenant name' do
@@ -177,6 +178,30 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
       expect(connection).to(receive(:execute).with('DROP SCHEMA IF EXISTS "acme" CASCADE'))
 
       adapter.drop('acme')
+    end
+  end
+
+  describe '#validated_connection_config with base_config_override' do
+    it 'uses the override host and username instead of adapter base_config' do
+      override_config = {
+        'adapter' => 'postgresql',
+        'host' => 'replica.example.com',
+        'username' => 'readonly',
+        'database' => 'myapp',
+      }
+
+      result = adapter.validated_connection_config('acme', base_config_override: override_config)
+
+      expect(result['host']).to(eq('replica.example.com'))
+      expect(result['username']).to(eq('readonly'))
+      expect(result['schema_search_path']).to(eq('acme'))
+    end
+
+    it 'falls back to adapter base_config when override is nil' do
+      result = adapter.validated_connection_config('acme', base_config_override: nil)
+
+      expect(result['host']).to(eq('localhost'))
+      expect(result['schema_search_path']).to(eq('acme'))
     end
   end
 end

@@ -13,7 +13,7 @@ class TestAdapter < Apartment::Adapters::AbstractAdapter
     @dropped_tenants = []
   end
 
-  def resolve_connection_config(tenant)
+  def resolve_connection_config(tenant, base_config: nil)
     { adapter: 'postgresql', database: tenant }
   end
 
@@ -97,6 +97,11 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       expect { adapter.validated_connection_config('') }
         .to(raise_error(Apartment::ConfigurationError, /cannot be empty/))
     end
+
+    it 'falls back to base_config when base_config_override is nil' do
+      result = adapter.validated_connection_config('acme', base_config_override: nil)
+      expect(result).to(eq(adapter: 'postgresql', database: 'acme'))
+    end
   end
 
   describe '#resolve_connection_config' do
@@ -154,15 +159,17 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       expect(adapter.dropped_tenants).to(eq(['acme']))
     end
 
-    it 'removes the pool from PoolManager' do
+    it 'removes all role-variant pools via remove_tenant on PoolManager' do
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      expect(pool_manager).to(receive(:remove).with('acme').and_return(nil))
+      allow(Apartment).to(receive(:deregister_shard))
+      expect(pool_manager).to(receive(:remove_tenant).with('acme').and_return([]))
       adapter.drop('acme')
     end
 
-    it 'disconnects the pool if it responds to disconnect!' do
+    it 'disconnects each pool returned by remove_tenant' do
       mock_pool = double('Pool', disconnect!: true)
-      allow(pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([['acme:primary', mock_pool]]))
+      allow(Apartment).to(receive(:deregister_shard))
       allow(Apartment::Instrumentation).to(receive(:instrument))
 
       expect(mock_pool).to(receive(:disconnect!))
@@ -171,7 +178,8 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
 
     it 'does not call disconnect! if pool does not respond to it' do
       mock_pool = double('Pool')
-      allow(pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([['acme:primary', mock_pool]]))
+      allow(Apartment).to(receive(:deregister_shard))
       allow(Apartment::Instrumentation).to(receive(:instrument))
 
       # Should not raise
@@ -179,15 +187,20 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
 
     it 'instruments the drop event' do
-      allow(pool_manager).to(receive(:remove).and_return(nil))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([]))
+      allow(Apartment).to(receive(:deregister_shard))
       expect(Apartment::Instrumentation).to(receive(:instrument).with(:drop, tenant: 'acme'))
       adapter.drop('acme')
     end
 
-    it 'deregisters the shard from AR ConnectionHandler' do
+    it 'deregisters each pool_key from AR ConnectionHandler' do
+      mock_pool = double('Pool', disconnect!: true)
+      removed = [['acme:primary', mock_pool], ['acme:replica', mock_pool]]
+      allow(pool_manager).to(receive(:remove_tenant).and_return(removed))
       allow(Apartment::Instrumentation).to(receive(:instrument))
-      allow(Apartment.pool_manager).to(receive(:remove).and_return(nil))
-      expect(Apartment).to(receive(:deregister_shard).with('acme'))
+
+      expect(Apartment).to(receive(:deregister_shard).with('acme:primary'))
+      expect(Apartment).to(receive(:deregister_shard).with('acme:replica'))
       adapter.drop('acme')
     end
 
@@ -195,12 +208,20 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       mock_pool = double('Pool')
       allow(mock_pool).to(receive(:respond_to?).with(:disconnect!).and_return(true))
       allow(mock_pool).to(receive(:disconnect!).and_raise(RuntimeError, 'disconnect boom'))
-      allow(Apartment.pool_manager).to(receive(:remove).and_return(mock_pool))
+      allow(pool_manager).to(receive(:remove_tenant).and_return([['acme:primary', mock_pool]]))
 
-      expect(Apartment).to(receive(:deregister_shard).with('acme'))
+      expect(Apartment).to(receive(:deregister_shard).with('acme:primary'))
       expect(Apartment::Instrumentation).to(receive(:instrument).with(:drop, tenant: 'acme'))
 
       adapter.drop('acme')
+    end
+
+    it 'handles nil pool_manager gracefully' do
+      allow(Apartment).to(receive(:pool_manager).and_return(nil))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+
+      # Should not raise even without a pool_manager
+      expect { adapter.drop('acme') }.not_to(raise_error)
     end
   end
 

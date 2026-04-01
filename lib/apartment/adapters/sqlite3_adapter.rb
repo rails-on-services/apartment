@@ -12,8 +12,10 @@ module Apartment
     # tenant name. SQLite creates the file on first connection, so create_tenant
     # only ensures the directory exists.
     class Sqlite3Adapter < AbstractAdapter
-      def resolve_connection_config(tenant)
-        base_config.merge('database' => database_file(tenant))
+      def resolve_connection_config(tenant, base_config: nil)
+        config = base_config || send(:base_config)
+        db_dir = config['database'] ? File.dirname(config['database']) : 'db'
+        config.merge('database' => File.join(db_dir, "#{environmentify(tenant)}.sqlite3"))
       end
 
       protected
