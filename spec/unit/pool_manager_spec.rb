@@ -122,6 +122,48 @@ RSpec.describe(Apartment::PoolManager) do
     end
   end
 
+  describe '#remove_tenant' do
+    it 'removes all pools for the given tenant prefix' do
+      manager.fetch_or_create('acme:writing') { 'pool_aw' }
+      manager.fetch_or_create('acme:reading') { 'pool_ar' }
+      manager.fetch_or_create('other:writing') { 'pool_ow' }
+
+      removed = manager.remove_tenant('acme')
+
+      expect(removed.map(&:first)).to(contain_exactly('acme:writing', 'acme:reading'))
+      expect(manager.tracked?('acme:writing')).to(be(false))
+      expect(manager.tracked?('acme:reading')).to(be(false))
+      expect(manager.tracked?('other:writing')).to(be(true))
+    end
+
+    it 'returns empty array when no pools match' do
+      manager.fetch_or_create('other:writing') { 'pool_ow' }
+      expect(manager.remove_tenant('acme')).to(eq([]))
+    end
+  end
+
+  describe '#evict_by_role' do
+    it 'removes all pools with the given role suffix' do
+      manager.fetch_or_create('acme:writing') { 'pool_aw' }
+      manager.fetch_or_create('acme:db_manager') { 'pool_am' }
+      manager.fetch_or_create('other:db_manager') { 'pool_om' }
+      manager.fetch_or_create('other:writing') { 'pool_ow' }
+
+      removed = manager.evict_by_role(:db_manager)
+
+      expect(removed.map(&:first)).to(contain_exactly('acme:db_manager', 'other:db_manager'))
+      expect(manager.tracked?('acme:db_manager')).to(be(false))
+      expect(manager.tracked?('other:db_manager')).to(be(false))
+      expect(manager.tracked?('acme:writing')).to(be(true))
+      expect(manager.tracked?('other:writing')).to(be(true))
+    end
+
+    it 'returns empty array when no pools match' do
+      manager.fetch_or_create('acme:writing') { 'pool_aw' }
+      expect(manager.evict_by_role(:db_manager)).to(eq([]))
+    end
+  end
+
   describe 'thread safety' do
     it 'handles concurrent fetch_or_create without duplicates' do
       results = Concurrent::Array.new
