@@ -22,17 +22,17 @@ This means:
 - `connected_to(role: :reading) { Tenant.switch('acme') { ... } }` creates a tenant pool registered under `:reading` but pointing at the primary host, not the replica
 - `connected_to(role: :db_manager) { Tenant.switch('acme') { ... } }` creates a tenant pool with `app_user` credentials, not `db_manager`
 
-CampusESP already uses these patterns in production:
+These patterns are common in production multi-tenant apps:
 
 ```ruby
-# out_of_sync_sequences_job.rb — DDL under elevated role
+# DDL under elevated role
 ActiveRecord::Base.connected_to(role: :db_manager) do
   Apartment::Tenant.switch(schema) do
     # expects db_manager credentials, actually gets app_user
   end
 end
 
-# ReadOnlyQueryable — replica routing (included in ApplicationRecord, used in 16+ files)
+# Replica routing for read-heavy queries
 ActiveRecord::Base.connected_to(role: :reading, prevent_writes: true) do
   # expects replica host, actually gets primary
 end
@@ -44,14 +44,13 @@ Both patterns are silently broken. Fixing `ConnectionHandling` to be role-aware 
 
 The original Phase 5 plan proposed `Current.credential_overlay` — a fiber-safe attribute that `ConnectionHandling` would check when creating pools, merging elevated credentials from a database.yml entry. Research during brainstorming revealed this is unnecessary because:
 
-1. CampusESP already registers roles via `connects_to` in `ApplicationRecord`:
+1. Production apps already register roles via `connects_to` in `ApplicationRecord`:
 
 ```ruby
 connects_to database: {
   writing: :primary,
   reading: :primary_replica,
   db_manager: :db_manager,
-  cloning: :cloning_workspace,
 }
 ```
 
@@ -61,17 +60,15 @@ connects_to database: {
 
 4. Making `ConnectionHandling` resolve base config from the current role's default pool is a 5-line change. The credential overlay approach would have required a new `Current` attribute, merge logic, pool eviction after migration, and a separate pool key namespace — all unnecessary complexity.
 
-### CampusESP's RBAC Architecture
+### Reference RBAC Architecture
 
-Reference: `config/database.yml`, `db/roles.sql`, `app/services/pg_schema/privilege_fixer.rb`
-
-Two PostgreSQL roles:
+A typical production setup uses two PostgreSQL roles:
 - `app_user` — runtime DML (SELECT, INSERT, UPDATE, DELETE). No DDL privileges.
 - `db_manager` — inherits `app_user` via `GRANT app_user TO db_manager`. Has CREATE privilege on databases. Owns schemas and objects created during migrations.
 
 Both point at the same database with different credentials. `database.yml` maps them to separate named configs (`primary` and `db_manager`), registered as roles via `connects_to`.
 
-The `PrivilegeFixer` service grants `app_user` access to tenant schemas after restore operations:
+A privilege fixer service grants `app_user` access to tenant schemas after restore operations:
 1. `GRANT USAGE ON SCHEMA` — schema visibility
 2. `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES` — existing table access
 3. `GRANT USAGE, SELECT ON ALL SEQUENCES` — sequence access for inserts
@@ -366,7 +363,7 @@ end
 
 ### Post-Migration Pool Lifecycle
 
-Tenant pools created under `:db_manager` (e.g., `"acme:db_manager"`) remain in `pool_manager` after migration. For CampusESP's 500+ tenants, this means 500+ idle `db_manager` connections for `pool_idle_timeout` seconds (default 300s). This is wasteful.
+Tenant pools created under `:db_manager` (e.g., `"acme:db_manager"`) remain in `pool_manager` after migration. For deployments with hundreds of tenants, this means hundreds of idle `db_manager` connections for `pool_idle_timeout` seconds (default 300s). This is wasteful.
 
 The Migrator calls `pool_manager.evict_by_role(migration_role)` in an `ensure` block after `run` completes. This immediately disconnects and removes all migration-role pools, deregistering them from AR's ConnectionHandler. Runtime pools (`:writing`) are unaffected.
 
@@ -528,7 +525,7 @@ No override needed — inherits the no-op from `AbstractAdapter`.
 ### Key Invariant
 
 **Migration role = grantor role = schema owner.** This holds because:
-1. `Tenant.create` is called inside `connected_to(role: :db_manager)` (CampusESP's existing pattern)
+1. `Tenant.create` is called inside `connected_to(role: :db_manager)` (recommended pattern)
 2. `CREATE SCHEMA` runs as db_manager — db_manager owns the schema
 3. `ALTER DEFAULT PRIVILEGES` (no `FOR ROLE`) uses current user — db_manager is the grantor
 4. Migrations run under `migration_role: :db_manager` — db_manager creates tables

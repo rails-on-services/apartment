@@ -24,6 +24,7 @@ module Apartment
       raise(ConfigurationError, 'Tenant name cannot be empty') if name.empty?
       raise(ConfigurationError, "Tenant name contains NUL byte: #{name.inspect}") if name.include?("\x00")
       raise(ConfigurationError, "Tenant name contains whitespace: #{name.inspect}") if name.match?(/\s/)
+      raise(ConfigurationError, "Tenant name contains colon: #{name.inspect}") if name.include?(':')
       return unless name.length > 255
 
       raise(ConfigurationError, "Tenant name too long (#{name.length} chars, max 255): #{name.inspect}")
