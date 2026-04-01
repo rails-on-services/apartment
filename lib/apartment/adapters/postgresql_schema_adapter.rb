@@ -31,6 +31,33 @@ module Apartment
         conn = ActiveRecord::Base.connection
         conn.execute("DROP SCHEMA IF EXISTS #{conn.quote_table_name(tenant)} CASCADE")
       end
+
+      private
+
+      def grant_privileges(tenant, connection, role_name)
+        quoted_schema = connection.quote_table_name(tenant)
+        quoted_role = connection.quote_table_name(role_name)
+
+        connection.execute("GRANT USAGE ON SCHEMA #{quoted_schema} TO #{quoted_role}")
+        connection.execute(
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA #{quoted_schema} TO #{quoted_role}"
+        )
+        connection.execute(
+          "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA #{quoted_schema} TO #{quoted_role}"
+        )
+        connection.execute(
+          "ALTER DEFAULT PRIVILEGES IN SCHEMA #{quoted_schema} " \
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO #{quoted_role}"
+        )
+        connection.execute(
+          "ALTER DEFAULT PRIVILEGES IN SCHEMA #{quoted_schema} " \
+          "GRANT USAGE, SELECT ON SEQUENCES TO #{quoted_role}"
+        )
+        connection.execute(
+          "ALTER DEFAULT PRIVILEGES IN SCHEMA #{quoted_schema} " \
+          "GRANT EXECUTE ON FUNCTIONS TO #{quoted_role}"
+        )
+      end
     end
   end
 end

@@ -28,6 +28,16 @@ module Apartment
         conn = ActiveRecord::Base.connection
         conn.execute("DROP DATABASE IF EXISTS #{conn.quote_table_name(db_name)}")
       end
+
+      private
+
+      def grant_privileges(tenant, connection, role_name)
+        db_name = environmentify(tenant)
+        quoted_role = connection.quote(role_name)
+        connection.execute(
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON `#{db_name}`.* TO #{quoted_role}@'%'"
+        )
+      end
     end
   end
 end

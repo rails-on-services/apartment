@@ -48,6 +48,7 @@ module Apartment
         )
         run_callbacks(:create) do
           create_tenant(tenant)
+          grant_tenant_privileges(tenant)
           import_schema(tenant) if Apartment.config.schema_load_strategy
           seed(tenant) if Apartment.config.seed_after_create
           Instrumentation.instrument(:create, tenant: tenant)
@@ -146,6 +147,23 @@ module Apartment
       end
 
       private
+
+      def grant_tenant_privileges(tenant)
+        app_role = Apartment.config.app_role
+        return unless app_role
+
+        conn = ActiveRecord::Base.connection
+        if app_role.respond_to?(:call)
+          app_role.call(tenant, conn)
+        else
+          grant_privileges(tenant, conn, app_role)
+        end
+      end
+
+      # No-op base implementation — PG schema and MySQL adapters override.
+      def grant_privileges(tenant, connection, role_name)
+        # intentional no-op
+      end
 
       # Connection config with string keys (used by subclasses to build tenant configs).
       def base_config

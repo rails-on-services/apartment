@@ -435,6 +435,58 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
   end
 
+  describe '#grant_tenant_privileges (private)' do
+    let(:connection) { double('Connection') }
+
+    before do
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+    end
+
+    context 'when app_role is a string' do
+      before { reconfigure(app_role: 'app_user') }
+
+      it 'calls grant_privileges with tenant, connection, and role_name' do
+        expect(adapter).to(receive(:grant_privileges).with('acme', connection, 'app_user'))
+        adapter.create('acme')
+      end
+    end
+
+    context 'when app_role is callable' do
+      it 'invokes the callable with (tenant, connection)' do
+        called_with = nil
+        reconfigure(app_role: ->(tenant, conn) { called_with = [tenant, conn] })
+
+        adapter.create('acme')
+
+        expect(called_with).to(eq(['acme', connection]))
+      end
+    end
+
+    context 'when app_role is nil' do
+      it 'does not call grant_privileges and does not raise' do
+        # Default config has app_role = nil
+        expect(adapter).not_to(receive(:grant_privileges))
+        expect { adapter.create('acme') }.not_to(raise_error)
+      end
+    end
+
+    context 'ordering: grants run after create_tenant, before import_schema' do
+      it 'calls create_tenant then grant_tenant_privileges then import_schema' do
+        reconfigure(app_role: 'app_user', schema_load_strategy: :schema_rb)
+        call_order = []
+
+        allow(adapter).to(receive(:create_tenant).with('acme') { call_order << :create_tenant })
+        allow(adapter).to(receive(:grant_privileges) { call_order << :grant_privileges })
+        allow(adapter).to(receive(:import_schema).with('acme') { call_order << :import_schema })
+
+        adapter.create('acme')
+
+        expect(call_order).to(eq(%i[create_tenant grant_privileges import_schema]))
+      end
+    end
+  end
+
   describe '#create with schema loading' do
     it 'calls import_schema when schema_load_strategy is set' do
       reconfigure(schema_load_strategy: :schema_rb)

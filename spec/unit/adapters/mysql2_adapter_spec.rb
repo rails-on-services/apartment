@@ -134,6 +134,37 @@ RSpec.shared_examples('a MySQL adapter') do
     end
   end
 
+  describe '#grant_privileges (private)' do
+    let(:connection) { double('Connection') }
+
+    before do
+      allow(connection).to(receive(:quote).with('app_user').and_return("'app_user'"))
+    end
+
+    it 'executes exactly 1 SQL statement' do
+      expect(connection).to(receive(:execute).exactly(1).times)
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'includes GRANT statement with the environmentified database name and role' do
+      expect(connection).to(receive(:execute)
+        .with("GRANT SELECT, INSERT, UPDATE, DELETE ON `acme`.* TO 'app_user'@'%'"))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+
+    it 'environmentifies the database name in the GRANT' do
+      reconfigure(environmentify_strategy: :prepend)
+      allow(Rails).to(receive(:env).and_return('staging'))
+
+      expect(connection).to(receive(:execute)
+        .with("GRANT SELECT, INSERT, UPDATE, DELETE ON `staging_acme`.* TO 'app_user'@'%'"))
+
+      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    end
+  end
+
   describe '#drop (via drop_tenant)' do
     let(:connection) { double('Connection') }
     let(:pool_manager) { Apartment.pool_manager }
