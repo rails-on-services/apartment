@@ -108,7 +108,10 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
     expect(db_mgr_keys).to(be_empty)
   end
 
-  context 'with parallel threads' do
+  # :stress skips the per-example ConnectionHandler swap. Worker threads need
+  # the :db_manager pool registered by setup_connects_to! to remain visible;
+  # the handler swap discards it before threads can resolve it via super.
+  context 'with parallel threads', :stress do
     it 'each thread uses db_manager credentials' do
       migrator = Apartment::Migrator.new(threads: 2)
       result = migrator.run
