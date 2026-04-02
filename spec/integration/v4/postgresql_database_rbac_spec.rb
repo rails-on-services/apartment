@@ -17,8 +17,6 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
   include V4IntegrationHelper
 
   let(:tenant) { 'apt_db_rbac_tenant' }
-  # Track which grants the callable received
-  let(:grant_log) { [] }
 
   # Force-drop a PG database by terminating active connections first.
   def force_drop_database(db_name)
@@ -29,8 +27,8 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
       WHERE datname = #{conn.quote(db_name)} AND pid <> pg_backend_pid()
     SQL
     conn.execute("DROP DATABASE IF EXISTS #{conn.quote_table_name(db_name)}")
-  rescue StandardError => e
-    warn "force_drop_database(#{db_name}): #{e.message}"
+  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished => e
+    warn "force_drop_database(#{db_name}): #{e.class}: #{e.message}"
   end
 
   before do
@@ -44,8 +42,9 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
     # issue grants. For database-per-tenant PG, grant_tenant_privileges runs
     # on the default DB connection — the callable must Tenant.switch to reach
     # the tenant database's public schema.
+    @grant_log = []
     callable = lambda { |t, conn|
-      grant_log << { tenant: t, user: conn.execute('SELECT current_user AS cu').first['cu'] }
+      @grant_log << { tenant: t, user: conn.execute('SELECT current_user AS cu').first['cu'] }
       Apartment::Tenant.switch(t) do
         tc = ActiveRecord::Base.connection
         role = tc.quote_table_name(RbacHelper::ROLES[:app_user])
@@ -109,9 +108,9 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
   end
 
   it 'invokes the callable with tenant name and a live connection' do
-    expect(grant_log.size).to(eq(1))
-    expect(grant_log.first[:tenant]).to(eq(tenant))
-    expect(grant_log.first[:user]).to(be_a(String))
+    expect(@grant_log.size).to(eq(1))
+    expect(@grant_log.first[:tenant]).to(eq(tenant))
+    expect(@grant_log.first[:user]).to(be_a(String))
   end
 
   it 'app_user can DML on tables in the tenant database' do
