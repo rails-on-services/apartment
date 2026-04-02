@@ -4,8 +4,8 @@ require 'spec_helper'
 require_relative 'support'
 require_relative 'support/rbac_helper'
 
-RSpec.describe 'PostgreSQL RBAC privilege grants', :integration, :rbac, :postgresql_only,
-               skip: (!V4_INTEGRATION_AVAILABLE || V4IntegrationHelper.database_engine != 'postgresql') && 'requires PostgreSQL' do
+RSpec.describe('PostgreSQL RBAC privilege grants', :integration, :postgresql_only, :rbac,
+               skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PG')) do
   include V4IntegrationHelper
 
   let(:tenant) { 'rbac_grants_tenant' }
@@ -32,7 +32,7 @@ RSpec.describe 'PostgreSQL RBAC privilege grants', :integration, :rbac, :postgre
 
     # Create a test table as db_manager (inside the tenant schema)
     Apartment::Tenant.switch(tenant) do
-      ActiveRecord::Base.connection.execute(<<~SQL)
+      ActiveRecord::Base.connection.execute(<<~SQL.squish)
         CREATE TABLE #{ActiveRecord::Base.connection.quote_table_name(tenant)}.widgets (
           id serial PRIMARY KEY,
           name varchar(255)
@@ -64,32 +64,32 @@ RSpec.describe 'PostgreSQL RBAC privilege grants', :integration, :rbac, :postgre
       conn.execute("INSERT INTO #{conn.quote_table_name(tenant)}.widgets (name) VALUES ('test')")
 
       result = conn.execute("SELECT name FROM #{conn.quote_table_name(tenant)}.widgets")
-      expect(result.first['name']).to eq('test')
+      expect(result.first['name']).to(eq('test'))
 
       conn.execute("UPDATE #{conn.quote_table_name(tenant)}.widgets SET name = 'updated'")
 
       result = conn.execute("SELECT name FROM #{conn.quote_table_name(tenant)}.widgets")
-      expect(result.first['name']).to eq('updated')
+      expect(result.first['name']).to(eq('updated'))
 
       conn.execute("DELETE FROM #{conn.quote_table_name(tenant)}.widgets")
       result = conn.execute("SELECT count(*) AS c FROM #{conn.quote_table_name(tenant)}.widgets")
-      expect(result.first['c'].to_i).to eq(0)
+      expect(result.first['c'].to_i).to(eq(0))
     end
 
     it 'cannot CREATE TABLE in the tenant schema' do
-      expect {
+      expect do
         ActiveRecord::Base.connection.execute(
           "CREATE TABLE #{ActiveRecord::Base.connection.quote_table_name(tenant)}.forbidden (id serial)"
         )
-      }.to raise_error(ActiveRecord::StatementInvalid, /permission denied/)
+      end.to(raise_error(ActiveRecord::StatementInvalid, /permission denied/))
     end
 
     it 'cannot DROP SCHEMA' do
-      expect {
+      expect do
         ActiveRecord::Base.connection.execute(
           "DROP SCHEMA #{ActiveRecord::Base.connection.quote_table_name(tenant)} CASCADE"
         )
-      }.to raise_error(ActiveRecord::StatementInvalid, /must be owner|permission denied/)
+      end.to(raise_error(ActiveRecord::StatementInvalid, /must be owner|permission denied/))
     end
   end
 
@@ -97,7 +97,7 @@ RSpec.describe 'PostgreSQL RBAC privilege grants', :integration, :rbac, :postgre
     it 'grants DML on tables created after initial tenant creation' do
       # As db_manager: create a new table after the tenant was created
       RbacHelper.connect_as(:db_manager)
-      ActiveRecord::Base.connection.execute(<<~SQL)
+      ActiveRecord::Base.connection.execute(<<~SQL.squish)
         CREATE TABLE #{ActiveRecord::Base.connection.quote_table_name(tenant)}.gadgets (
           id serial PRIMARY KEY,
           label varchar(255)
@@ -110,7 +110,7 @@ RSpec.describe 'PostgreSQL RBAC privilege grants', :integration, :rbac, :postgre
       conn = ActiveRecord::Base.connection
       conn.execute("INSERT INTO #{conn.quote_table_name(tenant)}.gadgets (label) VALUES ('shiny')")
       result = conn.execute("SELECT label FROM #{conn.quote_table_name(tenant)}.gadgets")
-      expect(result.first['label']).to eq('shiny')
+      expect(result.first['label']).to(eq('shiny'))
       RbacHelper.restore_default_connection!
     end
   end

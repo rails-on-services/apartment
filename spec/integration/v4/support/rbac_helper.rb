@@ -10,7 +10,7 @@
 module RbacHelper
   ROLES = {
     db_manager: 'apt_test_db_manager',
-    app_user: 'apt_test_app_user'
+    app_user: 'apt_test_app_user',
   }.freeze
 
   @provisioned = false
@@ -41,7 +41,7 @@ module RbacHelper
       provision_mysql_roles!(connection)
     else
       warn '[RbacHelper] RBAC tests require PostgreSQL or MySQL'
-      return(@available = false)
+      return (@available = false)
     end
 
     @available = true
@@ -94,7 +94,7 @@ module RbacHelper
   # --- Private provisioning methods ---
 
   def provision_pg_roles!(connection)
-    connection.execute(<<~SQL)
+    connection.execute(<<~SQL.squish)
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '#{ROLES[:db_manager]}') THEN

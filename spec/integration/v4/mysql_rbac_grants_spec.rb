@@ -4,8 +4,8 @@ require 'spec_helper'
 require_relative 'support'
 require_relative 'support/rbac_helper'
 
-RSpec.describe 'MySQL RBAC privilege grants', :integration, :rbac, :mysql_only,
-               skip: (!V4_INTEGRATION_AVAILABLE || V4IntegrationHelper.database_engine != 'mysql') && 'requires MySQL' do
+RSpec.describe('MySQL RBAC privilege grants', :integration, :mysql_only, :rbac,
+               skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.mysql? ? false : 'requires MySQL')) do
   include V4IntegrationHelper
 
   let(:tenant) { 'rbac_grants_tenant' }
@@ -32,7 +32,7 @@ RSpec.describe 'MySQL RBAC privilege grants', :integration, :rbac, :mysql_only,
 
     # Create a test table inside the tenant database
     Apartment::Tenant.switch(tenant) do
-      ActiveRecord::Base.connection.execute(<<~SQL)
+      ActiveRecord::Base.connection.execute(<<~SQL.squish)
         CREATE TABLE widgets (
           id INT AUTO_INCREMENT PRIMARY KEY,
           name VARCHAR(255)
@@ -65,24 +65,24 @@ RSpec.describe 'MySQL RBAC privilege grants', :integration, :rbac, :mysql_only,
       conn.execute("INSERT INTO `#{db_name}`.widgets (name) VALUES ('test')")
 
       result = conn.execute("SELECT name FROM `#{db_name}`.widgets")
-      expect(result.first['name']).to eq('test')
+      expect(result.first['name']).to(eq('test'))
 
       conn.execute("UPDATE `#{db_name}`.widgets SET name = 'updated'")
       conn.execute("DELETE FROM `#{db_name}`.widgets")
     end
 
     it 'cannot CREATE TABLE in the tenant database' do
-      expect {
+      expect do
         ActiveRecord::Base.connection.execute(
           "CREATE TABLE `#{db_name}`.forbidden (id INT PRIMARY KEY)"
         )
-      }.to raise_error(ActiveRecord::StatementInvalid, /command denied|Access denied/)
+      end.to(raise_error(ActiveRecord::StatementInvalid, /command denied|Access denied/))
     end
 
     it 'cannot DROP DATABASE' do
-      expect {
+      expect do
         ActiveRecord::Base.connection.execute("DROP DATABASE `#{db_name}`")
-      }.to raise_error(ActiveRecord::StatementInvalid, /command denied|Access denied/)
+      end.to(raise_error(ActiveRecord::StatementInvalid, /command denied|Access denied/))
     end
   end
 

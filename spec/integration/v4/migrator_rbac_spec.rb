@@ -5,8 +5,8 @@ require_relative 'support'
 require_relative 'support/rbac_helper'
 require 'apartment/migrator'
 
-RSpec.describe 'Migrator with migration_role', :integration, :rbac, :postgresql_only,
-               skip: (!V4_INTEGRATION_AVAILABLE || V4IntegrationHelper.database_engine != 'postgresql') && 'requires PostgreSQL' do
+RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :rbac,
+               skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PG')) do
   include V4IntegrationHelper
 
   let(:tenants) { %w[rbac_mig_one rbac_mig_two] }
@@ -70,15 +70,15 @@ RSpec.describe 'Migrator with migration_role', :integration, :rbac, :postgresql_
     migrator = Apartment::Migrator.new(threads: 0)
     result = migrator.run
 
-    expect(result).to be_success
+    expect(result).to(be_success)
 
     tenants.each do |t|
       Apartment::Tenant.switch(t) do
-        owner = ActiveRecord::Base.connection.execute(<<~SQL).first['tableowner']
+        owner = ActiveRecord::Base.connection.execute(<<~SQL.squish).first['tableowner']
           SELECT tableowner FROM pg_tables
           WHERE schemaname = '#{t}' AND tablename = 'rbac_test_widgets'
         SQL
-        expect(owner).to eq(RbacHelper::ROLES[:db_manager])
+        expect(owner).to(eq(RbacHelper::ROLES[:db_manager]))
       end
     end
   end
@@ -92,7 +92,7 @@ RSpec.describe 'Migrator with migration_role', :integration, :rbac, :postgresql_
     tenants.each do |t|
       conn.execute("INSERT INTO #{conn.quote_table_name(t)}.rbac_test_widgets (name) VALUES ('test')")
       result = conn.execute("SELECT name FROM #{conn.quote_table_name(t)}.rbac_test_widgets")
-      expect(result.first['name']).to eq('test')
+      expect(result.first['name']).to(eq('test'))
     end
 
     RbacHelper.restore_default_connection!
@@ -102,7 +102,7 @@ RSpec.describe 'Migrator with migration_role', :integration, :rbac, :postgresql_
     Apartment::Migrator.new(threads: 0).run
 
     db_mgr_keys = Apartment.pool_manager.stats[:tenants].select { |k| k.end_with?(':db_manager') }
-    expect(db_mgr_keys).to be_empty
+    expect(db_mgr_keys).to(be_empty)
   end
 
   context 'with parallel threads' do
@@ -110,15 +110,15 @@ RSpec.describe 'Migrator with migration_role', :integration, :rbac, :postgresql_
       migrator = Apartment::Migrator.new(threads: 2)
       result = migrator.run
 
-      expect(result).to be_success
+      expect(result).to(be_success)
 
       tenants.each do |t|
         Apartment::Tenant.switch(t) do
-          owner = ActiveRecord::Base.connection.execute(<<~SQL).first['tableowner']
+          owner = ActiveRecord::Base.connection.execute(<<~SQL.squish).first['tableowner']
             SELECT tableowner FROM pg_tables
             WHERE schemaname = '#{t}' AND tablename = 'rbac_test_widgets'
           SQL
-          expect(owner).to eq(RbacHelper::ROLES[:db_manager])
+          expect(owner).to(eq(RbacHelper::ROLES[:db_manager]))
         end
       end
     end
