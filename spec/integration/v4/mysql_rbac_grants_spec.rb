@@ -57,7 +57,10 @@ RSpec.describe('MySQL RBAC privilege grants', :integration, :mysql_only, :rbac,
   context 'as app_user' do
     let(:db_name) { Apartment.adapter.environmentify(tenant) }
 
-    before { RbacHelper.connect_as(:app_user) }
+    # Connect without a default database — app_user only has per-tenant grants
+    # from Mysql2Adapter#grant_privileges, not access to the default test DB.
+    # All queries use schema-qualified `db_name`.table syntax.
+    before { RbacHelper.connect_as(:app_user, 'database' => nil) }
     after  { RbacHelper.restore_default_connection! }
 
     it 'can SELECT, INSERT, UPDATE, DELETE' do

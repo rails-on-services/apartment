@@ -60,10 +60,10 @@ module RbacHelper
   # For grant verification tests (separate connections, not SET ROLE).
   # Only stashes on first call — subsequent calls without restore reuse the original stash
   # to prevent overwriting the real config with an already-swapped one.
-  def connect_as(role_key)
+  def connect_as(role_key, **overrides)
     username = ROLES.fetch(role_key)
     @stashed_config ||= ActiveRecord::Base.connection_db_config.configuration_hash.stringify_keys
-    ActiveRecord::Base.establish_connection(@stashed_config.merge('username' => username))
+    ActiveRecord::Base.establish_connection(@stashed_config.merge('username' => username, **overrides))
   end
 
   # Restore the connection stashed by connect_as.

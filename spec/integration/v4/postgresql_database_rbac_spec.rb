@@ -39,19 +39,24 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
 
     force_drop_database(tenant)
 
-    # Callable app_role: logs the call and issues grants inside the tenant DB.
-    # This is the escape hatch for database-per-tenant PG RBAC.
+    # Callable app_role: logs the call, then switches into the tenant DB to
+    # issue grants. For database-per-tenant PG, grant_tenant_privileges runs
+    # on the default DB connection — the callable must Tenant.switch to reach
+    # the tenant database's public schema.
     callable = lambda { |t, conn|
       grant_log << { tenant: t, user: conn.execute('SELECT current_user AS cu').first['cu'] }
-      conn.execute(
-        'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public ' \
-        "TO #{conn.quote_table_name(RbacHelper::ROLES[:app_user])}"
-      )
-      conn.execute(
-        'ALTER DEFAULT PRIVILEGES IN SCHEMA public ' \
-        'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES ' \
-        "TO #{conn.quote_table_name(RbacHelper::ROLES[:app_user])}"
-      )
+      Apartment::Tenant.switch(t) do
+        tc = ActiveRecord::Base.connection
+        tc.execute(
+          'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public ' \
+          "TO #{tc.quote_table_name(RbacHelper::ROLES[:app_user])}"
+        )
+        tc.execute(
+          'ALTER DEFAULT PRIVILEGES IN SCHEMA public ' \
+          'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES ' \
+          "TO #{tc.quote_table_name(RbacHelper::ROLES[:app_user])}"
+        )
+      end
     }
 
     RbacHelper.connect_as(:db_manager)
