@@ -59,7 +59,7 @@ Relationship: `GRANT apt_test_app_user TO apt_test_db_manager` (so db_manager ca
 
 ### PostgreSQL job
 
-Roles are cluster-wide, so the CI step connects to the `postgres` maintenance database (not the test database, which may not exist yet). The `GRANT CREATE ON DATABASE` and `GRANT CREATE ON SCHEMA public` run in `RbacHelper.provision_roles!` after `ensure_test_database!` creates the test database (`apartment_v4_test`).
+Roles are cluster-wide, so the CI step connects to the `postgres` maintenance database (not the test database, which may not exist yet). Database-specific grants run in `RbacHelper.provision_roles!` after `ensure_test_database!` creates the test database (`apartment_v4_test`): `GRANT CREATE ON DATABASE`, `GRANT ALL ON SCHEMA public` (PG 15+ revoked public CREATE from PUBLIC), `GRANT ALL ON ALL TABLES/SEQUENCES IN SCHEMA public` (covers pre-existing `schema_migrations`), and `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES/SEQUENCES` (covers objects created after provisioning by the session user).
 
 ```yaml
 - name: Provision RBAC test roles
@@ -79,7 +79,7 @@ Roles are cluster-wide, so the CI step connects to the `postgres` maintenance da
     SQL
 ```
 
-Idempotent via `IF NOT EXISTS`. `GRANT` statements are inherently idempotent in PG. Trust auth (`POSTGRES_HOST_AUTH_METHOD: trust` already in CI) means no passwords needed. The `GRANT CREATE ON DATABASE <test_db> TO apt_test_db_manager` runs in `RbacHelper.provision_roles!` after the test database is created.
+Idempotent via `IF NOT EXISTS`. `GRANT` statements are inherently idempotent in PG. Trust auth (`POSTGRES_HOST_AUTH_METHOD: trust` already in CI) means no passwords needed.
 
 ### MySQL job
 

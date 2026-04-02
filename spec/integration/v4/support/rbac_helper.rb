@@ -130,9 +130,9 @@ module RbacHelper
     connection.execute("GRANT ALL ON SCHEMA public TO #{ROLES[:db_manager]}")
     connection.execute("GRANT ALL ON ALL TABLES IN SCHEMA public TO #{ROLES[:db_manager]}")
     connection.execute("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO #{ROLES[:db_manager]}")
-    # Cover tables/sequences postgres creates AFTER this provisioning runs.
-    # Provisioning runs as the superuser (typically 'postgres'); ALTER DEFAULT
-    # PRIVILEGES without FOR ROLE uses the current user as the grantor.
+    # Cover tables/sequences created AFTER this provisioning runs. Without
+    # FOR ROLE, applies to objects created later by the current session user
+    # (typically 'postgres') in public.
     connection.execute(
       "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO #{ROLES[:db_manager]}"
     )
