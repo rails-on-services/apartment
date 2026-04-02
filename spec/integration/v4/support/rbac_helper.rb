@@ -148,11 +148,8 @@ module RbacHelper
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:db_manager]}'@'%'")
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:app_user]}'@'%'")
     connection.execute("GRANT ALL PRIVILEGES ON *.* TO '#{ROLES[:db_manager]}'@'%' WITH GRANT OPTION")
-    # Wildcard grant is a safety net; the real per-tenant grants come from
-    # Mysql2Adapter#grant_privileges during Apartment.adapter.create(tenant).
-    connection.execute(
-      "GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\\_%`.* TO '#{ROLES[:app_user]}'@'%'"
-    )
+    # No wildcard grant for app_user — tests must depend entirely on
+    # Mysql2Adapter#grant_privileges (fired during adapter.create).
     connection.execute('FLUSH PRIVILEGES')
   end
 

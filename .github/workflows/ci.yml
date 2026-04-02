@@ -158,7 +158,6 @@ jobs:
             CREATE USER IF NOT EXISTS 'apt_test_db_manager'@'%';
             CREATE USER IF NOT EXISTS 'apt_test_app_user'@'%';
             GRANT ALL PRIVILEGES ON *.* TO 'apt_test_db_manager'@'%' WITH GRANT OPTION;
-            GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\_%`.* TO 'apt_test_app_user'@'%';
             FLUSH PRIVILEGES;
           SQL
       - name: Run v4 integration tests
