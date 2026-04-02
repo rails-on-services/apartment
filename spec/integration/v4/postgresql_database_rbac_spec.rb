@@ -47,6 +47,10 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
       grant_log << { tenant: t, user: conn.execute('SELECT current_user AS cu').first['cu'] }
       Apartment::Tenant.switch(t) do
         tc = ActiveRecord::Base.connection
+        # Revoke DDL from PUBLIC — PG template1 may or may not have this
+        # depending on version/image. Explicit revoke ensures the test
+        # verifies a real privilege boundary, not template defaults.
+        tc.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
         tc.execute(
           'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public ' \
           "TO #{tc.quote_table_name(RbacHelper::ROLES[:app_user])}"
