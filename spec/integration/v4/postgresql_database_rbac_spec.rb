@@ -47,10 +47,6 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
       grant_log << { tenant: t, user: conn.execute('SELECT current_user AS cu').first['cu'] }
       Apartment::Tenant.switch(t) do
         tc = ActiveRecord::Base.connection
-        # Revoke DDL from PUBLIC — PG template1 may or may not have this
-        # depending on version/image. Explicit revoke ensures the test
-        # verifies a real privilege boundary, not template defaults.
-        tc.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
         tc.execute(
           'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public ' \
           "TO #{tc.quote_table_name(RbacHelper::ROLES[:app_user])}"
@@ -79,14 +75,22 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
     )
     Apartment.activate!
     Apartment.adapter.create(tenant)
+    RbacHelper.restore_default_connection!
+
+    # Revoke DDL from PUBLIC in the tenant DB. Must run as superuser (postgres)
+    # because db_manager doesn't own the public schema (template1 makes postgres
+    # the owner). PG silently ignores REVOKE from non-owners.
+    Apartment::Tenant.switch(tenant) do
+      ActiveRecord::Base.connection.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
+    end
 
     # Create a test table as db_manager inside the tenant database
+    RbacHelper.connect_as(:db_manager)
     Apartment::Tenant.switch(tenant) do
       ActiveRecord::Base.connection.execute(<<~SQL.squish)
         CREATE TABLE widgets (id serial PRIMARY KEY, name varchar(255))
       SQL
     end
-
     RbacHelper.restore_default_connection!
   end
 
