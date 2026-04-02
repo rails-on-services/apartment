@@ -200,8 +200,8 @@ if V4_INTEGRATION_AVAILABLE
       unless example.metadata[:stress]
         begin
           new_handler&.clear_all_connections!
-        rescue StandardError
-          nil
+        rescue StandardError => e
+          warn "[V4IntegrationHelper] clear_all_connections! failed: #{e.message}"
         end
         ActiveRecord::Base.connection_handler = old_handler
       end

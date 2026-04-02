@@ -57,6 +57,10 @@ EVENT_PROF=sql.active_record bundle exec appraisal rails-8.1-sqlite3 rspec spec/
 
 # Request lifecycle tests (requires PostgreSQL)
 DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/request_lifecycle_spec.rb
+
+# RBAC integration tests (requires provisioned PG/MySQL roles; see docs/designs/v4-phase5.2-rbac-integration-tests.md)
+DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/ --tag rbac
+DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/ --tag rbac
 ```
 
 **CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1 × PG 16+18, MySQL 8.4, SQLite3. See `.github/workflows/ci.yml`.

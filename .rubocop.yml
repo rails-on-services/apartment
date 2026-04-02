@@ -196,6 +196,7 @@ ThreadSafety/ClassInstanceVariable:
     - lib/apartment/pool_reaper.rb
     - lib/apartment/elevators/*.rb
     - spec/support/config.rb
+    - spec/integration/v4/support/rbac_helper.rb
 
 ThreadSafety/ClassAndModuleAttributes:
   Exclude:
