@@ -78,13 +78,16 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
     RbacHelper.restore_default_connection!
 
     # Revoke DDL from PUBLIC in the tenant DB. Must run as superuser (postgres)
-    # because db_manager doesn't own the public schema (template1 makes postgres
-    # the owner). PG silently ignores REVOKE from non-owners.
-    Apartment::Tenant.switch(tenant) do
-      ActiveRecord::Base.connection.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
-    end
+    # because db_manager doesn't own the public schema (inherited from template1).
+    # Cannot use Tenant.switch here — pool_manager cached the tenant pool with
+    # db_manager credentials during adapter.create. Direct connection bypasses
+    # the cache.
+    ActiveRecord::Base.establish_connection(@config.merge('database' => tenant))
+    ActiveRecord::Base.connection.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
+    V4IntegrationHelper.establish_default_connection!
 
-    # Create a test table as db_manager inside the tenant database
+    # Create a test table as db_manager inside the tenant database.
+    # The cached pool from adapter.create still has db_manager credentials.
     RbacHelper.connect_as(:db_manager)
     Apartment::Tenant.switch(tenant) do
       ActiveRecord::Base.connection.execute(<<~SQL.squish)
