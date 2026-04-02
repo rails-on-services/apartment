@@ -94,7 +94,7 @@ jobs:
           bundler-cache: true
       - name: Provision RBAC test roles
         run: |
-          psql -h 127.0.0.1 -U postgres -d postgres <<'SQL'
+          psql -h 127.0.0.1 -U postgres -d postgres --set ON_ERROR_STOP=on <<'SQL'
             DO $$
             BEGIN
               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'apt_test_db_manager') THEN
@@ -151,7 +151,9 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
       - name: Provision RBAC test roles
+        shell: bash
         run: |
+          set -euo pipefail
           mysql -h 127.0.0.1 -u root <<'SQL'
             CREATE USER IF NOT EXISTS 'apt_test_db_manager'@'%';
             CREATE USER IF NOT EXISTS 'apt_test_app_user'@'%';

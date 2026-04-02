@@ -67,11 +67,14 @@ module RbacHelper
   end
 
   # Restore the connection stashed by connect_as.
+  # Clears the stash before reconnecting to prevent cross-test poisoning
+  # if establish_connection raises.
   def restore_default_connection!
     return unless @stashed_config
 
-    ActiveRecord::Base.establish_connection(@stashed_config)
+    config = @stashed_config
     @stashed_config = nil
+    ActiveRecord::Base.establish_connection(config)
   end
 
   # Register database configs for :writing and :db_manager roles with AR's

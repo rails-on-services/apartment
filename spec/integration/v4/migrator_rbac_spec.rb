@@ -53,7 +53,7 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
   end
 
   after do
-    # Restore migration paths
+    RbacHelper.teardown_rbac_connections!
     ActiveRecord::Migrator.migrations_paths = @original_migrations_paths
 
     V4IntegrationHelper.establish_default_connection!
@@ -63,7 +63,6 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
     V4IntegrationHelper.cleanup_tenants!(tenants, Apartment.adapter)
     Apartment.clear_config
     Apartment::Current.reset
-    RbacHelper.teardown_rbac_connections!
     FileUtils.rm_rf(migration_dir)
   end
 

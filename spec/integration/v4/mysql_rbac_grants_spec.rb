@@ -44,6 +44,7 @@ RSpec.describe('MySQL RBAC privilege grants', :integration, :mysql_only, :rbac,
   end
 
   after do
+    RbacHelper.teardown_rbac_connections!
     V4IntegrationHelper.establish_default_connection!
     Apartment.adapter = V4IntegrationHelper.build_adapter(
       V4IntegrationHelper.default_connection_config
@@ -51,7 +52,6 @@ RSpec.describe('MySQL RBAC privilege grants', :integration, :mysql_only, :rbac,
     V4IntegrationHelper.cleanup_tenants!([tenant], Apartment.adapter)
     Apartment.clear_config
     Apartment::Current.reset
-    RbacHelper.teardown_rbac_connections!
   end
 
   context 'as app_user' do

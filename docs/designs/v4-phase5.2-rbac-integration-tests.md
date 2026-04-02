@@ -35,7 +35,7 @@ PostgreSQL roles are cluster-wide (not database-scoped). Prefixed names (`apt_te
 
 Roles are created in two places:
 1. **CI**: Explicit psql/mysql step in the GitHub Actions workflow. Fast, visible, runs once.
-2. **Local dev**: Idempotent `before(:suite)` hook in `RbacHelper`. If role creation fails (e.g., local PG user lacks CREATEROLE), specs skip with a clear message rather than failing.
+2. **Local dev**: Idempotent `before(:context, :rbac)` hook in `RbacHelper`. If role creation fails (e.g., local PG user lacks CREATEROLE), specs skip with a clear message rather than failing.
 
 ## Test Roles
 
@@ -52,7 +52,7 @@ Relationship: `GRANT apt_test_app_user TO apt_test_db_manager` (so db_manager ca
 
 | User | Privileges | Purpose |
 |------|-----------|---------|
-| `apt_test_db_manager`@`%` | `ALL PRIVILEGES ON *.*` | Full DDL/DML |
+| `apt_test_db_manager`@`%` | `ALL PRIVILEGES ON *.* WITH GRANT OPTION` | Full DDL/DML + can grant to app_user |
 | `apt_test_app_user`@`%` | `SELECT, INSERT, UPDATE, DELETE ON apartment_%.*` | DML on test databases only |
 
 ## CI Provisioning
@@ -61,11 +61,12 @@ Relationship: `GRANT apt_test_app_user TO apt_test_db_manager` (so db_manager ca
 
 Roles are cluster-wide, so the CI step connects to the `postgres` maintenance database (not the test database, which may not exist yet). Database-specific grants run in `RbacHelper.provision_roles!` after `ensure_test_database!` creates the test database (`apartment_v4_test`): `GRANT CREATE ON DATABASE`, `GRANT ALL ON SCHEMA public` (PG 15+ revoked public CREATE from PUBLIC), `GRANT ALL ON ALL TABLES/SEQUENCES IN SCHEMA public` (covers pre-existing `schema_migrations`), and `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES/SEQUENCES` (covers objects created after provisioning by the session user).
 
+Step in the `postgresql:` CI job (separate job per engine, no `if:` needed):
+
 ```yaml
 - name: Provision RBAC test roles
-  if: matrix.db == 'postgresql'
   run: |
-    psql -h 127.0.0.1 -U postgres -d postgres <<'SQL'
+    psql -h 127.0.0.1 -U postgres -d postgres --set ON_ERROR_STOP=on <<'SQL'
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'apt_test_db_manager') THEN
@@ -85,10 +86,13 @@ Idempotent via `IF NOT EXISTS`. `GRANT` statements are inherently idempotent in 
 
 CI MySQL uses `MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'`, so no password flag on the client.
 
+Step in the `mysql:` CI job:
+
 ```yaml
 - name: Provision MySQL RBAC test roles
-  if: matrix.db == 'mysql'
+  shell: bash
   run: |
+    set -euo pipefail
     mysql -h 127.0.0.1 -u root <<'SQL'
       CREATE USER IF NOT EXISTS 'apt_test_db_manager'@'%';
       CREATE USER IF NOT EXISTS 'apt_test_app_user'@'%';

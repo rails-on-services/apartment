@@ -44,7 +44,7 @@ RSpec.describe('PostgreSQL RBAC privilege grants', :integration, :postgresql_onl
   end
 
   after do
-    # Reconnect as default (superuser) to drop
+    RbacHelper.teardown_rbac_connections!
     V4IntegrationHelper.establish_default_connection!
     Apartment.adapter = V4IntegrationHelper.build_adapter(
       V4IntegrationHelper.default_connection_config
@@ -52,7 +52,6 @@ RSpec.describe('PostgreSQL RBAC privilege grants', :integration, :postgresql_onl
     V4IntegrationHelper.cleanup_tenants!([tenant], Apartment.adapter)
     Apartment.clear_config
     Apartment::Current.reset
-    RbacHelper.teardown_rbac_connections!
   end
 
   context 'as app_user' do
