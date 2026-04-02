@@ -155,7 +155,7 @@ jobs:
           mysql -h 127.0.0.1 -u root <<'SQL'
             CREATE USER IF NOT EXISTS 'apt_test_db_manager'@'%';
             CREATE USER IF NOT EXISTS 'apt_test_app_user'@'%';
-            GRANT ALL PRIVILEGES ON *.* TO 'apt_test_db_manager'@'%';
+            GRANT ALL PRIVILEGES ON *.* TO 'apt_test_db_manager'@'%' WITH GRANT OPTION;
             GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\_%`.* TO 'apt_test_app_user'@'%';
             FLUSH PRIVILEGES;
           SQL

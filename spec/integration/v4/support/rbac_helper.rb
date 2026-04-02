@@ -118,14 +118,18 @@ module RbacHelper
     # GRANT CREATE ON DATABASE so db_manager can create schemas.
     # This runs here (not in CI provisioning) because the test database
     # (apartment_v4_test) may not exist at CI role-provisioning time.
+    # The CI database (apartment_postgresql_test) differs from the test database.
     db_name = connection.current_database
     connection.execute("GRANT CREATE ON DATABASE #{connection.quote_table_name(db_name)} TO #{ROLES[:db_manager]}")
+    # PG 15+ revoked CREATE ON SCHEMA public FROM PUBLIC. db_manager needs it
+    # for migrate_primary (which runs under migration_role in the public schema).
+    connection.execute("GRANT CREATE ON SCHEMA public TO #{ROLES[:db_manager]}")
   end
 
   def provision_mysql_roles!(connection)
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:db_manager]}'@'%'")
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:app_user]}'@'%'")
-    connection.execute("GRANT ALL PRIVILEGES ON *.* TO '#{ROLES[:db_manager]}'@'%'")
+    connection.execute("GRANT ALL PRIVILEGES ON *.* TO '#{ROLES[:db_manager]}'@'%' WITH GRANT OPTION")
     connection.execute(
       "GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\\_%`.* TO '#{ROLES[:app_user]}'@'%'"
     )
