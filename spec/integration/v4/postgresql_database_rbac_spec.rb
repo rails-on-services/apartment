@@ -48,15 +48,15 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
       grant_log << { tenant: t, user: conn.execute('SELECT current_user AS cu').first['cu'] }
       Apartment::Tenant.switch(t) do
         tc = ActiveRecord::Base.connection
+        role = tc.quote_table_name(RbacHelper::ROLES[:app_user])
+        # Tables: DML access
+        tc.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO #{role}")
         tc.execute(
-          'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public ' \
-          "TO #{tc.quote_table_name(RbacHelper::ROLES[:app_user])}"
+          "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO #{role}"
         )
-        tc.execute(
-          'ALTER DEFAULT PRIVILEGES IN SCHEMA public ' \
-          'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES ' \
-          "TO #{tc.quote_table_name(RbacHelper::ROLES[:app_user])}"
-        )
+        # Sequences: needed for serial/identity columns (INSERT calls nextval)
+        tc.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO #{role}")
+        tc.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO #{role}")
       end
     }
 
