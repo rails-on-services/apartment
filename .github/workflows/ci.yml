@@ -92,6 +92,20 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
+      - name: Provision RBAC test roles
+        run: |
+          psql -h 127.0.0.1 -U postgres -d apartment_postgresql_test <<'SQL'
+            DO $$
+            BEGIN
+              IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'apt_test_db_manager') THEN
+                CREATE ROLE apt_test_db_manager LOGIN CREATEDB;
+              END IF;
+              IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'apt_test_app_user') THEN
+                CREATE ROLE apt_test_app_user LOGIN;
+              END IF;
+            END $$;
+            GRANT apt_test_app_user TO apt_test_db_manager;
+          SQL
       - name: Run v4 integration tests
         run: bundle exec rspec spec/integration/v4/ --format progress
         env:
@@ -136,6 +150,15 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
+      - name: Provision RBAC test roles
+        run: |
+          mysql -h 127.0.0.1 -u root <<'SQL'
+            CREATE USER IF NOT EXISTS 'apt_test_db_manager'@'%';
+            CREATE USER IF NOT EXISTS 'apt_test_app_user'@'%';
+            GRANT ALL PRIVILEGES ON *.* TO 'apt_test_db_manager'@'%';
+            GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\_%`.* TO 'apt_test_app_user'@'%';
+            FLUSH PRIVILEGES;
+          SQL
       - name: Run v4 integration tests
         run: bundle exec rspec spec/integration/v4/ --format progress
         env:
