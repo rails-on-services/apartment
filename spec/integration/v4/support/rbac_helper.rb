@@ -46,13 +46,19 @@ module RbacHelper
 
     @available = true
   rescue ActiveRecord::StatementInvalid => e
-    warn "[RbacHelper] Could not provision roles (#{e.class}): #{e.message}"
+    if e.message.match?(/permission denied|must be superuser|CREATEROLE|Access denied/i)
+      warn "[RbacHelper] Insufficient privileges to provision roles: #{e.message}"
+    else
+      warn "[RbacHelper] Unexpected error during role provisioning: #{e.message}"
+    end
     warn '[RbacHelper] See docs/designs/v4-phase5.2-rbac-integration-tests.md for setup instructions.'
     @available = false
   end
 
   # Connect as a specific role. Stashes the original config for restoration.
   # For grant verification tests (separate connections, not SET ROLE).
+  # Only stashes on first call — subsequent calls without restore reuse the original stash
+  # to prevent overwriting the real config with an already-swapped one.
   def connect_as(role_key)
     username = ROLES.fetch(role_key)
     @stashed_config ||= ActiveRecord::Base.connection_db_config.configuration_hash.stringify_keys
@@ -69,7 +75,9 @@ module RbacHelper
 
   # Register database configs for :writing and :db_manager roles with AR's
   # ConnectionHandler. Uses the same database but different usernames.
-  # Call in before(:each) — after the ConnectionHandler swap creates a fresh handler.
+  # Must be called in before(:each), not before(:context): the :integration tag's
+  # around hook swaps ConnectionHandler per example, discarding any registrations
+  # made at the context level.
   def setup_connects_to!(base_config)
     handler = ActiveRecord::Base.connection_handler
 
@@ -86,9 +94,10 @@ module RbacHelper
     end
   end
 
-  # Disconnect and remove non-primary pools created during tests.
+  # Restore stashed connection if connect_as was called without restore.
+  # Pool cleanup is handled by the ConnectionHandler swap in the :integration around hook.
   def teardown_rbac_connections!
-    @stashed_config = nil
+    restore_default_connection! if @stashed_config
   end
 
   # --- Private provisioning methods ---

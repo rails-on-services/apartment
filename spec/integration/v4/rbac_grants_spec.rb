@@ -111,6 +111,29 @@ RSpec.describe('PostgreSQL RBAC privilege grants', :integration, :postgresql_onl
       conn.execute("INSERT INTO #{conn.quote_table_name(tenant)}.gadgets (label) VALUES ('shiny')")
       result = conn.execute("SELECT label FROM #{conn.quote_table_name(tenant)}.gadgets")
       expect(result.first['label']).to(eq('shiny'))
+    ensure
+      RbacHelper.restore_default_connection!
+    end
+  end
+
+  context 'function execute grant' do
+    it 'app_user can execute functions created by db_manager' do
+      # db_manager creates a function in the tenant schema
+      RbacHelper.connect_as(:db_manager)
+      conn = ActiveRecord::Base.connection
+      conn.execute(<<~SQL.squish)
+        CREATE FUNCTION #{conn.quote_table_name(tenant)}.rbac_test_fn()
+        RETURNS integer LANGUAGE sql AS 'SELECT 42'
+      SQL
+      RbacHelper.restore_default_connection!
+
+      # app_user can call it (via ALTER DEFAULT PRIVILEGES ... ON FUNCTIONS)
+      RbacHelper.connect_as(:app_user)
+      result = ActiveRecord::Base.connection.execute(
+        "SELECT #{ActiveRecord::Base.connection.quote_table_name(tenant)}.rbac_test_fn() AS val"
+      )
+      expect(result.first['val'].to_i).to(eq(42))
+    ensure
       RbacHelper.restore_default_connection!
     end
   end

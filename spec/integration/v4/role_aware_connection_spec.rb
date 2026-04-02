@@ -27,6 +27,10 @@ RSpec.describe('Role-aware connection routing', :integration, :postgresql_only, 
   end
 
   after do
+    V4IntegrationHelper.establish_default_connection!
+    Apartment.adapter = V4IntegrationHelper.build_adapter(
+      V4IntegrationHelper.default_connection_config
+    )
     V4IntegrationHelper.cleanup_tenants!([tenant], Apartment.adapter)
     Apartment.clear_config
     Apartment::Current.reset

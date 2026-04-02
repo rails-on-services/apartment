@@ -74,9 +74,10 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
 
     tenants.each do |t|
       Apartment::Tenant.switch(t) do
-        owner = ActiveRecord::Base.connection.execute(<<~SQL.squish).first['tableowner']
+        conn = ActiveRecord::Base.connection
+        owner = conn.execute(<<~SQL.squish).first['tableowner']
           SELECT tableowner FROM pg_tables
-          WHERE schemaname = '#{t}' AND tablename = 'rbac_test_widgets'
+          WHERE schemaname = #{conn.quote(t)} AND tablename = 'rbac_test_widgets'
         SQL
         expect(owner).to(eq(RbacHelper::ROLES[:db_manager]))
       end
@@ -94,7 +95,7 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
       result = conn.execute("SELECT name FROM #{conn.quote_table_name(t)}.rbac_test_widgets")
       expect(result.first['name']).to(eq('test'))
     end
-
+  ensure
     RbacHelper.restore_default_connection!
   end
 
@@ -114,9 +115,10 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
 
       tenants.each do |t|
         Apartment::Tenant.switch(t) do
-          owner = ActiveRecord::Base.connection.execute(<<~SQL.squish).first['tableowner']
+          conn = ActiveRecord::Base.connection
+          owner = conn.execute(<<~SQL.squish).first['tableowner']
             SELECT tableowner FROM pg_tables
-            WHERE schemaname = '#{t}' AND tablename = 'rbac_test_widgets'
+            WHERE schemaname = #{conn.quote(t)} AND tablename = 'rbac_test_widgets'
           SQL
           expect(owner).to(eq(RbacHelper::ROLES[:db_manager]))
         end

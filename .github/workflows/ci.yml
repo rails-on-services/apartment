@@ -94,7 +94,7 @@ jobs:
           bundler-cache: true
       - name: Provision RBAC test roles
         run: |
-          psql -h 127.0.0.1 -U postgres -d apartment_postgresql_test <<'SQL'
+          psql -h 127.0.0.1 -U postgres -d postgres <<'SQL'
             DO $$
             BEGIN
               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'apt_test_db_manager') THEN
