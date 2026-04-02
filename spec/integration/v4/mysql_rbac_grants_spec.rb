@@ -64,8 +64,9 @@ RSpec.describe('MySQL RBAC privilege grants', :integration, :mysql_only, :rbac,
       conn = ActiveRecord::Base.connection
       conn.execute("INSERT INTO `#{db_name}`.widgets (name) VALUES ('test')")
 
-      result = conn.execute("SELECT name FROM `#{db_name}`.widgets")
-      expect(result.first['name']).to(eq('test'))
+      # select_value returns a scalar; avoids Mysql2::Result hash-vs-array ambiguity
+      val = conn.select_value("SELECT name FROM `#{db_name}`.widgets")
+      expect(val).to(eq('test'))
 
       conn.execute("UPDATE `#{db_name}`.widgets SET name = 'updated'")
       conn.execute("DELETE FROM `#{db_name}`.widgets")
