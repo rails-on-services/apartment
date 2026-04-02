@@ -59,13 +59,13 @@ Relationship: `GRANT apt_test_app_user TO apt_test_db_manager` (so db_manager ca
 
 ### PostgreSQL job
 
-The CI-created database is `apartment_postgresql_test` (via `POSTGRES_DB`), but integration tests default to `apartment_v4_test` (via `APARTMENT_TEST_PG_DB` env var fallback in `support.rb`). Roles are cluster-wide so they're created against the CI database. The `GRANT CREATE ON DATABASE` targets the test database — this runs in `RbacHelper.provision_roles!` (after `ensure_test_database!` creates it) rather than in CI, since the database may not exist at provisioning time.
+Roles are cluster-wide, so the CI step connects to the `postgres` maintenance database (not the test database, which may not exist yet). The `GRANT CREATE ON DATABASE` and `GRANT CREATE ON SCHEMA public` run in `RbacHelper.provision_roles!` after `ensure_test_database!` creates the test database (`apartment_v4_test`).
 
 ```yaml
 - name: Provision RBAC test roles
   if: matrix.db == 'postgresql'
   run: |
-    psql -h 127.0.0.1 -U postgres -d apartment_postgresql_test <<'SQL'
+    psql -h 127.0.0.1 -U postgres -d postgres <<'SQL'
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'apt_test_db_manager') THEN
@@ -92,7 +92,7 @@ CI MySQL uses `MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'`, so no password flag on the cl
     mysql -h 127.0.0.1 -u root <<'SQL'
       CREATE USER IF NOT EXISTS 'apt_test_db_manager'@'%';
       CREATE USER IF NOT EXISTS 'apt_test_app_user'@'%';
-      GRANT ALL PRIVILEGES ON *.* TO 'apt_test_db_manager'@'%';
+      GRANT ALL PRIVILEGES ON *.* TO 'apt_test_db_manager'@'%' WITH GRANT OPTION;
       GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\_%`.* TO 'apt_test_app_user'@'%';
       FLUSH PRIVILEGES;
     SQL

@@ -33,7 +33,8 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
       tenants.each { |t| Apartment.adapter.create(t) }
     end
 
-    # Write a real migration file
+    # Write a real migration file. [7.2] is the minimum supported Rails version
+    # in the CI matrix; stable across 7.2/8.0/8.1.
     timestamp = '20260401000001'
     File.write(File.join(migration_dir, "#{timestamp}_create_rbac_test_widgets.rb"), <<~RUBY)
       class CreateRbacTestWidgets < ActiveRecord::Migration[7.2]
@@ -102,6 +103,7 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
   it 'evicts migration-role pools after run' do
     Apartment::Migrator.new(threads: 0).run
 
+    # Intentionally coupled to pool key format ("tenant:role") — regression guard for evict_migration_pools
     db_mgr_keys = Apartment.pool_manager.stats[:tenants].select { |k| k.end_with?(':db_manager') }
     expect(db_mgr_keys).to(be_empty)
   end

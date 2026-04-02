@@ -28,6 +28,7 @@ module RbacHelper
 
   # Idempotent role creation. Engine-aware.
   # Returns true on success, false on failure.
+  # One-shot: first failure wins for the process (no retry on subsequent :rbac contexts).
   def provision_roles!(connection)
     return @available if @provisioned
 
@@ -130,6 +131,8 @@ module RbacHelper
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:db_manager]}'@'%'")
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:app_user]}'@'%'")
     connection.execute("GRANT ALL PRIVILEGES ON *.* TO '#{ROLES[:db_manager]}'@'%' WITH GRANT OPTION")
+    # Wildcard grant is a safety net; the real per-tenant grants come from
+    # Mysql2Adapter#grant_privileges during Apartment.adapter.create(tenant).
     connection.execute(
       "GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\\_%`.* TO '#{ROLES[:app_user]}'@'%'"
     )
