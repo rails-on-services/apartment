@@ -122,13 +122,23 @@ module RbacHelper
     # The CI database (apartment_postgresql_test) differs from the test database.
     db_name = connection.current_database
     connection.execute("GRANT CREATE ON DATABASE #{connection.quote_table_name(db_name)} TO #{ROLES[:db_manager]}")
-    # PG 15+ revoked CREATE ON SCHEMA public FROM PUBLIC. db_manager needs CREATE
-    # for migrate_primary (which runs under migration_role in the public schema).
-    # Also needs access to existing tables (schema_migrations may already exist,
-    # owned by postgres from earlier integration tests).
+    # db_manager needs full access to the public schema for migrate_primary
+    # (which runs under migration_role). PG 15+ revoked CREATE ON SCHEMA public
+    # FROM PUBLIC. We also need access to tables postgres creates (e.g.,
+    # schema_migrations from non-RBAC specs that may run before or after
+    # provisioning due to RSpec randomization).
     connection.execute("GRANT ALL ON SCHEMA public TO #{ROLES[:db_manager]}")
     connection.execute("GRANT ALL ON ALL TABLES IN SCHEMA public TO #{ROLES[:db_manager]}")
     connection.execute("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO #{ROLES[:db_manager]}")
+    # Cover tables/sequences postgres creates AFTER this provisioning runs.
+    # Provisioning runs as the superuser (typically 'postgres'); ALTER DEFAULT
+    # PRIVILEGES without FOR ROLE uses the current user as the grantor.
+    connection.execute(
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO #{ROLES[:db_manager]}"
+    )
+    connection.execute(
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO #{ROLES[:db_manager]}"
+    )
   end
 
   def provision_mysql_roles!(connection)
