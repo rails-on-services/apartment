@@ -859,7 +859,7 @@ spec/unit/
 
 spec/integration/v4/
 ├── role_aware_connection_spec.rb     # NEW — PG role-based pool resolution
-├── rbac_integration_spec.rb          # NEW — PG grant verification with real roles
+├── rbac_grants_spec.rb               # NEW — PG grant verification with real roles
 ├── migrator_rbac_spec.rb            # NEW — Migrator with migration_role
 ```
 
