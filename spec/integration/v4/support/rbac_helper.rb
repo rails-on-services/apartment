@@ -4,7 +4,7 @@
 # role-aware connections, privilege grants, and Migrator migration_role.
 #
 # Usage: tag specs with :rbac plus :postgresql_only or :mysql_only.
-# Roles are provisioned once per suite via before(:context, :rbac).
+# Roles are provisioned once per :rbac describe block via before(:context, :rbac).
 # If provisioning fails (e.g., local PG user lacks CREATEROLE),
 # all :rbac specs skip with an actionable message.
 module RbacHelper
