@@ -118,10 +118,10 @@ module Apartment
         klass.establish_connection(default_config)
         klass.instance_variable_set(:@apartment_connection_established, true)
 
-        if Apartment.config.tenant_strategy == :schema
-          table = klass.table_name.split('.').last
-          klass.table_name = "#{default_tenant}.#{table}"
-        end
+        return unless Apartment.config.tenant_strategy == :schema
+
+        table = klass.table_name.split('.').last
+        klass.table_name = "#{default_tenant}.#{table}"
       end
 
       # Deprecated: use process_pinned_models instead.

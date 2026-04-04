@@ -23,19 +23,20 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     V4IntegrationHelper.create_test_table!
 
     # Simulate ApplicationRecord for realistic topology
-    stub_const('ApplicationRecord', Class.new(ActiveRecord::Base) {
+    stub_const('ApplicationRecord', Class.new(ActiveRecord::Base) do
       self.abstract_class = true
-    })
+    end)
 
-    stub_const('GlobalSetting', Class.new(ApplicationRecord) {
+    stub_const('GlobalSetting', Class.new(ApplicationRecord) do
       self.table_name = 'global_settings'
       include Apartment::Model
-      pin_tenant
-    })
 
-    stub_const('Widget', Class.new(ApplicationRecord) {
+      pin_tenant
+    end)
+
+    stub_const('Widget', Class.new(ApplicationRecord) do
       self.table_name = 'widgets'
-    })
+    end)
 
     Apartment.configure do |c|
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
@@ -142,9 +143,9 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
   context 'config.excluded_models shim' do
     it 'still works via deprecated path' do
       # Re-setup with config.excluded_models instead of pin_tenant
-      stub_const('LegacySetting', Class.new(ApplicationRecord) {
+      stub_const('LegacySetting', Class.new(ApplicationRecord) do
         self.table_name = 'global_settings'
-      })
+      end)
 
       Apartment.clear_config
       config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
@@ -174,8 +175,8 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     it 'two threads in different tenants both read/write the pinned model to default' do
       GlobalSetting.create!(key: 'shared', value: 'initial')
 
-      threads = 2.times.map do |i|
-        Thread.new do
+      threads = Array.new(2) do |i|
+        Thread.new do # rubocop:disable ThreadSafety/NewThread
           Apartment::Tenant.switch('tenant_a') do
             GlobalSetting.create!(key: "thread_#{i}", value: "val_#{i}")
             sleep(0.01) # brief yield to increase interleaving

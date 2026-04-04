@@ -16,7 +16,7 @@ module Apartment
       def pin_tenant
         return if apartment_pinned?
 
-        @apartment_pinned = true
+        @apartment_pinned = true # rubocop:disable ThreadSafety/ClassInstanceVariable
         Apartment.register_pinned_model(self)
 
         # If Apartment is already activated, process immediately (Zeitwerk autoload path).
@@ -25,7 +25,7 @@ module Apartment
       end
 
       def apartment_pinned?
-        return true if @apartment_pinned == true
+        return true if @apartment_pinned == true # rubocop:disable ThreadSafety/ClassInstanceVariable
         return false unless superclass.respond_to?(:apartment_pinned?)
 
         superclass.apartment_pinned?
