@@ -161,9 +161,8 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
       sleep(0.02)
       Apartment::Tenant.switch('lru_6') { Widget.create!(name: 'most_recent') }
 
-      # Directly invoke reap to avoid timing-dependent background thread.
-      # PoolReaper#reap is private — we test the observable effect.
-      Apartment.pool_reaper.send(:reap)
+      # Directly invoke run_cycle to avoid timing-dependent background thread.
+      Apartment.pool_reaper.run_cycle
 
       stats = Apartment.pool_manager.stats
       expect(stats[:total_pools]).to(be <= 3)
