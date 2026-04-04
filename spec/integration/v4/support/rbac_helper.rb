@@ -60,10 +60,10 @@ module RbacHelper
   # For grant verification tests (separate connections, not SET ROLE).
   # Only stashes on first call — subsequent calls without restore reuse the original stash
   # to prevent overwriting the real config with an already-swapped one.
-  def connect_as(role_key)
+  def connect_as(role_key, **overrides)
     username = ROLES.fetch(role_key)
     @stashed_config ||= ActiveRecord::Base.connection_db_config.configuration_hash.stringify_keys
-    ActiveRecord::Base.establish_connection(@stashed_config.merge('username' => username))
+    ActiveRecord::Base.establish_connection(@stashed_config.merge('username' => username, **overrides))
   end
 
   # Restore the connection stashed by connect_as.
@@ -148,11 +148,8 @@ module RbacHelper
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:db_manager]}'@'%'")
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:app_user]}'@'%'")
     connection.execute("GRANT ALL PRIVILEGES ON *.* TO '#{ROLES[:db_manager]}'@'%' WITH GRANT OPTION")
-    # Wildcard grant is a safety net; the real per-tenant grants come from
-    # Mysql2Adapter#grant_privileges during Apartment.adapter.create(tenant).
-    connection.execute(
-      "GRANT SELECT, INSERT, UPDATE, DELETE ON `apartment\\_%`.* TO '#{ROLES[:app_user]}'@'%'"
-    )
+    # No wildcard grant for app_user — tests must depend entirely on
+    # Mysql2Adapter#grant_privileges (fired during adapter.create).
     connection.execute('FLUSH PRIVILEGES')
   end
 
