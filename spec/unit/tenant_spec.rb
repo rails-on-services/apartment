@@ -111,8 +111,8 @@ RSpec.describe(Apartment::Tenant) do
   end
 
   describe '.init' do
-    it 'delegates to adapter.process_excluded_models' do
-      expect(mock_adapter).to(receive(:process_excluded_models))
+    it 'delegates to adapter.process_pinned_models' do
+      expect(mock_adapter).to(receive(:process_pinned_models))
       described_class.init
     end
   end
