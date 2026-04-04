@@ -13,7 +13,8 @@ module Apartment
         from tenants_provider). With a TENANT argument, migrates only that tenant.
 
         Uses Apartment::Migrator for both paths, preserving RBAC role wrapping,
-        advisory lock management, and instrumentation.
+        advisory lock management, and instrumentation. Single-tenant mode
+        migrates only the named tenant (not the primary/default schema).
       DESC
       # Thor :numeric handles large integers (e.g. 20260401000000 timestamps) correctly.
       method_option :version, type: :numeric, desc: 'Target migration version (also reads ENV VERSION)'
@@ -64,6 +65,10 @@ module Apartment
         raise(Thor::Error, "Migration failed for #{result.failed.size} tenant(s)") unless result.success?
       end
 
+      # Rollback bypasses the Migrator (no with_migration_role, no advisory lock
+      # disabling, no Current.migrating flag). This is intentional: rollback is
+      # sequential and cautious; parallel rollback is not a real need, and RBAC
+      # role separation adds complexity without benefit for undo operations.
       def rollback_single(tenant)
         step = options[:step]
         say("Rolling back tenant: #{tenant} (#{step} step(s))")
