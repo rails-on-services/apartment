@@ -93,8 +93,7 @@ module Apartment
       end
 
       def with_migration_role(&)
-        role = Apartment.config.migration_role
-        role ? ActiveRecord::Base.connected_to(role: role, &) : yield
+        Apartment::Migrator.with_migration_role(&)
       end
 
       def resolve_version

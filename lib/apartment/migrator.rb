@@ -37,6 +37,14 @@ module Apartment
       end
     end
 
+    # Wrap a block in connected_to(role: migration_role) when configured.
+    # Class method so both Migrator internals and CLI commands can share
+    # the same RBAC role-switching logic without duplication.
+    def self.with_migration_role(&)
+      role = Apartment.config.migration_role
+      role ? ActiveRecord::Base.connected_to(role: role, &) : yield
+    end
+
     def initialize(threads: 0, version: nil)
       @threads = threads
       @version = version
@@ -189,10 +197,7 @@ module Apartment
       results.to_a
     end
 
-    def with_migration_role(&)
-      role = Apartment.config.migration_role
-      role ? ActiveRecord::Base.connected_to(role: role, &) : yield
-    end
+    def with_migration_role(&) = self.class.with_migration_role(&)
 
     def evict_migration_pools
       role = Apartment.config.migration_role

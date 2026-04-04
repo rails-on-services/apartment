@@ -285,14 +285,24 @@ RSpec.describe(Apartment::Migrator) do
     end
   end
 
-  describe '#with_migration_role' do
+  describe '.with_migration_role' do
     it 'yields without connected_to when migration_role is nil' do
-      migrator = described_class.new
       expect(ActiveRecord::Base).not_to(receive(:connected_to))
-      migrator.send(:with_migration_role) { 'result' }
+      described_class.with_migration_role { 'result' }
     end
 
     it 'wraps in connected_to when migration_role is set' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.default_tenant = 'public'
+        c.migration_role = :db_manager
+      end
+      expect(ActiveRecord::Base).to(receive(:connected_to).with(role: :db_manager).and_yield)
+      described_class.with_migration_role { 'result' }
+    end
+
+    it 'is accessible as a private instance method (delegates to class method)' do
       Apartment.configure do |c|
         c.tenant_strategy = :schema
         c.tenants_provider = -> { [] }
