@@ -1,78 +1,40 @@
 # frozen_string_literal: true
 
+require 'apartment/cli'
+
 namespace :apartment do
-  desc 'Create all tenant schemas/databases from tenants_provider'
-  task create: :environment do
-    tenants = Apartment.config.tenants_provider.call
-    failed = []
-    tenants.each do |tenant|
-      puts "Creating tenant: #{tenant}"
-      Apartment::Tenant.create(tenant)
-    rescue Apartment::TenantExists
-      puts '  already exists, skipping'
-    rescue StandardError => e
-      warn "  FAILED: #{e.message}"
-      failed << tenant
+  desc 'Create all tenant schemas/databases (or one: rake apartment:create[tenant])'
+  task :create, [:tenant] => :environment do |_t, args|
+    if args[:tenant]
+      Apartment::CLI::Tenants.new.invoke(:create, [args[:tenant]])
+    else
+      Apartment::CLI::Tenants.new.invoke(:create)
     end
-    abort("apartment:create failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
   end
 
   desc 'Drop a tenant schema/database'
   task :drop, [:tenant] => :environment do |_t, args|
-    abort 'Usage: rake apartment:drop[tenant_name]' unless args[:tenant]
-    Apartment::Tenant.drop(args[:tenant])
-    puts "Dropped tenant: #{args[:tenant]}"
+    abort('Usage: rake apartment:drop[tenant_name]') unless args[:tenant]
+    Apartment::CLI::Tenants.new.invoke(:drop, [args[:tenant]], force: true)
   end
 
-  desc 'Run migrations for all tenants'
-  task migrate: :environment do
-    require 'apartment/migrator'
-
-    threads = Apartment.config.parallel_migration_threads
-    version = ENV['VERSION']&.to_i
-
-    migrator = Apartment::Migrator.new(threads: threads, version: version)
-
-    result = migrator.run
-    puts result.summary
-
-    abort("apartment:migrate failed for #{result.failed.size} tenant(s)") unless result.success?
-
-    # Schema dump (respects ActiveRecord.dump_schema_after_migration)
-    if ActiveRecord.dump_schema_after_migration && Rake::Task.task_defined?('db:schema:dump')
-      Rake::Task['db:schema:dump'].invoke
+  desc 'Run migrations for all tenants (or one: rake apartment:migrate[tenant])'
+  task :migrate, [:tenant] => :environment do |_t, args|
+    if args[:tenant]
+      Apartment::CLI::Migrations.new.invoke(:migrate, [args[:tenant]])
+    else
+      Apartment::CLI::Migrations.new.invoke(:migrate)
     end
   end
 
   desc 'Seed all tenants'
   task seed: :environment do
-    tenants = Apartment.config.tenants_provider.call
-    failed = []
-    tenants.each do |tenant|
-      puts "Seeding tenant: #{tenant}"
-      Apartment::Tenant.seed(tenant)
-    rescue StandardError => e
-      warn "  FAILED: #{e.message}"
-      failed << tenant
-    end
-    abort("apartment:seed failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
+    Apartment::CLI::Seeds.new.invoke(:seed)
   end
 
   desc 'Rollback migrations for all tenants'
   task :rollback, [:step] => :environment do |_t, args|
-    step = (args[:step] || 1).to_i
-    tenants = Apartment.config.tenants_provider.call
-    failed = []
-    tenants.each do |tenant|
-      puts "Rolling back tenant: #{tenant} (#{step} step(s))"
-      Apartment::Tenant.switch(tenant) do
-        ActiveRecord::Base.connection_pool.migration_context.rollback(step)
-      end
-    rescue StandardError => e
-      warn "  FAILED: #{e.message}"
-      failed << tenant
-    end
-    abort("apartment:rollback failed for #{failed.size} tenant(s): #{failed.join(', ')}") if failed.any?
+    Apartment::CLI::Migrations.new.invoke(:rollback, [], step: (args[:step] || 1).to_i)
   end
 
   namespace :schema do
@@ -81,7 +43,7 @@ namespace :apartment do
       task dump: :environment do
         require 'apartment/schema_cache'
         paths = Apartment::SchemaCache.dump_all
-        paths.each { |p| puts "Dumped: #{p}" }
+        paths.each { |p| puts("Dumped: #{p}") }
       end
     end
   end

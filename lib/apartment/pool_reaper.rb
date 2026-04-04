@@ -46,6 +46,23 @@ module Apartment
       @mutex.synchronize { @timer&.running? || false }
     end
 
+    # Perform one synchronous eviction pass (idle + LRU).
+    # Returns the total number of pools evicted.
+    # Called by the background timer and by CLI `pool evict`.
+    def run_cycle
+      count = 0
+      count += evict_idle
+      count += evict_lru if @max_total
+      count
+    rescue Apartment::ApartmentError => e
+      warn "[Apartment::PoolReaper] #{e.class}: #{e.message}"
+      0
+    rescue StandardError => e
+      warn "[Apartment::PoolReaper] Unexpected error: #{e.class}: #{e.message}"
+      warn e.backtrace&.first(5)&.join("\n") if e.backtrace
+      0
+    end
+
     private
 
     def stop_internal
@@ -57,16 +74,11 @@ module Apartment
     end
 
     def reap
-      evict_idle
-      evict_lru if @max_total
-    rescue Apartment::ApartmentError => e
-      warn "[Apartment::PoolReaper] #{e.class}: #{e.message}"
-    rescue StandardError => e
-      warn "[Apartment::PoolReaper] Unexpected error: #{e.class}: #{e.message}"
-      warn e.backtrace&.first(5)&.join("\n") if e.backtrace
+      run_cycle
     end
 
     def evict_idle
+      count = 0
       @pool_manager.idle_tenants(timeout: @idle_timeout).each do |tenant|
         next if default_tenant_pool?(tenant)
 
@@ -74,14 +86,16 @@ module Apartment
         deregister_from_ar_handler(tenant)
         Instrumentation.instrument(:evict, tenant: tenant, reason: :idle)
         @on_evict&.call(tenant, pool)
+        count += 1
       rescue StandardError => e
         warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
       end
+      count
     end
 
     def evict_lru
       excess = @pool_manager.stats[:total_pools] - @max_total
-      return if excess <= 0
+      return 0 if excess <= 0
 
       candidates = @pool_manager.lru_tenants(count: excess + 1)
       evicted = 0
@@ -97,6 +111,7 @@ module Apartment
       rescue StandardError => e
         warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
       end
+      evicted
     end
 
     def deregister_from_ar_handler(tenant)
