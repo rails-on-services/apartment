@@ -41,13 +41,13 @@ RSpec.describe(Apartment::Model) do
     end
 
     it 'processes immediately when Apartment is already activated' do
-      expect(Apartment).to(receive(:activated?).and_return(true))
-      expect(Apartment).to(receive(:process_pinned_model))
-
       klass = Class.new(ActiveRecord::Base) do
         include Apartment::Model
       end
       stub_const('LateLoadedModel', klass)
+
+      expect(Apartment).to(receive(:activated?).and_return(true))
+      expect(Apartment).to(receive(:process_pinned_model).with(LateLoadedModel))
 
       klass.pin_tenant
     end

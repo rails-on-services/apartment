@@ -16,8 +16,8 @@ module Apartment
       def pin_tenant
         return if apartment_pinned?
 
-        Apartment.register_pinned_model(self)
         @apartment_pinned = true
+        Apartment.register_pinned_model(self)
 
         # If Apartment is already activated, process immediately (Zeitwerk autoload path).
         # Otherwise, activate! will process all registered models.
