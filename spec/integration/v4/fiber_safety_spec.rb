@@ -44,10 +44,8 @@ RSpec.describe('v4 Fiber safety integration', :integration,
     Apartment.clear_config
     Apartment::Current.reset
     ActiveSupport::IsolatedExecutionState.isolation_level = @original_isolation_level
-    if V4IntegrationHelper.sqlite?
-      ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
-      FileUtils.rm_rf(tmp_dir)
-    end
+    ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:') if V4IntegrationHelper.sqlite?
+    FileUtils.rm_rf(tmp_dir)
   end
 
   it 'isolates tenant state across fibers' do
