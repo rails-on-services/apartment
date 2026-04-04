@@ -114,6 +114,20 @@ jobs:
           PGPORT: '5432'
           PGUSER: postgres
           PGPASSWORD: postgres
+      - name: Verify RBAC specs ran (not silently skipped)
+        run: |
+          count=$(bundle exec rspec spec/integration/v4/ --tag rbac --format json 2>/dev/null | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
+          echo "RBAC examples ran: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::All RBAC examples were skipped — role provisioning may have failed"
+            exit 1
+          fi
+        env:
+          DATABASE_ENGINE: postgresql
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: postgres
 
   # ── MySQL integration tests ────────────────────────────────────────
   mysql:
@@ -162,6 +176,19 @@ jobs:
           SQL
       - name: Run v4 integration tests
         run: bundle exec rspec spec/integration/v4/ --format progress
+        env:
+          DATABASE_ENGINE: mysql
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: '3306'
+          MYSQL_USER: root
+      - name: Verify RBAC specs ran (not silently skipped)
+        run: |
+          count=$(bundle exec rspec spec/integration/v4/ --tag rbac --format json 2>/dev/null | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
+          echo "RBAC examples ran: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::All RBAC examples were skipped — role provisioning may have failed"
+            exit 1
+          fi
         env:
           DATABASE_ENGINE: mysql
           MYSQL_HOST: 127.0.0.1

@@ -110,7 +110,7 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
   it 'invokes the callable with tenant name and a live connection' do
     expect(@grant_log.size).to(eq(1))
     expect(@grant_log.first[:tenant]).to(eq(tenant))
-    expect(@grant_log.first[:user]).to(be_a(String))
+    expect(@grant_log.first[:user]).to(eq(RbacHelper::ROLES[:db_manager]))
   end
 
   it 'app_user can DML on tables in the tenant database' do
