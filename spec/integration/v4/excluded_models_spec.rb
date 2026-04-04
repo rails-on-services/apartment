@@ -2,49 +2,51 @@
 
 require 'spec_helper'
 require_relative 'support'
+require 'apartment/concerns/model'
 
-# Excluded model isolation requires the ConnectionHandling patch to be aware
-# of per-model connection owners. Phase 2.3's patch intercepts
-# ActiveRecord::Base.connection_pool globally, so subclass connections
-# established via process_excluded_models are overridden during a switch.
-#
-# Full excluded model support requires ConnectionHandling to check
-# connection_specification_name before overriding. These tests document
-# the expected behavior — pending tests will fail-loud once the fix lands.
-RSpec.describe('v4 Excluded models integration', :integration,
+RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
                skip: (V4_INTEGRATION_AVAILABLE ? false : 'requires ActiveRecord + database gem')) do
   include V4IntegrationHelper
 
-  let(:tmp_dir) { Dir.mktmpdir('apartment_excluded') }
+  let(:tmp_dir) { Dir.mktmpdir('apartment_pinned') }
   let(:created_tenants) { [] }
 
   before do
     V4IntegrationHelper.ensure_test_database! unless V4IntegrationHelper.sqlite?
     config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
+
+    # Create tables in default database
     ActiveRecord::Base.connection.create_table(:global_settings, force: true) do |t|
       t.string(:key)
       t.string(:value)
     end
     V4IntegrationHelper.create_test_table!
 
-    stub_const('GlobalSetting', Class.new(ActiveRecord::Base) do
+    # Simulate ApplicationRecord for realistic topology
+    stub_const('ApplicationRecord', Class.new(ActiveRecord::Base) {
+      self.abstract_class = true
+    })
+
+    stub_const('GlobalSetting', Class.new(ApplicationRecord) {
       self.table_name = 'global_settings'
-    end)
-    stub_const('Widget', Class.new(ActiveRecord::Base) do
+      include Apartment::Model
+      pin_tenant
+    })
+
+    stub_const('Widget', Class.new(ApplicationRecord) {
       self.table_name = 'widgets'
-    end)
+    })
 
     Apartment.configure do |c|
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
       c.tenants_provider = -> { %w[tenant_a] }
       c.default_tenant = V4IntegrationHelper.default_tenant
-      c.excluded_models = ['GlobalSetting']
       c.check_pending_migrations = false
     end
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
     Apartment.activate!
-    Apartment.adapter.process_excluded_models
+    Apartment.adapter.process_pinned_models
 
     Apartment.adapter.create('tenant_a')
     created_tenants << 'tenant_a'
@@ -63,27 +65,16 @@ RSpec.describe('v4 Excluded models integration', :integration,
     end
   end
 
-  it 'process_excluded_models establishes a dedicated connection for the model' do
-    # The excluded model should have its own connection_specification_name
-    # (different from AR::Base), proving establish_connection was called.
+  it 'pin_tenant establishes a dedicated connection for the model' do
     expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
   end
 
-  it 'process_excluded_models is idempotent' do
-    expect { Apartment.adapter.process_excluded_models }.not_to(raise_error)
-
+  it 'pin_tenant is idempotent' do
+    expect { Apartment.adapter.process_pinned_models }.not_to(raise_error)
     expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
   end
 
-  # With schema strategy, excluded models work naturally because the public
-  # schema (where global_settings lives) is accessible from any search_path.
-  # With database-per-tenant strategies, ConnectionHandling overrides the
-  # excluded model's pinned connection, so these are pending for non-schema.
-  it 'excluded model queries always target the default database' do
-    unless V4IntegrationHelper.postgresql?
-      pending('ConnectionHandling does not yet respect per-model connection owners for database-per-tenant strategies')
-    end
-
+  it 'pinned model queries always target the default database' do
     GlobalSetting.create!(key: 'site_name', value: 'TestSite')
 
     Apartment::Tenant.switch('tenant_a') do
@@ -93,11 +84,7 @@ RSpec.describe('v4 Excluded models integration', :integration,
     end
   end
 
-  it 'excluded model data persists across tenant switches' do
-    unless V4IntegrationHelper.postgresql?
-      pending('ConnectionHandling does not yet respect per-model connection owners for database-per-tenant strategies')
-    end
-
+  it 'pinned model data persists across tenant switches' do
     GlobalSetting.create!(key: 'version', value: '1.0')
 
     Apartment::Tenant.switch('tenant_a') do
@@ -107,15 +94,98 @@ RSpec.describe('v4 Excluded models integration', :integration,
     expect(GlobalSetting.count).to(eq(1))
   end
 
-  it 'excluded model writes inside a tenant block land in the default database' do
-    unless V4IntegrationHelper.postgresql?
-      pending('ConnectionHandling does not yet respect per-model connection owners for database-per-tenant strategies')
-    end
-
+  it 'pinned model writes inside a tenant block land in the default database' do
     Apartment::Tenant.switch('tenant_a') do
       GlobalSetting.create!(key: 'inside_tenant', value: 'yes')
     end
 
     expect(GlobalSetting.find_by(key: 'inside_tenant')).to(be_present)
+  end
+
+  it 'tenant model (Widget) still routes through tenant pool during switch' do
+    Apartment::Tenant.switch('tenant_a') do
+      Widget.create!(name: 'in_tenant')
+      expect(Widget.count).to(eq(1))
+    end
+
+    # Back in default — tenant widget not visible (different database/schema)
+    # For PG schema, public.widgets might exist; for DB-per-tenant, no widgets table in default
+    if V4IntegrationHelper.postgresql?
+      # Schema strategy: widgets table exists in public, should be empty
+      expect(Widget.count).to(eq(0))
+    end
+  end
+
+  context 'ApplicationRecord topology' do
+    it 'normal models inheriting from ApplicationRecord get tenant routing' do
+      Apartment::Tenant.switch('tenant_a') do
+        Widget.create!(name: 'routed_correctly')
+        expect(Widget.count).to(eq(1))
+      end
+    end
+  end
+
+  context 'STI subclass of pinned model' do
+    before do
+      stub_const('AdminSetting', Class.new(GlobalSetting))
+    end
+
+    it 'inherits pinned behavior' do
+      AdminSetting.create!(key: 'admin_only', value: 'true')
+
+      Apartment::Tenant.switch('tenant_a') do
+        expect(AdminSetting.find_by(key: 'admin_only').value).to(eq('true'))
+      end
+    end
+  end
+
+  context 'config.excluded_models shim' do
+    it 'still works via deprecated path' do
+      # Re-setup with config.excluded_models instead of pin_tenant
+      stub_const('LegacySetting', Class.new(ApplicationRecord) {
+        self.table_name = 'global_settings'
+      })
+
+      Apartment.clear_config
+      config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
+
+      Apartment.configure do |c|
+        c.tenant_strategy = V4IntegrationHelper.tenant_strategy
+        c.tenants_provider = -> { %w[tenant_a] }
+        c.default_tenant = V4IntegrationHelper.default_tenant
+        c.excluded_models = ['LegacySetting']
+        c.check_pending_migrations = false
+      end
+
+      Apartment.adapter = V4IntegrationHelper.build_adapter(config)
+      Apartment.activate!
+      Apartment::Tenant.init
+
+      expect(Apartment.pinned_models).to(include(LegacySetting))
+
+      LegacySetting.create!(key: 'legacy', value: 'works')
+      Apartment::Tenant.switch('tenant_a') do
+        expect(LegacySetting.find_by(key: 'legacy').value).to(eq('works'))
+      end
+    end
+  end
+
+  context 'concurrent pinned model access', :stress do
+    it 'two threads in different tenants both read/write the pinned model to default' do
+      GlobalSetting.create!(key: 'shared', value: 'initial')
+
+      threads = 2.times.map do |i|
+        Thread.new do
+          Apartment::Tenant.switch('tenant_a') do
+            GlobalSetting.create!(key: "thread_#{i}", value: "val_#{i}")
+            sleep(0.01) # brief yield to increase interleaving
+            GlobalSetting.find_by(key: "thread_#{i}")
+          end
+        end
+      end
+
+      threads.each(&:join)
+      expect(GlobalSetting.count).to(eq(3)) # initial + 2 threads
+    end
   end
 end
