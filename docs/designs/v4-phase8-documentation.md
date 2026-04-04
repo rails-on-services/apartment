@@ -43,6 +43,7 @@ Complete rewrite oriented around v4's mental model. Structure:
     - config.tenant_strategy (required, :schema or :database_name)
     - config.tenants_provider (required, callable)
     - config.default_tenant
+  Invariant: "Tenant context is block-scoped; prefer Tenant.switch { ... } in app code."
   Apartment::Tenant.create / switch / drop examples
   Apartment::Model + pin_tenant for global models
 
@@ -88,6 +89,11 @@ Complete rewrite oriented around v4's mental model. Structure:
     The pin bypasses Apartment's tenant routing; Rails' own role routing
     takes over. No special handling needed.
 
+    This applies to the common case where ApplicationRecord declares
+    connects_to with multiple roles on the same database. For models
+    that use connects_to to point at a separate database entirely,
+    see Known Limitations below.
+
 ## Callbacks
   [keep current content, same API]
 
@@ -127,9 +133,9 @@ Complete rewrite oriented around v4's mental model. Structure:
   [keep]
 ```
 
-Things explicitly removed from README:
-- `config.excluded_models` (upgrade guide only)
-- `config.tenant_names` (upgrade guide only)
+Things not shown in README (documented in upgrade guide only):
+- `config.excluded_models` (deprecated in v4, removed in v5; upgrade guide covers migration)
+- `config.tenant_names` (removed in v4)
 - `config.use_schemas` / `config.use_sql` (replaced by `tenant_strategy` and `schema_load_strategy`)
 - `switch!` recommendation (mention it exists for console use, discourage in app code)
 - Multi-server setup (not yet ported to v4; omit rather than document unimplemented feature)
@@ -162,12 +168,12 @@ Structure:
   ### Tenant API
     - Apartment::Tenant.switch requires a block (no manual switch/reset pattern)
     - switch! exists for console/REPL but is discouraged in app code
-    - current_tenant removed; use Apartment::Tenant.current
+    - Apartment::Tenant.current is unchanged (same name in v3 and v4)
 
   ### Models
-    - config.excluded_models removed
-    - Use: include Apartment::Model + pin_tenant on each global model
-    - process_excluded_models removed; use process_pinned_models
+    - config.excluded_models deprecated (still works in v4, removed in v5)
+    - Migrate to: include Apartment::Model + pin_tenant on each global model
+    - process_excluded_models deprecated; use process_pinned_models
 
   ### Middleware
     - Railtie auto-inserts elevator middleware; remove manual
@@ -193,8 +199,9 @@ Structure:
 
   ### Step 3: Update Tenant Switching
     Find/replace patterns:
+      switch!(t) ... ensure reset → switch(t) { ... }
       switch_to(t) ... ensure reset! → switch(t) { ... }
-      Apartment::Tenant.current_tenant → Apartment::Tenant.current
+    Note: Apartment::Tenant.current is unchanged between v3 and v4.
 
   ### Step 4: Update Middleware
     Remove manual middleware insertion.
@@ -245,7 +252,7 @@ Replace with:
 #     pin_tenant
 #   end
 #
-# Legacy alternative (deprecated, will be removed in v5):
+# Legacy alternative (deprecated in v4, removed in v5):
 # config.excluded_models = %w[Account]
 ```
 
@@ -273,6 +280,11 @@ on:
     branches: [ 'main' ]
     tags: [ 'v3.*' ]
 ```
+
+GitHub Actions `*` matches any character sequence including dots, so `v3.*`
+matches `v3.4.2`. Only maintainers should push v3 tags; consider using
+GitHub's environment protection rules on the `production` environment as
+an additional safeguard.
 
 Release steps:
 1. Create/checkout `v3-stable` branch (branched from last v3 release tag)
