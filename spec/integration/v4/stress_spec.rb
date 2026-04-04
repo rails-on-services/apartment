@@ -131,10 +131,12 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
 
       tenants.each_with_index do |tenant, idx|
         expect(results[idx]).not_to(be_nil, "Thread #{idx} produced no result")
-        expect(results[idx][:tenant_current]).to(eq(tenant),
-          "Thread #{idx}: Tenant.current was '#{results[idx][:tenant_current]}', expected '#{tenant}'")
-        expect(results[idx][:current_tenant]).to(eq(tenant),
-          "Thread #{idx}: Current.tenant was '#{results[idx][:current_tenant]}', expected '#{tenant}'")
+        actual_current = results[idx][:tenant_current]
+        actual_attr = results[idx][:current_tenant]
+        expect(actual_current).to(eq(tenant),
+                                  "Thread #{idx}: Tenant.current was '#{actual_current}', expected '#{tenant}'")
+        expect(actual_attr).to(eq(tenant),
+                               "Thread #{idx}: Current.tenant was '#{actual_attr}', expected '#{tenant}'")
       end
     end
 
@@ -161,10 +163,10 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
 
       expect(results[0]).to(include('isolation_0'))
       expect(results[0]).not_to(include('isolation_1'),
-        "Thread 0 (stress_0) read data from stress_1's pool")
+                                "Thread 0 (stress_0) read data from stress_1's pool")
       expect(results[1]).to(include('isolation_1'))
       expect(results[1]).not_to(include('isolation_0'),
-        "Thread 1 (stress_1) read data from stress_0's pool")
+                                "Thread 1 (stress_1) read data from stress_0's pool")
     end
   end
 
