@@ -35,7 +35,7 @@ module Apartment
         db_name = environmentify(tenant)
         quoted_role = connection.quote(role_name)
         connection.execute(
-          "GRANT SELECT, INSERT, UPDATE, DELETE ON `#{db_name}`.* TO #{quoted_role}@'%'"
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON #{connection.quote_table_name(db_name)}.* TO #{quoted_role}@'%'"
         )
       end
     end

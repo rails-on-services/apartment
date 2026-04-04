@@ -42,7 +42,7 @@ module Apartment
       # Create a new tenant (schema or database).
       def create(tenant)
         TenantNameValidator.validate!(
-          tenant,
+          environmentify(tenant),
           strategy: Apartment.config.tenant_strategy,
           adapter_name: base_config['adapter']
         )
