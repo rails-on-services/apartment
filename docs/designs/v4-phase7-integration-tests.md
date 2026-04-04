@@ -56,7 +56,7 @@ spec/integration/v4/
 
 **Tests:**
 
-- **Pool count stays bounded**: Configure `max_total_connections = 5`, create 20 tenants, switch through all 20 in a loop (3 full cycles). After each cycle, invoke `pool_reaper.send(:reap)` (same pattern as `coverage_gaps_spec.rb:166`), then assert `pool_manager.stats[:total_pools] <= max_total_connections`.
+- **Pool count stays bounded**: Configure `max_total_connections = 5`, create 20 tenants, switch through all 20 in a loop (3 full cycles). After each cycle, invoke `pool_reaper.run_cycle` (public API; `coverage_gaps_spec.rb:166` uses `send(:reap)` which is stale — that spec should be updated as a drive-by), then assert `pool_manager.stats[:total_pools] <= max_total_connections`.
 - **Repeated create/drop doesn't leak pools**: Create tenant, switch into it, drop it — repeat 20 times. Assert pool count at end equals pool count at start (plus/minus 1 for default pool). Proves drop path cleans up pool entries.
 - **Sustained switching without pool growth**: Configure generous `max_total_connections` (no eviction pressure), create 5 tenants, do 200 round-robin switches. Assert final pool count == 5. No phantom pools from race conditions or double-registration.
 
@@ -74,7 +74,7 @@ spec/integration/v4/
 
 - **`tenants list`**: Create 3 tenants via adapter, invoke `Apartment::CLI::Tenants.new.invoke(:list)`, capture stdout. Assert all 3 names appear.
 - **`tenants create`**: Invoke `Apartment::CLI::Tenants.new.invoke(:create, ['cli_tenant'])`, verify tenant exists by switching into it and executing a query.
-- **`tenants drop`**: Create tenant via adapter, invoke `Apartment::CLI::Tenants.new.invoke(:drop, ['cli_tenant'])`, verify adapter raises `TenantNotFound` on subsequent drop attempt.
+- **`tenants drop`**: Create tenant via adapter, invoke `Apartment::CLI::Tenants.new.invoke(:drop, ['cli_tenant'], force: true)` (or set `ENV['APARTMENT_FORCE'] = '1'`) to bypass the confirmation prompt in non-interactive test runs. Verify adapter raises `TenantNotFound` on subsequent drop attempt.
 - **`pool stats`**: Access a tenant to populate a pool, invoke `Apartment::CLI::Pool.new.invoke(:stats)`, capture stdout and assert output includes `total_pools` and tenant name.
 
 **Not tested here:** `migrations run` / `seeds load` — covered by `migrator_integration_spec.rb`. CLI is a thin Thor wrapper; proving CRUD + stats wiring is sufficient.
@@ -85,15 +85,15 @@ spec/integration/v4/
 
 ### 4. Hardening `stress_spec.rb`
 
-**What changes:** Two new `it` blocks in the existing `concurrent switching` context. No modifications to existing passing specs.
+**What changes:** Additive only: two new `it` blocks in the existing `concurrent switching` context. Existing examples are not changed.
 
-**Test A — Explicit `Tenant.current` per thread:**
-5 threads, each assigned a specific tenant. `CyclicBarrier` synchronizes entry. Inside switch block, assert `Apartment::Tenant.current == assigned_tenant`. Results collected in `Concurrent::Map`, assertions on main thread.
+**Test A — Explicit tenant identity per thread:**
+5 threads, each assigned a specific tenant. `CyclicBarrier` synchronizes entry. Inside switch block, assert both `Apartment::Tenant.current` and `Apartment::Current.tenant` equal the assigned tenant (locks the alias relationship). Results collected in `Concurrent::Map`, assertions on main thread.
 
 **Why:** Existing test proves correct data distribution (500 writes across tenants) but doesn't prove each thread sees the correct tenant identity. A bug where `Tenant.current` returns stale state but pool resolution works correctly would pass the existing test but fail this one.
 
 **Test B — Cross-tenant connection checkout isolation:**
-2 threads with dedicated tenants. Barrier ensures both are inside switch blocks simultaneously. Each thread inserts a tagged row and reads back all rows. Assert: each thread's read contains only its own rows. Proves no connection checked out from wrong pool mid-switch.
+2 threads with dedicated tenants (`tenant_a`, `tenant_b`). Barrier ensures both are inside switch blocks simultaneously. Each thread inserts a row tagged with its thread index into the shared `widgets` table (which exists per-tenant as a separate schema/database/file), then reads back `Widget.pluck(:name)`. Assert: thread A's read returns only `['thread_a']`, thread B's read returns only `['thread_b']`. Per-engine isolation mechanism (PG schema, MySQL database, SQLite file) means "only its own rows" is enforced by the adapter's tenant boundary, not by a `WHERE` clause. Proves no connection was checked out from the wrong pool mid-switch.
 
 **Why:** Existing concurrent test uses `tenants.sample` (random selection), which proves no errors and correct totals but can't assert per-thread isolation. Dedicated tenants with barrier makes the isolation assertion precise.
 
@@ -126,6 +126,10 @@ DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integrat
 ## Success Criteria
 
 - All new specs pass on PG, MySQL, and SQLite (where applicable)
-- Existing specs unmodified and still passing
+- Existing examples unchanged and still passing
 - CI matrix green (no new failures)
-- `COVERAGE=1` run shows no coverage regression
+- Optional manual gate: `COVERAGE=1` run shows no coverage regression (not part of CI; run locally before merge)
+
+## Drive-by Fix
+
+`coverage_gaps_spec.rb:166` uses `Apartment.pool_reaper.send(:reap)` — update to `Apartment.pool_reaper.run_cycle` (public API) while we're in the file neighborhood.
