@@ -96,23 +96,39 @@ module Apartment
         end
       end
 
-      # Process excluded models — establish separate connections pinned to default tenant.
-      def process_excluded_models
-        return if Apartment.config.excluded_models.empty?
+      # Process all pinned models — establish separate connections pinned to default tenant.
+      def process_pinned_models
+        return if Apartment.pinned_models.empty?
 
-        default_config = resolve_connection_config(
-          Apartment.config.default_tenant
-        )
-
-        Apartment.config.excluded_models.each do |model_name|
-          klass = resolve_excluded_model(model_name)
-          klass.establish_connection(default_config)
-
-          if Apartment.config.tenant_strategy == :schema
-            table = klass.table_name.split('.').last # Strip existing prefix if any
-            klass.table_name = "#{default_tenant}.#{table}"
-          end
+        Apartment.pinned_models.each do |klass|
+          process_pinned_model(klass)
         end
+      end
+
+      # Process a single pinned model. Called by process_pinned_models (batch)
+      # and by Apartment::Model.pin_tenant (when activated? is true).
+      def process_pinned_model(klass)
+        # Idempotent: skip if already processed. Uses a class-level flag rather
+        # than connection_specification_name comparison — the spec name differs
+        # from ActiveRecord::Base for ApplicationRecord subclasses even before
+        # establish_connection, so it's not a reliable "already processed" signal.
+        return if klass.instance_variable_get(:@apartment_connection_established)
+
+        default_config = resolve_connection_config(Apartment.config.default_tenant)
+        klass.establish_connection(default_config)
+        klass.instance_variable_set(:@apartment_connection_established, true)
+
+        if Apartment.config.tenant_strategy == :schema
+          table = klass.table_name.split('.').last
+          klass.table_name = "#{default_tenant}.#{table}"
+        end
+      end
+
+      # Deprecated: use process_pinned_models instead.
+      def process_excluded_models
+        warn '[Apartment] DEPRECATION: process_excluded_models is deprecated. ' \
+             'Use Apartment::Model with pin_tenant instead.'
+        process_pinned_models
       end
 
       # Environmentify a tenant name based on config.
@@ -176,13 +192,6 @@ module Apartment
                 'environmentify_strategy :prepend/:append requires Rails to be defined')
         end
         Rails.env
-      end
-
-      def resolve_excluded_model(model_name)
-        model_name.constantize
-      rescue NameError => e
-        raise(Apartment::ConfigurationError,
-              "Excluded model '#{model_name}' could not be resolved: #{e.message}")
       end
 
       def deregister_shard_from_ar_handler(pool_key)

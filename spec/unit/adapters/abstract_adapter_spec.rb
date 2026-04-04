@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require_relative '../../../lib/apartment/adapters/abstract_adapter'
+require_relative '../../../lib/apartment/concerns/model'
 
 # Concrete test subclass that implements protected abstract methods.
 class TestAdapter < Apartment::Adapters::AbstractAdapter
@@ -319,88 +320,87 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
   end
 
-  describe '#process_excluded_models' do
-    it 'establishes connections for each excluded model' do
-      model_class = Class.new
-      stub_const('GlobalUser', model_class)
-      allow(model_class).to(receive(:table_name).and_return('global_users'))
+  describe '#process_pinned_models' do
+    it 'establishes connections for each pinned model' do
+      model_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('PinnedSetting', model_class)
+      allow(model_class).to(receive(:table_name).and_return('pinned_settings'))
       allow(model_class).to(receive(:table_name=))
 
-      reconfigure(excluded_models: ['GlobalUser'])
+      PinnedSetting.pin_tenant
 
       expected_config = { 'adapter' => 'postgresql', 'database' => 'public' }
       expect(model_class).to(receive(:establish_connection)) do |arg|
         expect(arg).to(eq(expected_config))
       end
 
-      adapter.process_excluded_models
+      adapter.process_pinned_models
     end
 
-    it 'handles multiple excluded models' do
-      user_class = Class.new
-      company_class = Class.new
-      stub_const('GlobalUser', user_class)
-      stub_const('GlobalCompany', company_class)
-      allow(user_class).to(receive(:table_name).and_return('global_users'))
-      allow(user_class).to(receive(:table_name=))
-      allow(company_class).to(receive(:table_name).and_return('global_companies'))
-      allow(company_class).to(receive(:table_name=))
+    it 'skips models already processed (idempotent)' do
+      model_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('AlreadyPinned', model_class)
+      allow(model_class).to(receive(:table_name).and_return('already_pinned'))
+      allow(model_class).to(receive(:table_name=))
 
-      reconfigure(excluded_models: %w[GlobalUser GlobalCompany])
+      AlreadyPinned.pin_tenant
 
-      expect(user_class).to(receive(:establish_connection))
-      expect(company_class).to(receive(:establish_connection))
+      # First call processes the model
+      allow(model_class).to(receive(:establish_connection))
+      adapter.process_pinned_models
 
-      adapter.process_excluded_models
-    end
-
-    it 'does nothing when excluded_models is empty' do
-      # Default config has excluded_models = []
-      # Should not raise
-      adapter.process_excluded_models
-    end
-
-    it 'raises ConfigurationError when excluded model class does not exist' do
-      reconfigure(excluded_models: ['NonExistentModel'])
-      expect { adapter.process_excluded_models }.to(raise_error(
-                                                      Apartment::ConfigurationError,
-                                                      /Excluded model 'NonExistentModel' could not be resolved/
-                                                    ))
+      # Second call skips — @apartment_connection_established is set
+      expect(model_class).not_to(receive(:establish_connection))
+      adapter.process_pinned_models
     end
 
     it 'prefixes table name with default schema for schema strategy' do
-      model_class = Class.new
-      stub_const('GlobalUser', model_class)
+      model_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('SchemaPinned', model_class)
       allow(model_class).to(receive(:establish_connection))
-      allow(model_class).to(receive(:table_name).and_return('global_users'))
+      allow(model_class).to(receive(:table_name).and_return('schema_pinned'))
 
-      reconfigure(excluded_models: ['GlobalUser'])
+      SchemaPinned.pin_tenant
 
-      expect(model_class).to(receive(:table_name=).with('public.global_users'))
-      adapter.process_excluded_models
-    end
-
-    it 'strips existing schema prefix before re-prefixing' do
-      model_class = Class.new
-      stub_const('GlobalUser', model_class)
-      allow(model_class).to(receive(:establish_connection))
-      allow(model_class).to(receive(:table_name).and_return('old_schema.global_users'))
-
-      reconfigure(excluded_models: ['GlobalUser'])
-
-      expect(model_class).to(receive(:table_name=).with('public.global_users'))
-      adapter.process_excluded_models
+      expect(model_class).to(receive(:table_name=).with('public.schema_pinned'))
+      adapter.process_pinned_models
     end
 
     it 'does not prefix table name for database_name strategy' do
-      model_class = Class.new
-      stub_const('GlobalUser', model_class)
+      model_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('DbPinned', model_class)
       allow(model_class).to(receive(:establish_connection))
-      allow(model_class).to(receive(:table_name).and_return('global_users'))
+      allow(model_class).to(receive(:table_name).and_return('db_pinned'))
 
-      reconfigure(tenant_strategy: :database_name, excluded_models: ['GlobalUser'])
+      DbPinned.pin_tenant
+
+      reconfigure(tenant_strategy: :database_name)
 
       expect(model_class).not_to(receive(:table_name=))
+      adapter.process_pinned_models
+    end
+
+    it 'does nothing when no models are pinned' do
+      expect { adapter.process_pinned_models }.not_to(raise_error)
+    end
+  end
+
+  describe '#process_excluded_models (deprecated)' do
+    it 'emits a deprecation warning' do
+      expect { adapter.process_excluded_models }
+        .to(output(/DEPRECATION.*process_excluded_models/).to_stderr)
+    end
+
+    it 'delegates to process_pinned_models' do
+      expect(adapter).to(receive(:process_pinned_models))
       adapter.process_excluded_models
     end
   end
