@@ -171,8 +171,10 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
-  context 'concurrent pinned model access', :stress,
-          skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.sqlite? ? 'SQLite single-writer lock causes BusyException under concurrent threads' : false) do
+  sqlite_skip = V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.sqlite? &&
+                'SQLite single-writer lock causes BusyException'
+
+  context 'concurrent pinned model access', :stress, skip: sqlite_skip do
     it 'two threads in different tenants both read/write the pinned model to default' do
       GlobalSetting.create!(key: 'shared', value: 'initial')
 
