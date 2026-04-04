@@ -25,7 +25,7 @@ module Apartment
       def seed_single(tenant)
         say("Seeding tenant: #{tenant}")
         Apartment::Tenant.seed(tenant)
-        say("  done")
+        say('  done')
       end
 
       def seed_all
@@ -34,7 +34,7 @@ module Apartment
         tenants.each do |t|
           say("Seeding tenant: #{t}")
           Apartment::Tenant.seed(t)
-          say("  done")
+          say('  done')
         rescue StandardError => e
           warn("  FAILED: #{e.message}")
           failed << t

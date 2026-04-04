@@ -29,9 +29,7 @@ module Apartment
       DESC
       method_option :force, type: :boolean, desc: 'Skip confirmation prompt'
       def drop(tenant)
-        unless force?
-          return say('Cancelled.') unless yes?("Drop tenant '#{tenant}'? This cannot be undone. [y/N]")
-        end
+        return say('Cancelled.') if !force? && !yes?("Drop tenant '#{tenant}'? This cannot be undone. [y/N]")
 
         Apartment::Tenant.drop(tenant)
         say("Dropped tenant: #{tenant}") unless quiet?
@@ -52,9 +50,9 @@ module Apartment
       def create_single(tenant)
         say("Creating tenant: #{tenant}") unless quiet?
         Apartment::Tenant.create(tenant)
-        say("  created") unless quiet?
+        say('  created') unless quiet?
       rescue Apartment::TenantExists
-        say("  already exists, skipping") unless quiet?
+        say('  already exists, skipping') unless quiet?
       end
 
       def create_all
@@ -63,9 +61,9 @@ module Apartment
         tenants.each do |t|
           say("Creating tenant: #{t}") unless quiet?
           Apartment::Tenant.create(t)
-          say("  created") unless quiet?
+          say('  created') unless quiet?
         rescue Apartment::TenantExists
-          say("  already exists, skipping") unless quiet?
+          say('  already exists, skipping') unless quiet?
         rescue StandardError => e
           warn("  FAILED: #{e.message}")
           failed << t

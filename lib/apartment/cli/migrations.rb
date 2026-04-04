@@ -19,7 +19,7 @@ module Apartment
       method_option :version, type: :numeric, desc: 'Target migration version (also reads ENV VERSION)'
       method_option :threads, type: :numeric, desc: 'Override parallel_migration_threads from config'
       def migrate(tenant = nil)
-        require 'apartment/migrator'
+        require('apartment/migrator')
 
         if tenant
           migrate_single(tenant)
@@ -70,7 +70,7 @@ module Apartment
         Apartment::Tenant.switch(tenant) do
           ActiveRecord::Base.connection_pool.migration_context.rollback(step)
         end
-        say("  done")
+        say('  done')
       end
 
       def rollback_all
@@ -82,7 +82,7 @@ module Apartment
           Apartment::Tenant.switch(t) do
             ActiveRecord::Base.connection_pool.migration_context.rollback(step)
           end
-          say("  done")
+          say('  done')
         rescue StandardError => e
           warn("  FAILED: #{e.message}")
           failed << t
