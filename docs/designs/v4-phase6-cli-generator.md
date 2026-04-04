@@ -85,6 +85,8 @@ Uses `require_relative` (same convention as `bin/rails`). Rails boots before Tho
 - Without argument: iterates `tenants_provider.call`, creates all, collects errors, reports summary. Exits non-zero if any failures.
 - `method_option :quiet, type: :boolean` — suppress per-tenant output.
 
+**Environment variable aliases:** `APARTMENT_FORCE=1` and `APARTMENT_QUIET=1` serve as fallbacks for `--force` and `--quiet` respectively, for CI/script environments where passing Thor options is awkward. Thor options take precedence when both are set.
+
 **`drop TENANT`**
 - Required argument. No "drop all" (too dangerous).
 - `method_option :force, type: :boolean` — skip confirmation prompt.
@@ -102,9 +104,13 @@ Uses `require_relative` (same convention as `bin/rails`). Rails boots before Tho
 
 **`migrate [TENANT]`**
 - Without argument: delegates to `Apartment::Migrator.new(threads:, version:).run`. Prints `result.summary`. Exits non-zero on failure. Triggers schema dump if `ActiveRecord.dump_schema_after_migration`.
-- With argument: migrates just that tenant (switch + `migration_context.migrate`).
+- With argument: delegates to `Apartment::Migrator.new(version:).migrate_one(tenant)`. This reuses the same code path as the all-tenants run (`migrate_tenant`), preserving RBAC role wrapping, advisory lock disabling, `Current.migrating` flag, and instrumentation. The CLI must not reimplement migration logic outside the Migrator.
 - `method_option :version, type: :numeric` — target migration version. Falls back to `ENV['VERSION']` for backward compat with `rake apartment:migrate VERSION=X`.
 - `method_option :threads, type: :numeric` — overrides `Apartment.config.parallel_migration_threads`.
+
+**New Migrator API: `migrate_one(tenant)`**
+
+Public method on `Apartment::Migrator` that migrates a single named tenant. Internally calls the existing private `migrate_tenant` (which handles `with_migration_role`, `with_advisory_locks_disabled`, `Current.migrating`, and instrumentation). Returns a single `Result`. Runs `evict_migration_pools` in an ensure block. This avoids CLI/rake divergence from the Migrator's semantics.
 
 **`rollback [TENANT]`**
 - Without argument: iterates all tenants sequentially, rolls back each. Collects errors, reports summary.
@@ -131,9 +137,13 @@ Rollback iterates directly (no Migrator). Parallel rollback is not a real need; 
 - If `pool_manager` is nil, prints a message and exits.
 
 **`evict`**
-- Triggers immediate eviction cycle via `Apartment.pool_reaper`.
+- Triggers immediate eviction cycle via `Apartment.pool_reaper.run_cycle`.
 - Prints how many pools were evicted.
 - `method_option :force, type: :boolean` — skip confirmation.
+
+**New PoolReaper API: `run_cycle`**
+
+Public method on `Apartment::PoolReaper` that performs one synchronous eviction pass (the same logic as the private `#reap` method called by the background timer). Returns the count of evicted pools. This gives the CLI a named contract instead of reaching into private APIs.
 
 ## Rake Refactor
 
@@ -141,8 +151,12 @@ Rake tasks become thin wrappers delegating to CLI classes:
 
 ```ruby
 namespace :apartment do
-  task create: :environment do
-    Apartment::CLI::Tenants.new.invoke(:create)
+  task :create, [:tenant] => :environment do |_t, args|
+    if args[:tenant]
+      Apartment::CLI::Tenants.new.invoke(:create, [args[:tenant]])
+    else
+      Apartment::CLI::Tenants.new.invoke(:create)
+    end
   end
 
   task :drop, [:tenant] => :environment do |_t, args|
@@ -163,7 +177,7 @@ namespace :apartment do
 end
 ```
 
-The `schema:cache:dump` task stays as-is (delegates to `SchemaCache`).
+The `schema:cache:dump` task stays as-is (delegates to `SchemaCache`). It is not duplicated as a Thor command because schema cache operations are a rake-native concern (tied to `db:schema:dump` lifecycle), not an operator CLI action.
 
 Env var backward compat: `VERSION=` is read by the Thor `migrate` command as a fallback when `--version` isn't passed.
 
@@ -196,6 +210,12 @@ Apartment.configure do |config|
   # config.parallel_migration_threads = 0
   # config.schema_load_strategy       = nil  # :schema_rb or :sql
   # config.seed_after_create           = false
+  # config.check_pending_migrations    = true
+
+  # == RBAC & Roles =========================================================
+  # config.migration_role          = nil   # e.g. :db_manager (Phase 5 role-aware connections)
+  # config.app_role                = nil   # e.g. 'app_role' or -> { "app_#{Rails.env}" }
+  # config.environmentify_strategy = nil   # nil, :prepend, :append, or a callable
 
   # == PostgreSQL ===========================================================
   # config.configure_postgres do |pg|
@@ -235,7 +255,7 @@ Invoke Thor commands programmatically. Stub `Apartment::Tenant`, `Apartment::Mig
 
 ### CLI Registration Spec (`spec/unit/cli_spec.rb`)
 
-Verifies `Apartment::CLI.subcommands` includes `tenants`, `migrations`, `seeds`, `pool`.
+Verifies subcommand registration on `Apartment::CLI`. Thor's internal API for inspecting registered subcommands varies across versions; the spec should assert via `Apartment::CLI.commands` or by invoking `apartment help` and matching output, rather than relying on a specific internal accessor. The implementation should pick whichever approach works with Thor >= 1.3.0 and document it.
 
 ### Generator Spec (`spec/unit/generator/install_generator_spec.rb`)
 
