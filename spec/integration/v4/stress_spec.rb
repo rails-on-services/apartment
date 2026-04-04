@@ -104,6 +104,68 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
       # All threads should have gotten the same pool (fetch_or_create is idempotent)
       expect(pools.uniq.size).to(eq(1))
     end
+
+    it 'each thread sees correct Tenant.current inside switch block' do
+      barrier = Concurrent::CyclicBarrier.new(5)
+      results = Concurrent::Map.new
+      errors = Queue.new
+
+      threads = tenants.map.with_index do |tenant, idx|
+        Thread.new do
+          barrier.wait
+          Apartment::Tenant.switch(tenant) do
+            results[idx] = {
+              tenant_current: Apartment::Tenant.current,
+              current_tenant: Apartment::Current.tenant,
+            }
+          end
+        rescue StandardError => e
+          errors << "Thread #{idx}: #{e.class}: #{e.message}"
+        end
+      end
+      threads.each(&:join)
+
+      collected_errors = []
+      collected_errors << errors.pop until errors.empty?
+      expect(collected_errors).to(be_empty)
+
+      tenants.each_with_index do |tenant, idx|
+        expect(results[idx]).not_to(be_nil, "Thread #{idx} produced no result")
+        expect(results[idx][:tenant_current]).to(eq(tenant),
+          "Thread #{idx}: Tenant.current was '#{results[idx][:tenant_current]}', expected '#{tenant}'")
+        expect(results[idx][:current_tenant]).to(eq(tenant),
+          "Thread #{idx}: Current.tenant was '#{results[idx][:current_tenant]}', expected '#{tenant}'")
+      end
+    end
+
+    it 'cross-tenant connection checkout returns only own tenant data' do
+      barrier = Concurrent::CyclicBarrier.new(2)
+      results = Concurrent::Map.new
+      errors = Queue.new
+
+      %w[stress_0 stress_1].map.with_index do |tenant, idx|
+        Thread.new do
+          barrier.wait
+          Apartment::Tenant.switch(tenant) do
+            Widget.create!(name: "isolation_#{idx}")
+            results[idx] = Widget.pluck(:name)
+          end
+        rescue StandardError => e
+          errors << "Thread #{idx}: #{e.class}: #{e.message}"
+        end
+      end.each(&:join)
+
+      collected_errors = []
+      collected_errors << errors.pop until errors.empty?
+      expect(collected_errors).to(be_empty)
+
+      expect(results[0]).to(include('isolation_0'))
+      expect(results[0]).not_to(include('isolation_1'),
+        "Thread 0 (stress_0) read data from stress_1's pool")
+      expect(results[1]).to(include('isolation_1'))
+      expect(results[1]).not_to(include('isolation_0'),
+        "Thread 1 (stress_1) read data from stress_0's pool")
+    end
   end
 
   # ── Many tenants — pool manager scales ──────────────────────────────
