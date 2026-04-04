@@ -46,9 +46,11 @@ spec/integration/v4/
 - **Switch block + fiber interaction**: Outer `switch('a')` block, inner fiber does `switch('b')`, outer block still in tenant A after fiber returns.
 - **Fiber scheduler integration** (conditional, `skip` unless `Fiber.respond_to?(:scheduler)` and Ruby >= 3.1): Use `Fiber.schedule` under a basic scheduler to prove async fiber dispatch doesn't leak tenant state.
 
+- **`load_async` fiber integration** (conditional, `skip` unless `ActiveRecord::Relation.method_defined?(:load_async)`): Switch to tenant A, fire `Widget.where(name: 'x').load_async` inside a fiber, verify the query resolves against tenant A's pool. Bridges the fiber safety story to the Rails feature called out in `apartment-v4.md`.
+
 **Engine scope:** All engines (SQLite, PG, MySQL). Fiber isolation is engine-agnostic; it's a Ruby/Rails runtime concern.
 
-**Estimated size:** ~80-100 lines.
+**Estimated size:** ~100-120 lines.
 
 ### 2. `memory_stability_spec.rb`
 
@@ -60,7 +62,7 @@ spec/integration/v4/
 - **Repeated create/drop doesn't leak pools**: Create tenant, switch into it, drop it — repeat 20 times. Assert pool count at end equals pool count at start (plus/minus 1 for default pool). Proves drop path cleans up pool entries.
 - **Sustained switching without pool growth**: Configure generous `max_total_connections` (no eviction pressure), create 5 tenants, do 200 round-robin switches. Assert final pool count == 5. No phantom pools from race conditions or double-registration.
 
-**Engine scope:** PG and MySQL only. SQLite skipped (single-writer lock under concurrent access makes pool-per-tenant less meaningful).
+**Engine scope:** PG and MySQL for the bounded-pool and create/drop tests. SQLite gets a lightweight smoke test: bounded pool count under N tenants (single-writer lock makes concurrent access meaningless, but pool accounting still applies).
 
 **Design decision — no RSS/ObjectSpace measurement:** Flaky across Ruby versions and GC timing. Pool count invariant is the meaningful signal; if pools don't leak, connections don't leak.
 
