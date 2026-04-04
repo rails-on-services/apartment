@@ -59,9 +59,11 @@ RSpec.describe('v4 Memory stability integration', :integration,
           end
         end
 
-        pre_reap = Apartment.pool_manager.stats[:total_pools]
-        expect(pre_reap).to(be > 5,
-                            "Cycle #{cycle}: expected > 5 pools before reap, got #{pre_reap}") if cycle.zero?
+        if cycle.zero?
+          pre_reap = Apartment.pool_manager.stats[:total_pools]
+          expect(pre_reap).to(be > 5,
+                              "Cycle 0: expected > 5 pools before reap, got #{pre_reap}")
+        end
 
         Apartment.pool_reaper.run_cycle
 
