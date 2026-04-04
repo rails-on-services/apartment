@@ -116,7 +116,7 @@ jobs:
           PGPASSWORD: postgres
       - name: Verify RBAC specs ran (not silently skipped)
         run: |
-          count=$(bundle exec rspec spec/integration/v4/ --tag rbac --format json 2>/dev/null | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
+          count=$(bundle exec rspec spec/integration/v4/ --tag rbac --format json 2>/dev/null | tail -1 | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
           echo "RBAC examples ran: $count"
           if [ "$count" -lt 1 ]; then
             echo "::error::All RBAC examples were skipped — role provisioning may have failed"
@@ -183,7 +183,7 @@ jobs:
           MYSQL_USER: root
       - name: Verify RBAC specs ran (not silently skipped)
         run: |
-          count=$(bundle exec rspec spec/integration/v4/ --tag rbac --format json 2>/dev/null | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
+          count=$(bundle exec rspec spec/integration/v4/ --tag rbac --format json 2>/dev/null | tail -1 | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
           echo "RBAC examples ran: $count"
           if [ "$count" -lt 1 ]; then
             echo "::error::All RBAC examples were skipped — role provisioning may have failed"
