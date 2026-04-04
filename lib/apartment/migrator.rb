@@ -73,9 +73,8 @@ module Apartment
       evict_migration_pools
     end
 
-    # Migrate a single named tenant. Delegates to the private migrate_tenant,
-    # which already handles with_migration_role, advisory lock disabling,
-    # Current.migrating flag, and instrumentation. Returns a single Result.
+    # Migrate a single named tenant. Returns a Result.
+    # Evicts migration-role pools in ensure regardless of outcome.
     def migrate_one(tenant)
       migrate_tenant(tenant)
     ensure
