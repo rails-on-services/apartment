@@ -165,12 +165,11 @@ Expected: FAIL with `NoMethodError: undefined method 'migrate_one'`
 Insert after the `run` method (after line 74 in `lib/apartment/migrator.rb`), before the `private` keyword:
 
 ```ruby
-    # Migrate a single named tenant. Reuses the same code path as the
-    # all-tenants run (migrate_tenant), preserving RBAC role wrapping,
-    # advisory lock disabling, Current.migrating flag, and instrumentation.
-    # Returns a single Result.
+    # Migrate a single named tenant. Delegates to the private migrate_tenant,
+    # which already handles with_migration_role, advisory lock disabling,
+    # Current.migrating flag, and instrumentation. Returns a single Result.
     def migrate_one(tenant)
-      with_migration_role { migrate_tenant(tenant) }
+      migrate_tenant(tenant)
     ensure
       evict_migration_pools
     end
@@ -179,7 +178,7 @@ Insert after the `run` method (after line 74 in `lib/apartment/migrator.rb`), be
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bundle exec rspec spec/unit/migrator_spec.rb -e 'migrate_one' --format documentation`
-Expected: All 9 examples PASS
+Expected: All 10 examples PASS
 
 - [ ] **Step 5: Run full migrator spec to verify no regressions**
 
@@ -192,9 +191,10 @@ Expected: All existing tests still pass
 git add lib/apartment/migrator.rb spec/unit/migrator_spec.rb
 git commit -m "Add Migrator#migrate_one for single-tenant CLI migration
 
-Public API that delegates to the existing migrate_tenant internals,
-preserving RBAC role wrapping, advisory lock disabling, Current.migrating
-lifecycle, and instrumentation. Used by CLI migrations command."
+Public API that delegates to the private migrate_tenant (which already
+wraps with_migration_role, disables advisory locks, sets Current.migrating,
+and instruments). Calls evict_migration_pools in ensure to match the
+cleanup behavior of Migrator#run. Used by CLI migrations command."
 ```
 
 ---
@@ -376,19 +376,22 @@ now delegates to run_cycle. Used by CLI pool evict command."
 
 ---
 
-### Task 5: Zeitwerk ignore for `cli/` directory
+### Task 5: Zeitwerk ignore for CLI files
 
 **Files:**
 - Modify: `lib/apartment.rb`
 
-The `cli/` directory contains Thor subclasses that should be loaded explicitly by `cli.rb`, not autoloaded by Zeitwerk (they depend on Thor being required first).
+Both `cli.rb` and `cli/` must be ignored from Zeitwerk. Without ignoring `cli.rb`, Zeitwerk's default inflector maps it to `Apartment::Cli` (lowercase), not `Apartment::CLI`. The subcommand files in `cli/` depend on Thor being required first.
 
-- [ ] **Step 13: Add Zeitwerk ignore for cli directory**
+- [ ] **Step 13: Add Zeitwerk ignore for cli.rb and cli/ directory**
 
 In `lib/apartment.rb`, add after line 19 (`loader.ignore("#{__dir__}/apartment/tasks")`):
 
 ```ruby
-# CLI Thor commands are loaded explicitly by cli.rb, not autoloaded.
+# CLI is loaded explicitly (require 'apartment/cli') by rake tasks and the binstub.
+# Ignoring cli.rb avoids Zeitwerk mapping it to Apartment::Cli (wrong casing).
+# Ignoring cli/ avoids autoloading Thor subcommands before Thor is required.
+loader.ignore("#{__dir__}/apartment/cli.rb")
 loader.ignore("#{__dir__}/apartment/cli")
 ```
 
@@ -396,11 +399,12 @@ loader.ignore("#{__dir__}/apartment/cli")
 
 ```bash
 git add lib/apartment.rb
-git commit -m "Ignore cli/ directory from Zeitwerk autoloading
+git commit -m "Ignore cli.rb and cli/ from Zeitwerk autoloading
 
-Thor CLI commands are loaded explicitly by lib/apartment/cli.rb,
-not autoloaded. Prevents Zeitwerk from trying to resolve them
-before Thor is required."
+cli.rb must be ignored because Zeitwerk's default inflector maps it
+to Apartment::Cli, not Apartment::CLI. The cli/ directory is ignored
+because Thor subcommands depend on Thor being required first. Both
+are loaded explicitly via require 'apartment/cli'."
 ```
 
 ---
@@ -707,10 +711,12 @@ RSpec.describe(Apartment::CLI::Tenants) do
     end
 
     it 'skips confirmation when APARTMENT_FORCE=1' do
-      ClimateControl.modify(APARTMENT_FORCE: '1') do
-        run_command('drop', 'acme')
-      end
+      original = ENV.fetch('APARTMENT_FORCE', nil)
+      ENV['APARTMENT_FORCE'] = '1'
+      run_command('drop', 'acme')
       expect(Apartment::Tenant).to(have_received(:drop).with('acme'))
+    ensure
+      ENV['APARTMENT_FORCE'] = original
     end
   end
 
@@ -720,28 +726,16 @@ RSpec.describe(Apartment::CLI::Tenants) do
     end
 
     it 'suppresses output when APARTMENT_QUIET=1' do
-      output = ClimateControl.modify(APARTMENT_QUIET: '1') { run_command('create') }
+      original = ENV.fetch('APARTMENT_QUIET', nil)
+      ENV['APARTMENT_QUIET'] = '1'
+      output = run_command('create')
       expect(output).not_to(include('Creating'))
+    ensure
+      ENV['APARTMENT_QUIET'] = original
     end
   end
 end
 ```
-
-**Note:** The env var tests use `climate_control` gem. Check if it's already a dev dependency; if not, use `ENV` stubbing directly:
-
-```ruby
-# Alternative without climate_control:
-it 'skips confirmation when APARTMENT_FORCE=1' do
-  original = ENV.fetch('APARTMENT_FORCE', nil)
-  ENV['APARTMENT_FORCE'] = '1'
-  run_command('drop', 'acme')
-  expect(Apartment::Tenant).to(have_received(:drop).with('acme'))
-ensure
-  ENV['APARTMENT_FORCE'] = original
-end
-```
-
-Check the Gemfile for `climate_control` before deciding which pattern to use. If absent, use the `ENV` stubbing approach.
 
 - [ ] **Step 21: Run tests to verify they fail**
 
@@ -1086,6 +1080,7 @@ module Apartment
         Uses Apartment::Migrator for both paths, preserving RBAC role wrapping,
         advisory lock management, and instrumentation.
       DESC
+      # Thor :numeric handles large integers (e.g. 20260401000000 timestamps) correctly.
       method_option :version, type: :numeric, desc: 'Target migration version (also reads ENV VERSION)'
       method_option :threads, type: :numeric, desc: 'Override parallel_migration_threads from config'
       def migrate(tenant = nil)
@@ -1559,9 +1554,13 @@ namespace :apartment do
     Apartment::CLI::Tenants.new.invoke(:drop, [args[:tenant]], force: true)
   end
 
-  desc 'Run migrations for all tenants'
-  task migrate: :environment do
-    Apartment::CLI::Migrations.new.invoke(:migrate)
+  desc 'Run migrations for all tenants (or one: rake apartment:migrate[tenant])'
+  task :migrate, [:tenant] => :environment do |_t, args|
+    if args[:tenant]
+      Apartment::CLI::Migrations.new.invoke(:migrate, [args[:tenant]])
+    else
+      Apartment::CLI::Migrations.new.invoke(:migrate)
+    end
   end
 
   desc 'Seed all tenants'
@@ -1587,7 +1586,7 @@ namespace :apartment do
 end
 ```
 
-**Note:** `drop` via rake passes `force: true` because rake tasks are non-interactive. The Thor command handles confirmation; rake skips it.
+**Note:** `drop` via rake passes `force: true` because rake tasks are non-interactive. This is a behavior change from prior v4.rake (which called `Tenant.drop` directly); `rake apartment:drop[tenant]` now routes through Thor with forced drop. Equivalent to `apartment tenants drop TENANT --force`.
 
 - [ ] **Step 41: Run the full unit test suite to verify no regressions**
 
@@ -1616,7 +1615,7 @@ Expected: All tests pass
 
 - [ ] **Step 44: Run rubocop**
 
-Run: `bundle exec rubocop lib/apartment/cli.rb lib/apartment/cli/ lib/apartment/migrator.rb lib/apartment/pool_reaper.rb lib/apartment/tasks/v4.rake`
+Run: `bundle exec rubocop lib/apartment/cli.rb lib/apartment/cli/ lib/apartment/migrator.rb lib/apartment/pool_reaper.rb lib/apartment/tasks/v4.rake lib/apartment.rb`
 Expected: No offenses. If there are offenses, fix them.
 
 - [ ] **Step 45: Run tests across Rails versions**
@@ -1648,7 +1647,7 @@ git commit -m "Fix rubocop offenses in CLI files"
 
 require 'spec_helper'
 require 'rails/generators'
-require 'rails/generators/testing/behaviour'
+require 'rails/generators/testing/behavior'
 require 'rails/generators/testing/assertions'
 require_relative '../../../lib/generators/apartment/install/install_generator'
 
