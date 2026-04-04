@@ -5,10 +5,10 @@ require 'fileutils'
 require 'tmpdir'
 
 begin
-  require 'rails/generators'
-  require 'rails/generators/testing/behavior'
-  require 'rails/generators/testing/assertions'
-  require_relative '../../../lib/generators/apartment/install/install_generator'
+  require('rails/generators')
+  require('rails/generators/testing/behavior')
+  require('rails/generators/testing/assertions')
+  require_relative('../../../lib/generators/apartment/install/install_generator')
 rescue LoadError
   # Rails generators not available (base Gemfile without Rails).
   # These specs only run under appraisal.
