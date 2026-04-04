@@ -106,6 +106,7 @@ module Apartment
         return unless defined?(ActiveRecord) && ActiveRecord.dump_schema_after_migration
         return unless defined?(Rake::Task) && Rake::Task.task_defined?('db:schema:dump')
 
+        Rake::Task['db:schema:dump'].reenable
         Rake::Task['db:schema:dump'].invoke
       end
     end
