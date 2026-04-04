@@ -65,29 +65,24 @@ module Apartment
         raise(Thor::Error, "Migration failed for #{result.failed.size} tenant(s)") unless result.success?
       end
 
-      # Rollback bypasses the Migrator (no with_migration_role, no advisory lock
-      # disabling, no Current.migrating flag). This is intentional: rollback is
-      # sequential and cautious; parallel rollback is not a real need, and RBAC
-      # role separation adds complexity without benefit for undo operations.
+      # Rollback bypasses the Migrator's parallelism and Result tracking but
+      # respects migration_role for RBAC (rollback is DDL, same as migrate).
       def rollback_single(tenant)
         step = options[:step]
         say("Rolling back tenant: #{tenant} (#{step} step(s))")
-        Apartment::Tenant.switch(tenant) do
-          ActiveRecord::Base.connection_pool.migration_context.rollback(step)
+        with_migration_role do
+          Apartment::Tenant.switch(tenant) do
+            ActiveRecord::Base.connection_pool.migration_context.rollback(step)
+          end
         end
         say('  done')
       end
 
       def rollback_all
-        step = options[:step]
         tenants = Apartment.config.tenants_provider.call
         failed = []
         tenants.each do |t|
-          say("Rolling back tenant: #{t} (#{step} step(s))")
-          Apartment::Tenant.switch(t) do
-            ActiveRecord::Base.connection_pool.migration_context.rollback(step)
-          end
-          say('  done')
+          rollback_single(t)
         rescue StandardError => e
           warn("  FAILED: #{e.message}")
           failed << t
@@ -95,6 +90,11 @@ module Apartment
         return if failed.empty?
 
         raise(Thor::Error, "Rollback failed for #{failed.size} tenant(s): #{failed.join(', ')}")
+      end
+
+      def with_migration_role(&)
+        role = Apartment.config.migration_role
+        role ? ActiveRecord::Base.connected_to(role: role, &) : yield
       end
 
       def resolve_version
