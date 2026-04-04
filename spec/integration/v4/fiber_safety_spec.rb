@@ -100,8 +100,8 @@ RSpec.describe('v4 Fiber safety integration', :integration,
   end
 
   # Exercises scheduled fibers under a real Fiber::Scheduler implementation
-  # (e.g., Falcon/async). On standard MRI, Fiber::Scheduler is an interface —
-  # Fiber::Scheduler.new raises TypeError — so this skips via the in-body guard.
+  # (e.g., async gem). Standard MRI does not define Fiber::Scheduler as a
+  # concrete class, so this skips when the constant is absent.
   context 'Fiber.scheduler integration' do
     it 'tenant state does not leak across scheduled fibers' do
       results = []

@@ -59,11 +59,15 @@ RSpec.describe('v4 Memory stability integration', :integration,
           end
         end
 
+        pre_reap = Apartment.pool_manager.stats[:total_pools]
+        expect(pre_reap).to(be > 5,
+                            "Cycle #{cycle}: expected > 5 pools before reap, got #{pre_reap}") if cycle.zero?
+
         Apartment.pool_reaper.run_cycle
 
         pool_count = Apartment.pool_manager.stats[:total_pools]
         expect(pool_count).to(be <= 5,
-                              "Cycle #{cycle}: expected <= 5 pools, got #{pool_count}")
+                              "Cycle #{cycle}: expected <= 5 pools after reap, got #{pool_count}")
       end
     end
   end
@@ -149,10 +153,8 @@ RSpec.describe('v4 Memory stability integration', :integration,
       V4IntegrationHelper.cleanup_tenants!(tenants, Apartment.adapter)
       Apartment.clear_config
       Apartment::Current.reset
-      if V4IntegrationHelper.sqlite?
-        ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
-        FileUtils.rm_rf(tmp_dir)
-      end
+      ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:') if V4IntegrationHelper.sqlite?
+      FileUtils.rm_rf(tmp_dir)
     end
 
     it 'no phantom pools after 200 round-robin switches' do

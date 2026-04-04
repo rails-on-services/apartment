@@ -28,17 +28,11 @@ RSpec.describe('v4 CLI integration', :integration,
   end
 
   after do
-    tenants.each do |t|
-      Apartment.adapter.drop(t)
-    rescue StandardError
-      nil
-    end
+    V4IntegrationHelper.cleanup_tenants!(tenants, Apartment.adapter)
     Apartment.clear_config
     Apartment::Current.reset
-    if V4IntegrationHelper.sqlite?
-      ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
-      FileUtils.rm_rf(tmp_dir)
-    end
+    ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:') if V4IntegrationHelper.sqlite?
+    FileUtils.rm_rf(tmp_dir)
   end
 
   describe 'tenants list' do
@@ -99,8 +93,6 @@ RSpec.describe('v4 CLI integration', :integration,
       expect(output).to(include('cli_alpha'))
     end
   end
-
-  private
 
   def capture_stdout
     original = $stdout
