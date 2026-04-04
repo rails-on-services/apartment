@@ -266,6 +266,52 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       end
     end
 
+    context 'pinned model bypass' do
+      before do
+        require_relative('../../../lib/apartment/concerns/model')
+      end
+
+      it 'returns the default pool for a pinned AR::Base subclass when tenant is set' do
+        pinned_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('PinnedBypassModel', pinned_class)
+        pinned_class.pin_tenant
+
+        Apartment::Current.tenant = 'acme'
+        # Pinned class must use super (default pool), not the tenant pool
+        expect(pinned_class.connection_pool).to(equal(default_pool))
+      end
+
+      it 'does not bypass for ActiveRecord::Base itself' do
+        Apartment::Current.tenant = 'acme'
+        tenant_pool = ActiveRecord::Base.connection_pool
+        expect(tenant_pool).not_to(equal(default_pool))
+      end
+
+      it 'bypasses for STI subclass of a pinned model' do
+        parent = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('PinnedParentBypass', parent)
+        parent.pin_tenant
+
+        child = Class.new(parent)
+        stub_const('PinnedChildBypass', child)
+
+        Apartment::Current.tenant = 'acme'
+        expect(child.connection_pool).to(equal(default_pool))
+      end
+
+      it 'does not bypass for an unpinned AR::Base subclass' do
+        unpinned = Class.new(ActiveRecord::Base)
+        stub_const('UnpinnedWidget', unpinned)
+
+        Apartment::Current.tenant = 'acme'
+        expect(unpinned.connection_pool).not_to(equal(default_pool))
+      end
+    end
+
     context 'custom shard_key_prefix' do
       before do
         Apartment.configure do |config|
@@ -303,6 +349,42 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         )
         expect(registered).to(be_nil)
       end
+    end
+  end
+
+  describe 'pinned_model? registry check' do
+    before do
+      require_relative('../../../lib/apartment/concerns/model')
+    end
+
+    it 'returns true for a pinned model' do
+      pinned_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('PinnedGlobal', pinned_class)
+      pinned_class.pin_tenant
+
+      expect(Apartment.pinned_model?(PinnedGlobal)).to(be(true))
+    end
+
+    it 'returns true for STI subclass of a pinned model' do
+      parent = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('PinnedParentModel', parent)
+      parent.pin_tenant
+
+      child = Class.new(parent)
+      stub_const('PinnedChildModel', child)
+
+      expect(Apartment.pinned_model?(PinnedChildModel)).to(be(true))
+    end
+
+    it 'returns false for normal tenant models' do
+      tenant_class = Class.new(ActiveRecord::Base)
+      stub_const('TenantWidget', tenant_class)
+
+      expect(Apartment.pinned_model?(TenantWidget)).to(be(false))
     end
   end
 end
