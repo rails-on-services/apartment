@@ -331,7 +331,10 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
 
       PinnedSetting.pin_tenant
 
-      expected_config = { 'adapter' => 'postgresql', 'database' => 'public' }
+      # Pinned models use base_config (the adapter's raw connection config),
+      # not resolve_connection_config(default_tenant) — avoids database-per-tenant
+      # strategies setting database key to the tenant name instead of the real DB.
+      expected_config = { 'adapter' => 'postgresql', 'host' => 'localhost' }
       expect(model_class).to(receive(:establish_connection)) do |arg|
         expect(arg).to(eq(expected_config))
       end

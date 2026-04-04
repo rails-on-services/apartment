@@ -114,8 +114,13 @@ module Apartment
         # establish_connection, so it's not a reliable "already processed" signal.
         return if klass.instance_variable_get(:@apartment_connection_established)
 
-        default_config = resolve_connection_config(Apartment.config.default_tenant)
-        klass.establish_connection(default_config)
+        # Use base_config (the adapter's raw connection config) rather than
+        # resolve_connection_config(default_tenant). For database-per-tenant
+        # strategies (MySQL, SQLite), resolve_connection_config would set the
+        # database key to the default tenant NAME (e.g. 'default'), not the
+        # actual default database (e.g. 'apartment_v4_test'). base_config
+        # points to the real default database.
+        klass.establish_connection(base_config)
         klass.instance_variable_set(:@apartment_connection_established, true)
 
         return unless Apartment.config.tenant_strategy == :schema
