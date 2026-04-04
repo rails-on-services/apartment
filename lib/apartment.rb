@@ -25,6 +25,11 @@ loader.ignore("#{__dir__}/apartment/tasks")
 loader.ignore("#{__dir__}/apartment/cli.rb")
 loader.ignore("#{__dir__}/apartment/cli")
 
+# Collapse concerns/ so Zeitwerk maps lib/apartment/concerns/model.rb
+# to Apartment::Model (not Apartment::Concerns::Model). Mirrors the
+# Rails convention for app/models/concerns/.
+loader.collapse("#{__dir__}/apartment/concerns")
+
 loader.setup
 
 require_relative 'apartment/errors'
@@ -99,6 +104,12 @@ module Apartment
     # Reset all configuration and stop background tasks.
     def clear_config
       teardown_old_state
+      # Reset per-model processing flags so re-configuration re-establishes connections.
+      @pinned_models&.each do |klass|
+        next unless klass.instance_variable_defined?(:@apartment_connection_established)
+
+        klass.remove_instance_variable(:@apartment_connection_established)
+      end
       @config = nil
       @pool_manager = nil
       @pool_reaper = nil
