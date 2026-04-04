@@ -85,7 +85,7 @@ Uses `require_relative` (same convention as `bin/rails`). Rails boots before Tho
 - Without argument: iterates `tenants_provider.call`, creates all, collects errors, reports summary. Exits non-zero if any failures.
 - `method_option :quiet, type: :boolean` — suppress per-tenant output.
 
-**Environment variable aliases:** `APARTMENT_FORCE=1` and `APARTMENT_QUIET=1` serve as fallbacks for `--force` and `--quiet` respectively, for CI/script environments where passing Thor options is awkward. Thor options take precedence when both are set.
+**Environment variable aliases:** `APARTMENT_QUIET=1` serves as a fallback for `--quiet` on commands that define it. `APARTMENT_FORCE=1` applies to any subcommand that defines `--force` (`drop`, `pool evict`, and any future destructive commands). Thor options take precedence when both are set.
 
 **`drop TENANT`**
 - Required argument. No "drop all" (too dangerous).
@@ -280,12 +280,16 @@ Deliverables:
 - `lib/apartment/cli/migrations.rb`
 - `lib/apartment/cli/seeds.rb`
 - `lib/apartment/cli/pool.rb`
+- `lib/apartment/migrator.rb` — add public `migrate_one(tenant)` method
+- `lib/apartment/pool_reaper.rb` — add public `run_cycle` method
 - Refactored `lib/apartment/tasks/v4.rake`
 - `spec/unit/cli_spec.rb`
 - `spec/unit/cli/tenants_spec.rb`
 - `spec/unit/cli/migrations_spec.rb`
 - `spec/unit/cli/seeds_spec.rb`
 - `spec/unit/cli/pool_spec.rb`
+- `spec/unit/migrator_spec.rb` — tests for `migrate_one`
+- `spec/unit/pool_reaper_spec.rb` — tests for `run_cycle`
 
 ### Phase 6.2: Generator + Binstub
 
