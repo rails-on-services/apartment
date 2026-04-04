@@ -161,7 +161,7 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
 
     Apartment.adapter = V4IntegrationHelper.build_adapter(config)
     Apartment.activate!
-    Apartment.adapter.process_excluded_models
+    Apartment::Tenant.init
 
     expect(GlobalSetting.table_name).to(eq('public.global_settings'))
   end

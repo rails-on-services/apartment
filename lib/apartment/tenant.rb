@@ -37,9 +37,10 @@ module Apartment
         switch!(Apartment.config&.default_tenant)
       end
 
-      # Initialize: process excluded models so they bypass tenant switching.
+      # Initialize: resolve excluded_models shim, then process pinned models.
       def init
-        adapter.process_excluded_models
+        resolve_excluded_models_shim
+        adapter.process_pinned_models
       end
 
       # Delegate lifecycle operations to the adapter.
@@ -69,6 +70,23 @@ module Apartment
       def adapter
         Apartment.adapter or
           raise(ConfigurationError, 'Apartment adapter not configured. Call Apartment.configure first.')
+      end
+
+      # Resolve config.excluded_models strings into pinned model registrations.
+      # This is the deprecated compatibility path — new code should use
+      # `include Apartment::Model` + `pin_tenant` in each model.
+      def resolve_excluded_models_shim
+        return if Apartment.config.excluded_models.empty?
+
+        Apartment.config.excluded_models.each do |model_name|
+          klass = model_name.constantize
+          next if Apartment.pinned_models.include?(klass)
+
+          Apartment.register_pinned_model(klass)
+        rescue NameError => e
+          raise(Apartment::ConfigurationError,
+                "Excluded model '#{model_name}' could not be resolved: #{e.message}")
+        end
       end
     end
   end

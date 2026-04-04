@@ -111,9 +111,71 @@ RSpec.describe(Apartment::Tenant) do
   end
 
   describe '.init' do
-    it 'delegates to adapter.process_excluded_models' do
-      expect(mock_adapter).to(receive(:process_excluded_models))
+    it 'delegates to adapter.process_pinned_models' do
+      expect(mock_adapter).to(receive(:process_pinned_models))
       described_class.init
+    end
+
+    context 'resolve_excluded_models_shim' do
+      it 'resolves excluded model strings and registers them as pinned' do
+        model_class = Class.new
+        stub_const('ShimTestModel', model_class)
+
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { [] }
+          config.default_tenant = 'public'
+          config.excluded_models = ['ShimTestModel']
+        end
+
+        allow(mock_adapter).to(receive(:process_pinned_models))
+        Apartment.adapter = mock_adapter
+
+        described_class.init
+
+        expect(Apartment.pinned_models).to(include(ShimTestModel))
+      end
+
+      it 'raises ConfigurationError for unresolvable model names' do
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { [] }
+          config.default_tenant = 'public'
+          config.excluded_models = ['NonExistentModel']
+        end
+
+        allow(mock_adapter).to(receive(:process_pinned_models))
+        Apartment.adapter = mock_adapter
+
+        expect { described_class.init }.to(raise_error(
+                                             Apartment::ConfigurationError,
+                                             /Excluded model 'NonExistentModel' could not be resolved/
+                                           ))
+      end
+
+      it 'skips models already in pinned_models registry (via pin_tenant)' do
+        require 'apartment/concerns/model'
+        model_class = Class.new do
+          include Apartment::Model
+        end
+        stub_const('AlreadyPinnedModel', model_class)
+        AlreadyPinnedModel.pin_tenant
+
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { [] }
+          config.default_tenant = 'public'
+          config.excluded_models = ['AlreadyPinnedModel']
+        end
+
+        allow(mock_adapter).to(receive(:process_pinned_models))
+        Apartment.adapter = mock_adapter
+
+        # Already in registry via pin_tenant — should not double-register
+        count_before = Apartment.pinned_models.size
+        described_class.init
+        expect(Apartment.pinned_models.size).to(eq(count_before))
+      end
     end
   end
 

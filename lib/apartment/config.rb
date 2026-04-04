@@ -12,9 +12,9 @@ module Apartment
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
     attr_reader :tenant_strategy, :postgres_config, :mysql_config,
-                :environmentify_strategy
+                :environmentify_strategy, :excluded_models
 
-    attr_accessor :tenants_provider, :default_tenant, :excluded_models,
+    attr_accessor :tenants_provider, :default_tenant,
                   :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
                   :seed_after_create, :seed_data_file,
                   :schema_load_strategy, :schema_file,
@@ -49,6 +49,15 @@ module Apartment
       @app_role = nil
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
+    end
+
+    def excluded_models=(list)
+      unless list.empty?
+        warn '[Apartment] DEPRECATION: config.excluded_models is deprecated and will be ' \
+             "removed in v5. Use `include Apartment::Model` and `pin_tenant` in each model instead.\n" \
+             'For third-party gem models, use config.excluded_models as a transitional escape hatch.'
+      end
+      @excluded_models = list
     end
 
     def tenant_strategy=(strategy)
