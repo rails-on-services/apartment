@@ -18,6 +18,12 @@ loader.ignore("#{__dir__}/apartment/railtie.rb")
 # Rake tasks are loaded by the Railtie, not autoloaded.
 loader.ignore("#{__dir__}/apartment/tasks")
 
+# CLI is loaded explicitly (require 'apartment/cli') by rake tasks and the binstub.
+# Ignoring cli.rb avoids Zeitwerk mapping it to Apartment::Cli (wrong casing).
+# Ignoring cli/ avoids autoloading Thor subcommands before Thor is required.
+loader.ignore("#{__dir__}/apartment/cli.rb")
+loader.ignore("#{__dir__}/apartment/cli")
+
 loader.setup
 
 require_relative 'apartment/errors'
