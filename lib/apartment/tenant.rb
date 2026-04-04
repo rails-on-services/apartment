@@ -82,12 +82,6 @@ module Apartment
           klass = model_name.constantize
           next if Apartment.pinned_models.include?(klass)
 
-          if klass.respond_to?(:apartment_pinned?) && klass.apartment_pinned?
-            warn "[Apartment] WARNING: #{model_name} is in config.excluded_models " \
-                 'AND declares pin_tenant. Remove it from excluded_models.'
-            next
-          end
-
           Apartment.register_pinned_model(klass)
         rescue NameError => e
           raise(Apartment::ConfigurationError,

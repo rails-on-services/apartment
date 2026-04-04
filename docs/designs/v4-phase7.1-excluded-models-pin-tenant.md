@@ -143,7 +143,7 @@ Walks the class hierarchy (not the full ancestor chain of modules) against the `
 Rename `process_excluded_models` to `process_pinned_models`. Changes:
 
 1. **Source:** Iterates `Apartment.pinned_models` (populated by `pin_tenant` and the `excluded_models` shim) instead of `config.excluded_models`
-2. **Table existence validation:** Before calling `establish_connection`, verify the model's table exists in the default database. On failure, raise `Apartment::ConfigurationError` with an actionable message naming the model, expected table, and default tenant. **Boot/migrate ordering:** If `activate!` runs before migrations (e.g., `rails db:migrate`), the table may not exist yet. The validation should be skippable via `Apartment.config.validate_pinned_tables` (default `true`), or deferred to first use
+2. **Table existence validation:** Deferred. Boot/migrate ordering makes this fragile (`activate!` may run before migrations create the table). Not implemented in Phase 7.1; current behavior (no validation) matches v3. Add in a follow-up if real apps hit confusing errors
 3. **Schema strategy table_name rewrite:** Unchanged — prefix with `default_tenant.` for schema strategy
 4. **Idempotent:** Skip models where `@apartment_connection_established` is already set (class-level ivar, not `connection_specification_name` comparison — same `ApplicationRecord` baseline issue applies here)
 
@@ -161,9 +161,7 @@ Use `include Apartment::Model` and `pin_tenant` in each model instead.
 For third-party gem models, use config.excluded_models as a transitional escape hatch.
 ```
 
-**Processing:** During `Apartment.activate!`, after processing `pinned_models`, iterate `config.excluded_models`, resolve each string to a constant, call `Apartment.register_pinned_model(klass)`, then `process_pinned_model(klass)`. Skip models already in `pinned_models` (duplicate protection).
-
-**Boot-time validation:** If a model appears in both `config.excluded_models` and declares `pin_tenant`, `activate!` warns about the duplicate and skips the config-driven registration.
+**Processing:** During `Tenant.init`, before calling `process_pinned_models`, the `resolve_excluded_models_shim` iterates `config.excluded_models`, resolves each string to a constant via `constantize`, and calls `Apartment.register_pinned_model(klass)`. Skips models already in `pinned_models` (duplicate protection). Raises `ConfigurationError` on unresolvable constant names.
 
 ### 5. `Apartment` Module Additions
 
@@ -242,8 +240,7 @@ end
 | `lib/apartment/adapters/abstract_adapter.rb` | `process_pinned_models` (rename + hardening), `process_pinned_model` (single model), deprecation alias |
 | `lib/apartment.rb` | `pinned_models` registry, `register_pinned_model`, `pinned_model?`, `activated?`, `process_pinned_model` |
 | `lib/apartment/config.rb` | Deprecation warning on `excluded_models=` |
-| `lib/apartment/railtie.rb` | Call `process_pinned_models` in `activate!`, set `@activated` |
-| `lib/apartment/tenant.rb` | `init` calls `process_pinned_models` instead of `process_excluded_models` |
+| `lib/apartment/tenant.rb` | `init` calls `resolve_excluded_models_shim` then `process_pinned_models` |
 | `spec/integration/v4/excluded_models_spec.rb` | Remove pending guards, add `pin_tenant` usage, expand matrix |
 | `spec/unit/concerns/model_spec.rb` | **New.** Unit tests for `Apartment::Model` concern |
 | `spec/unit/adapters/abstract_adapter_spec.rb` | Update `process_excluded_models` tests to cover `process_pinned_models` |
