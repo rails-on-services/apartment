@@ -3,15 +3,17 @@
 require 'spec_helper'
 require_relative 'support'
 
-SQLITE_POOL_SKIP = 'SQLite pool-per-tenant less meaningful with single-writer lock'
-
 RSpec.describe('v4 Memory stability integration', :integration,
                skip: (V4_INTEGRATION_AVAILABLE ? false : 'requires ActiveRecord + database gem')) do
   include V4IntegrationHelper
 
   # ── Pool count stays bounded under max_total_connections ───────────
   context 'bounded pool count',
-          skip: (V4IntegrationHelper.sqlite? ? SQLITE_POOL_SKIP : false) do
+          skip: (if V4IntegrationHelper.sqlite?
+                   'SQLite pool-per-tenant less meaningful with single-writer lock'
+                 else
+                   false
+                 end) do
     let(:tmp_dir) { Dir.mktmpdir('apartment_mem_bounded') }
     let(:tenants) { Array.new(20) { |i| "mem_bounded_#{i}" } }
 
@@ -44,6 +46,7 @@ RSpec.describe('v4 Memory stability integration', :integration,
       V4IntegrationHelper.cleanup_tenants!(tenants, Apartment.adapter)
       Apartment.clear_config
       Apartment::Current.reset
+      FileUtils.rm_rf(tmp_dir)
     end
 
     it 'pool count stays within max_total_connections after reaper cycles' do
@@ -67,7 +70,11 @@ RSpec.describe('v4 Memory stability integration', :integration,
 
   # ── Repeated create/drop doesn't leak pools ────────────────────────
   context 'create/drop cycle',
-          skip: (V4IntegrationHelper.sqlite? ? SQLITE_POOL_SKIP : false) do
+          skip: (if V4IntegrationHelper.sqlite?
+                   'SQLite pool-per-tenant less meaningful with single-writer lock'
+                 else
+                   false
+                 end) do
     let(:tmp_dir) { Dir.mktmpdir('apartment_mem_cycle') }
 
     before do
@@ -88,6 +95,7 @@ RSpec.describe('v4 Memory stability integration', :integration,
     after do
       Apartment.clear_config
       Apartment::Current.reset
+      FileUtils.rm_rf(tmp_dir)
     end
 
     it 'pool count returns to baseline after 20 create/drop cycles' do
