@@ -3,6 +3,7 @@
 require 'zeitwerk'
 require 'active_support'
 require 'active_support/current_attributes'
+require 'concurrent'
 
 # Set up Zeitwerk autoloader for the Apartment namespace.
 # Must happen before requiring files that define constants in the Apartment module.
@@ -37,6 +38,30 @@ module Apartment
     # Can be set manually (e.g., in tests) via Apartment.adapter=.
     def adapter
       @adapter ||= build_adapter
+    end
+
+    # Registry of models that declared pin_tenant.
+    # Uses Concurrent::Set for thread safety (Zeitwerk autoload in threaded servers).
+    def pinned_models
+      @pinned_models ||= Concurrent::Set.new
+    end
+
+    def register_pinned_model(klass)
+      pinned_models.add(klass)
+    end
+
+    # Check if a class (or any of its ancestors) is a pinned model.
+    # Used by ConnectionHandling to skip tenant pool routing.
+    def pinned_model?(klass)
+      klass.ancestors.any? { |a| a.is_a?(Class) && pinned_models.include?(a) }
+    end
+
+    def activated?
+      @activated == true
+    end
+
+    def process_pinned_model(klass)
+      adapter&.process_pinned_model(klass)
     end
 
     # Configure Apartment v4. Yields a Config instance, validates it,
@@ -77,6 +102,8 @@ module Apartment
       @config = nil
       @pool_manager = nil
       @pool_reaper = nil
+      @pinned_models = nil
+      @activated = false
     end
 
     # Activate the ConnectionHandling patch on ActiveRecord::Base.
@@ -84,6 +111,7 @@ module Apartment
     def activate!
       require_relative('apartment/patches/connection_handling')
       ActiveRecord::Base.singleton_class.prepend(Patches::ConnectionHandling)
+      @activated = true
     end
 
     # Deregister a single tenant's shard from AR's ConnectionHandler.
