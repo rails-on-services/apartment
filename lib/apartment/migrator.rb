@@ -73,6 +73,15 @@ module Apartment
       evict_migration_pools
     end
 
+    # Migrate a single named tenant. Delegates to the private migrate_tenant,
+    # which already handles with_migration_role, advisory lock disabling,
+    # Current.migrating flag, and instrumentation. Returns a single Result.
+    def migrate_one(tenant)
+      migrate_tenant(tenant)
+    ensure
+      evict_migration_pools
+    end
+
     private
 
     # Migrate the primary (default) tenant using AR::Base's existing pool.

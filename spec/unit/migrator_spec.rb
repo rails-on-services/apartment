@@ -332,6 +332,98 @@ RSpec.describe(Apartment::Migrator) do
     end
   end
 
+  describe '#migrate_one' do
+  let(:migrator) { described_class.new }
+  let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
+  let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
+  let(:mock_connection) { double('connection') }
+
+  before do
+    allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
+    allow(mock_connection).to(receive(:instance_variable_get).and_return(true))
+    allow(mock_connection).to(receive(:instance_variable_set))
+    allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+    allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
+    allow(Apartment::Instrumentation).to(receive(:instrument))
+    allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
+  end
+
+  it 'returns a single Result for the given tenant' do
+    result = migrator.migrate_one('acme')
+    expect(result).to(be_a(Apartment::Migrator::Result))
+    expect(result.tenant).to(eq('acme'))
+    expect(result.status).to(eq(:success))
+  end
+
+  it 'switches to the given tenant' do
+    migrator.migrate_one('acme')
+    expect(Apartment::Tenant).to(have_received(:switch).with('acme'))
+  end
+
+  it 'sets Current.migrating during execution' do
+    migrating_during = nil
+    allow(Apartment::Tenant).to(receive(:switch)) do |&block|
+      migrating_during = Apartment::Current.migrating
+      block&.call
+    end
+    migrator.migrate_one('acme')
+    expect(migrating_during).to(be(true))
+  end
+
+  it 'clears Current.migrating after completion' do
+    migrator.migrate_one('acme')
+    expect(Apartment::Current.migrating).to(be_falsey)
+  end
+
+  it 'disables advisory locks' do
+    migrator.migrate_one('acme')
+    expect(mock_connection).to(have_received(:instance_variable_set)
+      .with(:@advisory_locks_enabled, false))
+  end
+
+  it 'instruments the migration' do
+    migrator.migrate_one('acme')
+    expect(Apartment::Instrumentation).to(have_received(:instrument)
+      .with(:migrate_tenant, hash_including(tenant: 'acme')))
+  end
+
+  it 'returns :skipped when no pending migrations' do
+    allow(mock_migration_context).to(receive(:needs_migration?).and_return(false))
+    result = migrator.migrate_one('acme')
+    expect(result.status).to(eq(:skipped))
+  end
+
+  it 'captures errors and returns :failed' do
+    allow(mock_migration_context).to(receive(:migrate).and_raise(StandardError, 'boom'))
+    result = migrator.migrate_one('acme')
+    expect(result.status).to(eq(:failed))
+    expect(result.error.message).to(eq('boom'))
+  end
+
+  it 'respects version parameter' do
+    migrator = described_class.new(version: 20_260_401_000_000)
+    expect(mock_migration_context).to(receive(:migrate).with(20_260_401_000_000).and_return([]))
+    migrator.migrate_one('acme')
+  end
+
+  it 'calls evict_migration_pools in ensure' do
+    Apartment.configure do |c|
+      c.tenant_strategy = :schema
+      c.tenants_provider = -> { [] }
+      c.default_tenant = 'public'
+      c.migration_role = :db_manager
+    end
+    pool_manager = instance_double(Apartment::PoolManager)
+    allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+    allow(pool_manager).to(receive(:evict_by_role).and_return([]))
+
+    migrator = described_class.new
+    migrator.migrate_one('acme')
+
+    expect(pool_manager).to(have_received(:evict_by_role).with(:db_manager))
+  end
+end
+
   describe '#run with threads > 0' do
     let(:migrator) { described_class.new(threads: 4) }
     let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
