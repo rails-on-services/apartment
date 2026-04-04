@@ -218,4 +218,59 @@ RSpec.describe(Apartment::PoolReaper) do
       ActiveSupport::Notifications.unsubscribe('evict.apartment')
     end
   end
+
+  describe '#run_cycle' do
+    it 'performs one synchronous eviction pass and returns eviction count' do
+      pool_manager.fetch_or_create('stale_a') { 'pool_a' }
+      pool_manager.fetch_or_create('stale_b') { 'pool_b' }
+      pool_manager.instance_variable_get(:@timestamps)['stale_a'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
+      pool_manager.instance_variable_get(:@timestamps)['stale_b'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
+      pool_manager.fetch_or_create('fresh') { 'pool_fresh' }
+
+      count = reaper.run_cycle
+      expect(count).to(eq(2))
+      expect(pool_manager.tracked?('stale_a')).to(be(false))
+      expect(pool_manager.tracked?('stale_b')).to(be(false))
+      expect(pool_manager.tracked?('fresh')).to(be(true))
+    end
+
+    it 'returns 0 when nothing to evict' do
+      pool_manager.fetch_or_create('fresh') { 'pool_fresh' }
+      count = reaper.run_cycle
+      expect(count).to(eq(0))
+    end
+
+    it 'does not require the background timer to be running' do
+      expect(reaper).not_to(be_running)
+      pool_manager.fetch_or_create('stale') { 'pool_stale' }
+      pool_manager.instance_variable_get(:@timestamps)['stale'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
+
+      count = reaper.run_cycle
+      expect(count).to(eq(1))
+    end
+
+    it 'respects default_tenant protection' do
+      protected_reaper = described_class.new(
+        pool_manager: pool_manager,
+        interval: 0.05,
+        idle_timeout: 1,
+        default_tenant: 'public',
+        on_evict: on_evict
+      )
+      pool_manager.fetch_or_create('public') { 'pool_default' }
+      pool_manager.instance_variable_get(:@timestamps)['public'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 9999
+      pool_manager.fetch_or_create('stale') { 'pool_stale' }
+      pool_manager.instance_variable_get(:@timestamps)['stale'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
+
+      count = protected_reaper.run_cycle
+      expect(count).to(eq(1))
+      expect(pool_manager.tracked?('public')).to(be(true))
+      expect(pool_manager.tracked?('stale')).to(be(false))
+    end
+  end
 end
