@@ -136,6 +136,18 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       expect(adapter.created_tenants).to(be_empty)
     end
 
+    it 'validates the environmentified name, not just the raw name' do
+      # Raw name is 59 chars (valid for PG 63 limit), but "test_" prefix makes 64 (exceeds 63)
+      reconfigure(environmentify_strategy: :prepend)
+      allow(Rails).to(receive(:env).and_return('test'))
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+
+      tenant = 'a' * 59
+      expect { adapter.create(tenant) }
+        .to(raise_error(Apartment::ConfigurationError, /too long.*64.*max 63/))
+      expect(adapter.created_tenants).to(be_empty)
+    end
+
     it 'runs :create callbacks around the operation' do
       callback_log = []
 

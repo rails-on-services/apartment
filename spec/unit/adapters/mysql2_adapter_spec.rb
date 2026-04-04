@@ -132,6 +132,16 @@ RSpec.shared_examples('a MySQL adapter') do
 
       adapter.create('acme')
     end
+
+    it 'validates the environmentified name against MySQL length limit' do
+      # Raw name is 60 chars (valid for MySQL 64 limit), but "test_" prefix makes 65 (exceeds 64)
+      reconfigure(environmentify_strategy: :prepend)
+      allow(Rails).to(receive(:env).and_return('test'))
+
+      tenant = 'a' * 60
+      expect { adapter.create(tenant) }
+        .to(raise_error(Apartment::ConfigurationError, /too long.*65.*max 64/))
+    end
   end
 
   describe '#grant_privileges (private)' do
@@ -139,6 +149,7 @@ RSpec.shared_examples('a MySQL adapter') do
 
     before do
       allow(connection).to(receive(:quote).with('app_user').and_return("'app_user'"))
+      allow(connection).to(receive(:quote_table_name)) { |name| "`#{name}`" }
     end
 
     it 'executes exactly 1 SQL statement' do
@@ -147,9 +158,9 @@ RSpec.shared_examples('a MySQL adapter') do
       adapter.send(:grant_privileges, 'acme', connection, 'app_user')
     end
 
-    it 'includes GRANT statement with the environmentified database name and role' do
-      expect(connection).to(receive(:execute)
-        .with("GRANT SELECT, INSERT, UPDATE, DELETE ON `acme`.* TO 'app_user'@'%'"))
+    it 'quotes the database name using quote_table_name' do
+      expect(connection).to(receive(:quote_table_name).with('acme').and_return('`acme`'))
+      allow(connection).to(receive(:execute))
 
       adapter.send(:grant_privileges, 'acme', connection, 'app_user')
     end
@@ -157,6 +168,7 @@ RSpec.shared_examples('a MySQL adapter') do
     it 'environmentifies the database name in the GRANT' do
       reconfigure(environmentify_strategy: :prepend)
       allow(Rails).to(receive(:env).and_return('staging'))
+      allow(connection).to(receive(:quote_table_name).with('staging_acme').and_return('`staging_acme`'))
 
       expect(connection).to(receive(:execute)
         .with("GRANT SELECT, INSERT, UPDATE, DELETE ON `staging_acme`.* TO 'app_user'@'%'"))
