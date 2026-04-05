@@ -2,7 +2,7 @@
 
 **Gem Name**: `ros-apartment`
 **Maintained by**: CampusESP
-**Active work**: v4 rewrite (phased, PR-per-sub-phase off `main`)
+**Active work**: v4 rewrite (phased, PR-per-sub-phase off `development`; renaming to `main` pending)
 
 ## Design & Plan Documents
 
@@ -86,7 +86,7 @@ See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strat
 ## Testing
 
 ```bash
-bundle exec rspec spec/unit/                    # v4 unit tests (576 specs)
+bundle exec rspec spec/unit/                    # v4 unit tests (585 specs)
 bundle exec appraisal rspec spec/unit/          # across all Rails versions
 ```
 

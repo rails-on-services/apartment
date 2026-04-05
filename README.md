@@ -134,7 +134,7 @@ See the [Elevators](#elevators) section for available options.
 
 `schema_cache_per_tenant`: load per-tenant schema cache files when establishing tenant pools (default: false).
 
-`active_record_log`: tag Rails log output with the current tenant using `ActiveSupport::TaggedLogging`. Log lines inside a `switch` block are tagged with `tenant=name`. Requires `Rails.logger` to respond to `tagged` (default: false).
+`active_record_log`: tag Rails log output with the current tenant using `ActiveSupport::TaggedLogging`. Log lines inside a `switch` block are tagged with `tenant=name`; nested switches stack tags (`[tenant=acme] [tenant=widgets]`). Requires `Rails.logger` to respond to `tagged` (default: false).
 
 `sql_query_tags`: add a `tenant` tag to `ActiveRecord::QueryLogs` so SQL queries include a `/* tenant='name' */` comment. Visible in slow query logs, `pg_stat_activity`, and database monitoring tools (default: false).
 

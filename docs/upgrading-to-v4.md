@@ -65,7 +65,7 @@ end
 
 ### Models
 
-`config.excluded_models` is deprecated. It still works in v4 as a compatibility shim (resolved at activation time into pinned model registrations) but will be removed in v5.
+`config.excluded_models` is deprecated. It still works in v4 as a compatibility shim (resolved at initialization time into pinned model registrations) but will be removed in v5.
 
 The replacement is declarative: include `Apartment::Model` and call `pin_tenant` on each global model.
 
