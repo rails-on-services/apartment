@@ -104,3 +104,37 @@ The GitHub Release is created manually (step 5). The gem is already available on
 ### RubyGems trusted publishing fails
 
 Verify the GitHub environment `production` is configured correctly in repository settings, and that RubyGems.org has the trusted publisher configured for this repository.
+
+## Dual Release (v4 + v3 maintenance)
+
+While v3 is still supported, maintenance releases (bug fixes, security patches) are cut from the `v3-stable` branch.
+
+### v4 releases
+
+Same as current process: `development` → `main` → publish.
+
+### v3 maintenance releases
+
+The `gem-publish.yml` workflow triggers on push to `main` and on `v3.*` tags (see below). For v3 releases:
+
+1. Create or checkout the `v3-stable` branch (branched from the last v3 release tag)
+2. Cherry-pick or apply fixes
+3. Bump version in `lib/apartment/version.rb` (e.g., `3.4.2`)
+4. Push `v3-stable` to origin
+5. Tag and push: `git tag v3.4.2 && git push origin v3.4.2`
+   - The tag push triggers `gem-publish.yml`, which checks out the tagged commit
+   - Do **not** merge `v3-stable` into `main`; `main` contains v4 code
+6. Create a GitHub Release from the `v3.4.2` tag, noting it as a maintenance release
+
+GitHub Actions `*` matches any character sequence including dots, so the `v3.*` pattern matches tags like `v3.4.2`. Only maintainers should push v3 tags; the `production` environment protection on the workflow provides an additional safeguard.
+
+### Version coordination
+
+- v4 uses `4.x.y` version numbers
+- v3 maintenance uses `3.4.x` version numbers
+- Both publish to the same `ros-apartment` gem on RubyGems
+- RubyGems resolves via version constraints in user Gemfiles
+
+### End of v3 support
+
+When v3 maintenance ends, delete the `v3-stable` branch and remove this section.
