@@ -10,6 +10,10 @@
 
 **Spec:** `docs/designs/v4-phase8-documentation.md`
 
+**Packaging note:** The gemspec (`ros-apartment.gemspec`) packages `README.md` + `lib/` only. Docs in `docs/` are GitHub-only and don't ship in the gem. The `docs/history/` files are for GitHub readers, not gem consumers.
+
+**Changelog strategy:** v4 uses GitHub Releases as the changelog (no `CHANGELOG.md` at root). The v3 changelog is archived at `docs/history/CHANGELOG-v3.md`.
+
 ---
 
 ### Task 1: Create Feature Branch
@@ -38,6 +42,8 @@ Expected: `On branch phase-8-documentation`, nothing to commit.
 **Files:**
 - Move: `legacy_CHANGELOG.md` → `docs/history/CHANGELOG-v3.md`
 - Create: `docs/history/README-v3.md` (copy of current README.md with header)
+
+**Pre-check:** The current README on `development` is still the v3-era doc (references `config.excluded_models`, `config.tenant_names`). If the README has already been partially migrated to v4, snapshot from the last v3 release tag instead: `git show v3.4.1:README.md > docs/history/README-v3.md`.
 
 - [ ] **Step 1: Create `docs/history/` directory**
 
@@ -262,8 +268,11 @@ end
 - [ ] **Step 2: Cross-check against PR #327 for missed useful content**
 
 ```bash
-git show pr-327:docs/4.0-Upgrade.md
+git show pr-327:docs/4.0-Upgrade.md 2>/dev/null || echo "pr-327 branch not available locally"
 ```
+
+If the branch is not available locally, fetch it or reference the PR on GitHub:
+`https://github.com/rails-on-services/apartment/pull/327/files`
 
 Scan for any useful troubleshooting items or migration steps not already covered. Add if relevant.
 
@@ -454,17 +463,19 @@ With:
 
 - [ ] **Step 2: Update root `CLAUDE.md` — Testing spec count**
 
-In the "Testing" section (around line 89), replace:
+First, get the current count:
+
+```bash
+bundle exec rspec spec/unit/ --dry-run 2>&1 | grep "examples"
+```
+
+In the "Testing" section (around line 89), replace the count in:
 
 ```markdown
 bundle exec rspec spec/unit/                    # v4 unit tests (231 specs)
 ```
 
-With:
-
-```markdown
-bundle exec rspec spec/unit/                    # v4 unit tests (576 specs)
-```
+With the actual count from the dry-run (576 as of this writing, but use the live value).
 
 - [ ] **Step 3: Update root `CLAUDE.md` — Gotchas**
 
@@ -504,7 +515,7 @@ In `spec/CLAUDE.md`, in the "Adapter Tests (spec/unit/)" section's file listing 
 
 - [ ] **Step 7: Update `spec/CLAUDE.md` — Spec count in header**
 
-In `spec/CLAUDE.md`, in the opening note (line 1), replace `375+` with `576` for the unit spec count.
+In `spec/CLAUDE.md`, in the opening note (line 1), replace `375+` with the live unit spec count from `bundle exec rspec spec/unit/ --dry-run`.
 
 - [ ] **Step 8: Commit**
 
@@ -524,13 +535,21 @@ connects_to gotcha, notes new spec files."
 **Files:**
 - None (verification only)
 
-- [ ] **Step 1: Run rubocop on changed files**
+- [ ] **Step 1: Run rubocop on changed Ruby files**
 
 ```bash
-bundle exec rubocop lib/generators/apartment/install/templates/apartment.rb .github/workflows/gem-publish.yml
+bundle exec rubocop lib/generators/apartment/install/templates/apartment.rb
 ```
 
-Expected: no offenses.
+Expected: no offenses. (The YAML workflow change is not linted by RuboCop; rely on CI's workflow validation or `actionlint` if available.)
+
+- [ ] **Step 1a: Run generator specs to confirm template change is compatible**
+
+```bash
+bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/generator/ --format progress
+```
+
+Expected: all pass. The existing specs check for `tenant_strategy`, `tenants_provider`, and absence of v3 references — our comment-only change should not affect them.
 
 - [ ] **Step 2: Verify all markdown links resolve**
 
@@ -556,7 +575,7 @@ Expected: all OK.
 bundle exec rspec spec/unit/ --format progress
 ```
 
-Expected: 576 examples, 0 failures (documentation changes should not affect tests).
+Expected: all pass, 0 failures (documentation changes should not affect tests).
 
 ---
 
