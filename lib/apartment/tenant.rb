@@ -9,13 +9,17 @@ module Apartment
       # Note: previous_tenant reflects only the immediately preceding tenant
       # for the current switch scope. It is not stacked across nesting levels —
       # after an inner switch completes, previous_tenant resets to nil.
-      def switch(tenant)
-        raise(ArgumentError, 'Apartment::Tenant.switch requires a block') unless block_given?
+      def switch(tenant, &block)
+        raise(ArgumentError, 'Apartment::Tenant.switch requires a block') unless block
 
         previous = Current.tenant
         Current.tenant = tenant
         Current.previous_tenant = previous
-        yield
+        if tagged_logging?
+          Rails.logger.tagged(tenant, &block)
+        else
+          yield
+        end
       ensure
         Current.tenant = previous
         Current.previous_tenant = nil
@@ -70,6 +74,11 @@ module Apartment
       def adapter
         Apartment.adapter or
           raise(ConfigurationError, 'Apartment adapter not configured. Call Apartment.configure first.')
+      end
+
+      def tagged_logging?
+        Apartment.config&.active_record_log &&
+          defined?(Rails) && Rails.logger.respond_to?(:tagged)
       end
 
       # Resolve config.excluded_models strings into pinned model registrations.
