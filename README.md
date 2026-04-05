@@ -124,13 +124,15 @@ See the [Elevators](#elevators) section for available options.
 
 `seed_after_create`: run seeds after tenant creation (default: false).
 
+### Tenant Naming
+
+`environmentify_strategy`: how to namespace tenant names per Rails environment. `nil` (no prefix), `:prepend`, `:append`, or a callable (default: nil).
+
 ### RBAC
 
 `migration_role`: a Symbol naming the database role used for migrations (default: nil, uses the connection's default role).
 
 `app_role`: a String or callable returning the restricted role for application queries (default: nil).
-
-`environmentify_strategy`: how to namespace tenant names per Rails environment. `nil` (no prefix), `:prepend`, `:append`, or a callable (default: nil).
 
 ### PostgreSQL
 

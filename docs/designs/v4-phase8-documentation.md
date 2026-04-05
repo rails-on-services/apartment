@@ -264,7 +264,7 @@ Add a section covering the v3 maintenance track:
 ## Dual Release (v4 + v3 maintenance)
 
 While v3 is still supported, maintenance releases (bug fixes, security
-patches) are cut from the `v3-stable` branch.
+patches) are cut from the `3-4-stable` branch.
 
 ### v4 releases
 Tag-based publishing from stable branches. See RELEASING.md for full process.
@@ -287,13 +287,13 @@ GitHub's environment protection rules on the `production` environment as
 an additional safeguard.
 
 Release steps:
-1. Create/checkout `v3-stable` branch (branched from last v3 release tag)
+1. Create/checkout `3-4-stable` branch (branched from last v3 release tag)
 2. Cherry-pick or apply fixes (e.g., PRs #340, #342)
 3. Bump version in lib/apartment/version.rb (e.g., 3.4.2)
-4. Push v3-stable to origin
+4. Push 3-4-stable to origin
 5. Tag and push: `git tag v3.4.2 && git push origin v3.4.2`
    - The tag push triggers gem-publish, which checks out the tag
-   - Do NOT merge v3-stable into main (main contains v4 code)
+   - Do NOT merge 3-4-stable into main (main contains v4 code)
 6. Create GitHub Release from the v3.4.2 tag, noting it as a maintenance release
 
 ### Version coordination
@@ -303,7 +303,7 @@ Release steps:
 - RubyGems resolves via version constraints in user Gemfiles
 
 ### End of v3 support
-When v3 maintenance ends, delete the v3-stable branch and remove this
+When v3 maintenance ends, delete the 3-4-stable branch and remove this
 section from RELEASING.md.
 ```
 

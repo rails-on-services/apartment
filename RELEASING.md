@@ -153,8 +153,8 @@ Verify the GitHub environment `production` is configured correctly in repository
 
 The repository previously used `development` as the primary branch and `main` as the release branch. The migration to the Rails-style layout:
 
-1. Rename `main` → `3-4-stable` on GitHub
-2. Rename `development` → `main` on GitHub
+1. Rename `main` -> `3-4-stable` on GitHub
+2. Rename `development` -> `main` on GitHub
 3. Set `main` as the default branch
 4. Contributors update local clones:
 

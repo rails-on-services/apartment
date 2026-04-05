@@ -11,7 +11,7 @@ jobs:
     environment: production
     permissions:
       id-token: write    # Required for trusted publishing to RubyGems.org
-      contents: write    # Required for rake release to push the release tag
+      contents: write    # Required by rubygems/release-gem for repository access
 
     steps:
     - uses: actions/checkout@v4
