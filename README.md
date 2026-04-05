@@ -299,28 +299,9 @@ For automatic tenant propagation:
 - [apartment-sidekiq](https://github.com/rails-on-services/apartment-sidekiq)
 - [apartment-activejob](https://github.com/rails-on-services/apartment-activejob)
 
-## Rails Console
-
-Apartment adds console helpers:
-
-- `tenant_list`: list available tenants
-- `st('tenant_name')`: switch to a tenant
-
-For a tenant-aware prompt, add `require 'apartment/custom_console'` to `application.rb` (requires `pry-rails`).
-
 ## Troubleshooting
 
-Skip initial DB connection on boot:
-
-```bash
-APARTMENT_DISABLE_INIT=true rails runner 'puts 1'
-```
-
-Skip tenant presence check (saves one query per switch on PostgreSQL):
-
-```ruby
-config.tenant_presence_check = false
-```
+If tenant switching raises unexpected errors, verify that `tenants_provider` returns valid tenant names and that the tenant exists in the database.
 
 ## Upgrading from v3
 
