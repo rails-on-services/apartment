@@ -318,8 +318,6 @@ See the [upgrade guide](docs/upgrading-to-v4.md) for a complete list of breaking
 5. Use [Appraisal](https://github.com/thoughtbot/appraisal) to test across Rails versions: `bundle exec appraisal rspec spec/unit/`
 6. Submit PR to the `main` branch
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
-
 ## License
 
 [MIT License](http://www.opensource.org/licenses/MIT)

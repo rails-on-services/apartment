@@ -1,7 +1,7 @@
 name: Rubocop
 on:
   push:
-    branches: [main]
+    branches: [main, '*-stable']
   pull_request:
     types: [opened, synchronize, reopened]
 
