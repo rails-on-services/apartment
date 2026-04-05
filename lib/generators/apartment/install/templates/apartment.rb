@@ -18,6 +18,14 @@ Apartment.configure do |config|
   # config.default_tenant = 'public'
 
   # Models that live in the shared/default schema (not per-tenant).
+  # The recommended approach is to declare this in the model itself:
+  #
+  #   class Account < ApplicationRecord
+  #     include Apartment::Model
+  #     pin_tenant
+  #   end
+  #
+  # Legacy alternative (deprecated in v4, removed in v5):
   # config.excluded_models = %w[Account]
 
   # == Connection Pool =====================================================
