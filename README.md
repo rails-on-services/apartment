@@ -316,7 +316,7 @@ See the [upgrade guide](docs/upgrading-to-v4.md) for a complete list of breaking
 3. Write tests: we don't merge without them
 4. Run `bundle exec rspec spec/unit/` and `bundle exec rubocop`
 5. Use [Appraisal](https://github.com/thoughtbot/appraisal) to test across Rails versions: `bundle exec appraisal rspec spec/unit/`
-6. Submit PR to the `development` branch
+6. Submit PR to the `main` branch
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 

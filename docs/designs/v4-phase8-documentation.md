@@ -267,7 +267,7 @@ While v3 is still supported, maintenance releases (bug fixes, security
 patches) are cut from the `v3-stable` branch.
 
 ### v4 releases
-Same as current process: development → main → publish.
+Tag-based publishing from stable branches. See RELEASING.md for full process.
 
 ### v3 maintenance releases
 

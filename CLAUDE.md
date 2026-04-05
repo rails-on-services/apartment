@@ -2,7 +2,7 @@
 
 **Gem Name**: `ros-apartment`
 **Maintained by**: CampusESP
-**Active work**: v4 rewrite (phased, PR-per-sub-phase off `development`)
+**Active work**: v4 rewrite (phased, PR-per-sub-phase off `main`)
 
 ## Design & Plan Documents
 
