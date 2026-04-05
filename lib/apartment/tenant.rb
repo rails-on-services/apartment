@@ -16,7 +16,7 @@ module Apartment
         Current.tenant = tenant
         Current.previous_tenant = previous
         if tagged_logging?
-          Rails.logger.tagged(tenant, &block)
+          Rails.logger.tagged("tenant=#{tenant}", &block)
         else
           yield
         end

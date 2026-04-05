@@ -36,7 +36,7 @@ RSpec.describe('Apartment::Tenant.switch tagged logging') do
         Rails.logger.info('inside switch')
       end
 
-      expect(output.string).to(include('[acme]'))
+      expect(output.string).to(include('[tenant=acme]'))
       expect(output.string).to(include('inside switch'))
     end
 
@@ -49,7 +49,7 @@ RSpec.describe('Apartment::Tenant.switch tagged logging') do
       output.rewind
       Rails.logger.info('outside')
 
-      expect(output.string).not_to(include('[acme]'))
+      expect(output.string).not_to(include('[tenant=acme]'))
     end
 
     it 'handles nested switches with correct tags' do
@@ -61,10 +61,10 @@ RSpec.describe('Apartment::Tenant.switch tagged logging') do
       end
 
       lines = output.string.split("\n")
-      expect(lines[0]).to(include('[widgets]'))
+      expect(lines[0]).to(include('[tenant=widgets]'))
       expect(lines[0]).to(include('inner'))
-      expect(lines[1]).to(include('[acme]'))
-      expect(lines[1]).not_to(include('[widgets]'))
+      expect(lines[1]).to(include('[tenant=acme]'))
+      expect(lines[1]).not_to(include('[tenant=widgets]'))
     end
   end
 
@@ -82,7 +82,7 @@ RSpec.describe('Apartment::Tenant.switch tagged logging') do
         Rails.logger.info('no tag expected')
       end
 
-      expect(output.string).not_to(include('[acme]'))
+      expect(output.string).not_to(include('[tenant=acme]'))
       expect(output.string).to(include('no tag expected'))
     end
   end
