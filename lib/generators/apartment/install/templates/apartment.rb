@@ -42,6 +42,11 @@ Apartment.configure do |config|
   # config.elevator = :subdomain
   # config.elevator_options = {}
 
+  # == Logging ==============================================================
+
+  # config.active_record_log = false  # Tag Rails logs with [tenant=name]
+  # config.sql_query_tags    = false  # Add /* tenant='name' */ SQL comments
+
   # == Migrations ==========================================================
 
   # config.parallel_migration_threads = 0
