@@ -136,7 +136,7 @@ See the [Elevators](#elevators) section for available options.
 
 `active_record_log`: tag Rails log output with the current tenant using `ActiveSupport::TaggedLogging`. Log lines inside a `switch` block are tagged with `tenant=name`. Requires `Rails.logger` to respond to `tagged` (default: false).
 
-`sql_query_tags`: add a `tenant` tag to `ActiveRecord::QueryLogs` so SQL queries include a `/* tenant='name' */` comment. Visible in slow query logs, `pg_stat_activity`, and database monitoring tools. Requires Rails 7.1+ (default: false).
+`sql_query_tags`: add a `tenant` tag to `ActiveRecord::QueryLogs` so SQL queries include a `/* tenant='name' */` comment. Visible in slow query logs, `pg_stat_activity`, and database monitoring tools (default: false).
 
 `shard_key_prefix`: prefix for ActiveRecord shard keys used in tenant pool registration (default: `'apartment'`). Must match `/[a-z_][a-z0-9_]*/`.
 
