@@ -134,7 +134,7 @@ See the [Elevators](#elevators) section for available options.
 
 `schema_cache_per_tenant`: load per-tenant schema cache files when establishing tenant pools (default: false).
 
-`active_record_log`: tag Rails log output with the current tenant using `ActiveSupport::TaggedLogging`. Log lines inside a `switch` block are prefixed with `[tenant=name]`. Requires `Rails.logger` to support `tagged`; no-op with structured loggers like Ougai (default: false).
+`active_record_log`: tag Rails log output with the current tenant using `ActiveSupport::TaggedLogging`. Log lines inside a `switch` block are tagged with `tenant=name`. Requires `Rails.logger` to respond to `tagged` (default: false).
 
 `shard_key_prefix`: prefix for ActiveRecord shard keys used in tenant pool registration (default: `'apartment'`). Must match `/[a-z_][a-z0-9_]*/`.
 
