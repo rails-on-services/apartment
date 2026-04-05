@@ -16,13 +16,13 @@ v4 replaces the thread-local tenant switching model with pool-per-tenant archite
 
 ### Configuration
 
-**`tenant_names` removed.** Use `tenants_provider`, which must be a callable (proc or lambda).
+`config.tenant_names` has been removed. Use `config.tenants_provider` instead; it must be a callable (proc or lambda).
 
-**`tenant_strategy` required.** Valid values: `:schema`, `:database_name`, `:shard`, `:database_config`.
+`config.tenant_strategy` is now required. Supported values: `:schema` (PostgreSQL schema-per-tenant) and `:database_name` (separate database per tenant). Additional strategies (`:shard`, `:database_config`) are reserved for future use and will raise `AdapterNotFound` if configured today.
 
-**`use_schemas` / `use_sql` removed.** Use `tenant_strategy` for the isolation model and `schema_load_strategy` (`:schema_rb` or `:sql`) for schema loading on tenant creation.
+`config.use_schemas` and `config.use_sql` have been removed. Use `tenant_strategy` for the isolation model and `schema_load_strategy` (`:schema_rb` or `:sql`) for schema loading on tenant creation.
 
-**Config is frozen after `Apartment.configure`.** No runtime mutation; attempting to change config values after boot raises `FrozenError`.
+Config is frozen after `Apartment.configure`. No runtime mutation; attempting to change config values after boot raises `FrozenError`.
 
 Before/after:
 
@@ -44,7 +44,7 @@ end
 
 ### Tenant API
 
-**`Apartment::Tenant.switch` requires a block.** The manual switch/reset pattern (`switch!` then `reset` in `ensure`) is replaced by block-scoped switching that guarantees cleanup:
+`Apartment::Tenant.switch` now requires a block. The manual switch/reset pattern (`switch!` then `reset` in `ensure`) is replaced by block-scoped switching that guarantees cleanup:
 
 ```ruby
 # v3
@@ -65,7 +65,7 @@ end
 
 ### Models
 
-**`config.excluded_models` is deprecated.** It still works in v4 as a compatibility shim (resolved at activation time into pinned model registrations) but will be removed in v5.
+`config.excluded_models` is deprecated. It still works in v4 as a compatibility shim (resolved at activation time into pinned model registrations) but will be removed in v5.
 
 The replacement is declarative: include `Apartment::Model` and call `pin_tenant` on each global model.
 
@@ -87,7 +87,7 @@ class Company < ApplicationRecord
 end
 ```
 
-**`process_excluded_models` is deprecated.** Use `process_pinned_models` instead. The deprecated method still works (it delegates internally) but emits a deprecation warning.
+`process_excluded_models` is deprecated; use `process_pinned_models` instead. The deprecated method still works (it delegates internally) but emits a deprecation warning.
 
 ### Middleware
 
@@ -193,7 +193,9 @@ Apartment::Tenant.switch(tenant) do
 end
 ```
 
-Note: `Apartment::Tenant.current` is unchanged between v3 and v4; no migration needed for code that reads the current tenant.
+`Apartment::Tenant.current` is unchanged between v3 and v4; no migration needed for code that reads the current tenant.
+
+`Apartment::Tenant.reset` (no bang) is available for cases where you need to return to the default tenant outside a block; `reset!` no longer exists in v4.
 
 ### Step 4: Update Middleware
 

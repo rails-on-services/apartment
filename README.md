@@ -30,9 +30,7 @@ Apartment uses **schema-per-tenant** (PostgreSQL) or **database-per-tenant** (My
 
 ## About ros-apartment
 
-This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Drop-in replacement: same `require 'apartment'`, same API.
-
-v4 introduces a pool-per-tenant architecture that replaces the thread-local switching of v3. Tenant context is fiber-safe via `CurrentAttributes`, and connection pools are managed per tenant rather than swapping search paths on a shared connection.
+This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Same `require 'apartment'`; v4 introduces a pool-per-tenant architecture that replaces the thread-local switching of v3. Tenant context is fiber-safe via `CurrentAttributes`, and connection pools are managed per tenant rather than swapping search paths on a shared connection. See the [upgrade guide](docs/upgrading-to-v4.md) for migration steps from v3.
 
 ## Installation
 
@@ -246,6 +244,10 @@ Hook into tenant lifecycle events:
 Apartment::Adapters::AbstractAdapter.set_callback :create, :after do |adapter|
   # runs after a new tenant is created
 end
+
+Apartment::Adapters::AbstractAdapter.set_callback :switch, :before do |adapter|
+  # runs before switching tenants
+end
 ```
 
 ## Migrations
@@ -258,7 +260,7 @@ Rake tasks:
 - `apartment:seed`: seed all tenants
 - `apartment:rollback`: rollback last migration on all tenants
 
-Tenant migrations also run automatically with `rails db:migrate`.
+The Railtie hooks the primary `db:migrate` task (when defined) so that tenant migrations run after the primary database migrates.
 
 ### Parallel Migrations
 
