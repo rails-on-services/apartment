@@ -257,8 +257,6 @@ RSpec.configure do |config|
 end
 ```
 
-Note: `reset` (no bang). The `reset!` alias is not present in v4.
-
 Use block-based switching in specs:
 
 ```ruby

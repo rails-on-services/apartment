@@ -124,6 +124,22 @@ See the [Elevators](#elevators) section for available options.
 
 `seed_after_create`: run seeds after tenant creation (default: false).
 
+`seed_data_file`: path to a custom seeds file; uses `db/seeds.rb` when nil (default: nil).
+
+`schema_file`: path to a custom schema file for tenant creation (default: nil).
+
+`check_pending_migrations`: raise `PendingMigrationError` in local environments when a tenant has unapplied migrations (default: true).
+
+### Behavior
+
+`tenant_not_found_handler`: a callable invoked when tenant lookup fails; nil raises the default error (default: nil).
+
+`active_record_log`: prepend tenant context to ActiveRecord query logs (default: false).
+
+`schema_cache_per_tenant`: load per-tenant schema cache files when establishing tenant pools (default: false).
+
+`shard_key_prefix`: prefix for ActiveRecord shard keys used in tenant pool registration (default: `'apartment'`). Must match `/[a-z_][a-z0-9_]*/`.
+
 ### Tenant Naming
 
 `environmentify_strategy`: how to namespace tenant names per Rails environment. `nil` (no prefix), `:prepend`, `:append`, or a callable (default: nil).
@@ -165,6 +181,12 @@ Ensure your `database.yml` includes the persistent schema:
 ```yaml
 schema_search_path: "public,shared_extensions"
 ```
+
+Additional PostgreSQL options (set inside the `configure_postgres` block):
+
+`enforce_search_path_reset`: verify that `search_path` resets to the default after switching away from a tenant (default: false).
+
+`include_schemas_in_dump`: non-public schemas to include in schema dumps, e.g., `%w[ext shared]` (default: []).
 
 ### MySQL
 
