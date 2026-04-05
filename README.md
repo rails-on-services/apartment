@@ -130,11 +130,7 @@ See the [Elevators](#elevators) section for available options.
 
 `check_pending_migrations`: raise `PendingMigrationError` in local environments when a tenant has unapplied migrations (default: true).
 
-### Behavior
-
-`tenant_not_found_handler`: a callable invoked when tenant lookup fails; nil raises the default error (default: nil).
-
-`active_record_log`: prepend tenant context to ActiveRecord query logs (default: false).
+### Advanced
 
 `schema_cache_per_tenant`: load per-tenant schema cache files when establishing tenant pools (default: false).
 
@@ -183,8 +179,6 @@ schema_search_path: "public,shared_extensions"
 ```
 
 Additional PostgreSQL options (set inside the `configure_postgres` block):
-
-`enforce_search_path_reset`: verify that `search_path` resets to the default after switching away from a tenant (default: false).
 
 `include_schemas_in_dump`: non-public schemas to include in schema dumps, e.g., `%w[ext shared]` (default: []).
 
