@@ -2,7 +2,7 @@ name: Publish to RubyGems
 
 on:
   push:
-    tags: [ 'v*' ]
+    branches: ['3-4-stable', '4-0-alpha']
 
 jobs:
   release:
