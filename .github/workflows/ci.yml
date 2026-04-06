@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [development, main, '*-stable']
+    branches: [main, '*-stable']
   pull_request:
     types: [opened, synchronize, reopened]
   release:
