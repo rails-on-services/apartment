@@ -13,6 +13,8 @@ lib/apartment/
 │   ├── mysql2_adapter.rb      # Database-per-tenant on MySQL (mysql2 driver)
 │   ├── trilogy_adapter.rb     # Database-per-tenant on MySQL (trilogy driver, inherits Mysql2Adapter)
 │   └── sqlite3_adapter.rb     # File-per-tenant (FileUtils lifecycle)
+├── concerns/              # ActiveRecord concerns for tenant-aware models
+│   └── model.rb               # Apartment::Model concern: pin_tenant, apartment_pinned?
 ├── configs/               # Database-specific config objects
 │   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, enforce_search_path_reset
 │   └── mysql_config.rb        # MysqlConfig: placeholder
@@ -69,6 +71,10 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 - **Mysql2Adapter** — Same pattern as PostgresqlDatabaseAdapter. `CREATE/DROP DATABASE IF EXISTS`.
 - **TrilogyAdapter** — Empty subclass of Mysql2Adapter (alternative MySQL driver).
 - **Sqlite3Adapter** — `database` key with file path. `FileUtils.mkdir_p` for create, `FileUtils.rm_f` for drop.
+
+### concerns/model.rb — Model Pinning Concern
+
+`Apartment::Model` provides `pin_tenant` (class method) to declare a model as pinned to the default tenant. Registered models bypass the `ConnectionHandling` patch. Zeitwerk-safe: works whether called before or after `activate!`. `apartment_pinned?` checks the class and its superclass chain.
 
 ### railtie.rb — v4 Rails Integration
 

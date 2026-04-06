@@ -2,7 +2,7 @@
 
 **Gem Name**: `ros-apartment`
 **Maintained by**: CampusESP
-**Active work**: v4 rewrite (phased, PR-per-sub-phase off `development`)
+**Active work**: v4 rewrite (phased, PR-per-sub-phase off `development`; renaming to `main` pending)
 
 ## Design & Plan Documents
 
@@ -71,7 +71,7 @@ DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integrat
 - **PostgreSQL (schemas)**: Namespaces in single DB. Fast (<1ms switch), scales to 100+ tenants.
 - **MySQL (databases)**: Separate DB per tenant. Complete isolation, slower switching.
 - **Elevators**: Rack middleware extracts tenant from request. Must be before session middleware.
-- **Excluded models**: Shared tables (User, Company) pinned to default tenant. Use `has_many :through`, not HABTM.
+- **Pinned models**: Global tables declared with `Apartment::Model` + `pin_tenant`. Bypasses tenant routing. Use `has_many :through`, not HABTM. Replaces `excluded_models` (deprecated in v4).
 
 See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strategy trade-offs, `docs/elevators.md` for middleware rationale.
 
@@ -86,7 +86,7 @@ See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strat
 ## Testing
 
 ```bash
-bundle exec rspec spec/unit/                    # v4 unit tests (231 specs)
+bundle exec rspec spec/unit/                    # v4 unit tests (585 specs)
 bundle exec appraisal rspec spec/unit/          # across all Rails versions
 ```
 
@@ -109,3 +109,4 @@ v4 unit tests are in `spec/unit/` and require no database. See `spec/CLAUDE.md` 
 - **Monotonic clock**: `PoolManager` uses `Process.clock_gettime(Process::CLOCK_MONOTONIC)` for timestamps, not `Time.now`. Stats return `seconds_idle` (duration), not wall-clock times.
 - **schema_load_strategy**: Defaults to `nil` (no schema loading on create). Set to `:schema_rb` or `:sql` to auto-load schema into new tenants.
 - **v4 Railtie**: `lib/apartment/railtie.rb` is now v4. It auto-wires `activate!`, `init`, middleware, and rake tasks after `Apartment.configure` runs. No manual middleware insertion needed.
+- **`connects_to` edge case**: Models (or abstract base classes) that use `connects_to` to point at a separate database need `pin_tenant` to prevent Apartment from creating tenant pools for them. The common pattern of `ApplicationRecord` using `connects_to` with multiple roles (writing/reading) on the same database works correctly without any special handling.

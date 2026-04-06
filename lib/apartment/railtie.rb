@@ -18,6 +18,7 @@ module Apartment
 
       begin
         Apartment.activate!
+        Apartment.activate_sql_query_tags!
         Apartment::Tenant.init
 
         # Apply schema dumper patch for Rails 8.1+ (public. prefix stripping)

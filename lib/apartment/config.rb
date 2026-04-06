@@ -20,7 +20,7 @@ module Apartment
                   :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
                   :elevator, :elevator_options,
-                  :tenant_not_found_handler, :active_record_log,
+                  :tenant_not_found_handler, :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations
 
@@ -42,6 +42,7 @@ module Apartment
       @elevator_options = {}
       @tenant_not_found_handler = nil
       @active_record_log = false
+      @sql_query_tags = false
       @postgres_config = nil
       @mysql_config = nil
       @shard_key_prefix = 'apartment'

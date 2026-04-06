@@ -125,6 +125,20 @@ module Apartment
       @activated = true
     end
 
+    # Register a :tenant tag with ActiveRecord::QueryLogs so SQL queries
+    # include a /* tenant='name' */ comment. No-op when sql_query_tags is
+    # false or ActiveRecord::QueryLogs is not available.
+    def activate_sql_query_tags!
+      return unless @config&.sql_query_tags
+      return unless defined?(ActiveRecord::QueryLogs)
+      return if ActiveRecord::QueryLogs.tags.include?(:tenant)
+
+      ActiveRecord::QueryLogs.taggings = ActiveRecord::QueryLogs.taggings.merge(
+        tenant: -> { Apartment::Current.tenant }
+      )
+      ActiveRecord::QueryLogs.tags = ActiveRecord::QueryLogs.tags + [:tenant]
+    end
+
     # Deregister a single tenant's shard from AR's ConnectionHandler.
     # Safe to call when AR is not loaded or config is not set (no-op).
     # Used by PoolReaper eviction, AbstractAdapter#drop, and teardown.

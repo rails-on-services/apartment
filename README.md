@@ -30,7 +30,7 @@ Apartment uses **schema-per-tenant** (PostgreSQL) or **database-per-tenant** (My
 
 ## About ros-apartment
 
-This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Drop-in replacement — same `require 'apartment'`, same API.
+This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Same `require 'apartment'`; v4 introduces a pool-per-tenant architecture that replaces the thread-local switching of v3. Tenant context is fiber-safe via `CurrentAttributes`, and connection pools are managed per tenant rather than swapping search paths on a shared connection. See the [upgrade guide](docs/upgrading-to-v4.md) for migration steps from v3.
 
 ## Installation
 
@@ -52,128 +52,115 @@ bundle install
 bundle exec rails generate apartment:install
 ```
 
-This creates `config/initializers/apartment.rb`. Configure it:
+## Quick Start
+
+The generated initializer at `config/initializers/apartment.rb` configures Apartment:
 
 ```ruby
 Apartment.configure do |config|
-  config.excluded_models = ['User', 'Company']  # shared across all tenants
-  config.tenant_names = -> { Customer.pluck(:subdomain) }
+  config.tenant_strategy = :schema          # :schema (PostgreSQL) or :database_name (MySQL/SQLite)
+  config.tenants_provider = -> { Customer.pluck(:subdomain) }
+  config.default_tenant = 'public'
 end
 ```
 
-## Usage
-
-### Creating and Dropping Tenants
+Tenant context is block-scoped. Always use `Apartment::Tenant.switch` with a block in application code; it guarantees cleanup on exceptions.
 
 ```ruby
-Apartment::Tenant.create('acme')   # creates schema/database + runs migrations
-Apartment::Tenant.drop('acme')     # permanently deletes tenant data
-```
+Apartment::Tenant.create('acme')
 
-### Switching Tenants
-
-Always use the block form — it guarantees cleanup even on exceptions:
-
-```ruby
 Apartment::Tenant.switch('acme') do
-  # all ActiveRecord queries scoped to 'acme'
-  User.create!(name: 'Alice')
+  User.create!(name: 'Alice')  # in the 'acme' schema
 end
-# automatically restored to previous tenant
+
+Apartment::Tenant.drop('acme')
 ```
 
 `switch!` exists for console/REPL use but is discouraged in application code.
 
-### Switching per Request (Elevators)
-
-Elevators are Rack middleware that detect the tenant from the request and switch automatically:
+Global models that live outside tenant schemas use `pin_tenant`:
 
 ```ruby
-# config/application.rb — pick one:
-config.middleware.use Apartment::Elevators::Subdomain      # acme.example.com → 'acme'
-config.middleware.use Apartment::Elevators::Domain          # acme.com → 'acme'
-config.middleware.use Apartment::Elevators::Host            # full hostname matching
-config.middleware.use Apartment::Elevators::HostHash, { 'acme.com' => 'acme_tenant' }
-config.middleware.use Apartment::Elevators::FirstSubdomain  # first subdomain in chain
+class Company < ApplicationRecord
+  include Apartment::Model
+  pin_tenant  # always queries the default (public) schema
+end
 ```
 
-**Important:** Position the elevator middleware *before* authentication middleware (e.g., Warden/Devise) to ensure tenant context is established before auth runs:
+## Configuration Reference
+
+All options are set in `config/initializers/apartment.rb` inside an `Apartment.configure` block.
+
+### Required Options
+
+`tenant_strategy`: the isolation method. `:schema` for PostgreSQL schema-per-tenant, `:database_name` for MySQL/SQLite database-per-tenant.
+
+`tenants_provider`: a callable that returns tenant names. Called at migration time and by rake tasks. Example: `-> { Customer.pluck(:subdomain) }`.
+
+### Pool Settings
+
+`tenant_pool_size`: connections per tenant pool (default: 5).
+
+`pool_idle_timeout`: seconds before an idle tenant pool is eligible for reaping (default: 300).
+
+`max_total_connections`: hard cap across all tenant pools; nil for unlimited (default: nil).
+
+### Elevator (Request Tenant Detection)
 
 ```ruby
-config.middleware.insert_before Warden::Manager, Apartment::Elevators::Subdomain
+config.elevator = :subdomain
+config.elevator_options = {}
 ```
 
-#### Custom Elevator
+The Railtie auto-inserts elevator middleware. No manual `config.middleware.use` needed.
+
+See the [Elevators](#elevators) section for available options.
+
+### Migrations
+
+`parallel_migration_threads`: number of threads for parallel tenant migration; 0 for sequential (default: 0).
+
+`schema_load_strategy`: how to initialize new tenant schemas on create. `nil` (no schema loading), `:schema_rb`, or `:sql` (default: nil).
+
+`seed_after_create`: run seeds after tenant creation (default: false).
+
+`seed_data_file`: path to a custom seeds file; uses `db/seeds.rb` when nil (default: nil).
+
+`schema_file`: path to a custom schema file for tenant creation (default: nil).
+
+`check_pending_migrations`: raise `PendingMigrationError` in local environments when a tenant has unapplied migrations (default: true).
+
+### Advanced
+
+`schema_cache_per_tenant`: load per-tenant schema cache files when establishing tenant pools (default: false).
+
+`active_record_log`: tag Rails log output with the current tenant using `ActiveSupport::TaggedLogging`. Log lines inside a `switch` block are tagged with `tenant=name`; nested switches stack tags (`[tenant=acme] [tenant=widgets]`). Requires `Rails.logger` to respond to `tagged` (default: false).
+
+`sql_query_tags`: add a `tenant` tag to `ActiveRecord::QueryLogs` so SQL queries include a `/* tenant='name' */` comment. Visible in slow query logs, `pg_stat_activity`, and database monitoring tools (default: false).
+
+`shard_key_prefix`: prefix for ActiveRecord shard keys used in tenant pool registration (default: `'apartment'`). Must match `/[a-z_][a-z0-9_]*/`.
+
+### Tenant Naming
+
+`environmentify_strategy`: how to namespace tenant names per Rails environment. `nil` (no prefix), `:prepend`, `:append`, or a callable (default: nil).
+
+### RBAC
+
+`migration_role`: a Symbol naming the database role used for migrations (default: nil, uses the connection's default role).
+
+`app_role`: a String or callable returning the restricted role for application queries (default: nil).
+
+### PostgreSQL
 
 ```ruby
-# app/middleware/my_elevator.rb
-class MyElevator < Apartment::Elevators::Generic
-  def parse_tenant_name(request)
-    # return tenant name based on request
-    request.host.split('.').first
+Apartment.configure do |config|
+  config.configure_postgres do |pg|
+    pg.persistent_schemas = ['shared_extensions']
   end
 end
 ```
 
-### Excluded Models
-
-Models that exist globally (not per-tenant):
-
-```ruby
-config.excluded_models = ['User', 'Company']
-```
-
-These models always query the default (public) schema. Use `has_many :through` for associations — `has_and_belongs_to_many` is not supported with excluded models.
-
-### Excluded Subdomains
-
-```ruby
-Apartment::Elevators::Subdomain.excluded_subdomains = ['www', 'admin', 'public']
-```
-
-## Configuration
-
-All options are set in `config/initializers/apartment.rb`:
-
-```ruby
-Apartment.configure do |config|
-  # Required: how to discover tenant names (must be a callable)
-  config.tenant_names = -> { Customer.pluck(:subdomain) }
-
-  # Excluded models — shared across all tenants
-  config.excluded_models = ['User', 'Company']
-
-  # Default schema/database (default: 'public' for PostgreSQL)
-  config.default_tenant = 'public'
-
-  # Prepend Rails environment to tenant names (useful for dev/test)
-  config.prepend_environment = !Rails.env.production?
-
-  # Seed new tenants after creation
-  config.seed_after_create = true
-
-  # Enable ActiveRecord query logging with tenant context
-  config.active_record_log = true
-end
-```
-
-### PostgreSQL-Specific
-
-```ruby
-Apartment.configure do |config|
-  # Schemas that remain in search_path for all tenants
-  # (useful for shared extensions like hstore, uuid-ossp)
-  config.persistent_schemas = ['shared_extensions']
-
-  # Use raw SQL dumps instead of schema.rb for tenant creation
-  # (needed for materialized views, custom types, etc.)
-  config.use_sql = true
-end
-```
-
-#### Setting Up Shared Extensions
-
-PostgreSQL extensions (hstore, uuid-ossp, etc.) should be installed in a persistent schema:
+PostgreSQL extensions (hstore, uuid-ossp, etc.) should be installed in a persistent schema so they're accessible from all tenant schemas:
 
 ```ruby
 # lib/tasks/db_enhancements.rake
@@ -195,46 +182,87 @@ Ensure your `database.yml` includes the persistent schema:
 schema_search_path: "public,shared_extensions"
 ```
 
-### Migrations
+Additional PostgreSQL options (set inside the `configure_postgres` block):
 
-Tenant migrations run automatically with `rake db:migrate`. Apartment iterates all tenants from `config.tenant_names`.
+`include_schemas_in_dump`: non-public schemas to include in schema dumps, e.g., `%w[ext shared]` (default: []).
 
-```ruby
-# Disable automatic tenant migration if needed
-Apartment.db_migrate_tenants = false  # in Rakefile, before load_tasks
-```
-
-#### Parallel Migrations
-
-For applications with many schemas:
+### MySQL
 
 ```ruby
-config.parallel_migration_threads = 4    # 0 = sequential (default)
-config.parallel_strategy = :auto         # :auto, :threads, or :processes
-```
-
-**Platform notes:** `:auto` uses threads on macOS (libpq fork issues) and processes on Linux. Parallel migrations disable PostgreSQL advisory locks — ensure your migrations are safe to run concurrently.
-
-### Multi-Server Setup
-
-Store tenants on different database servers:
-
-```ruby
-config.with_multi_server_setup = true
-config.tenant_names = -> {
-  Tenant.all.each_with_object({}) do |t, hash|
-    hash[t.name] = { adapter: 'postgresql', host: t.db_host, database: 'postgres' }
+Apartment.configure do |config|
+  config.configure_mysql do |my|
+    # MySQL-specific options
   end
-}
+end
 ```
+
+## Elevators
+
+Elevators are Rack middleware that detect the tenant from the incoming request and call `Apartment::Tenant.switch` for the duration of that request.
+
+Available elevators:
+
+- Subdomain: `acme.example.com` -> `'acme'`
+- Domain: `acme.com` -> `'acme'`
+- Host: full hostname matching
+- HostHash: `{ 'acme.com' => 'acme_tenant' }`
+- FirstSubdomain: first subdomain in a multi-level chain
+- Header: tenant name from an HTTP header (new in v4)
+
+Configuration via `config.elevator`:
+
+```ruby
+Apartment.configure do |config|
+  config.elevator = :subdomain
+end
+```
+
+The Railtie inserts the elevator as middleware automatically. You do not need `config.middleware.use` or `config.middleware.insert_before`.
+
+### Custom Elevator
+
+```ruby
+class MyElevator < Apartment::Elevators::Generic
+  def parse_tenant_name(request)
+    request.host.split('.').first
+  end
+end
+```
+
+Then pass the class directly:
+
+```ruby
+config.elevator = MyElevator
+```
+
+## Pinned Models (Global Tables)
+
+Models that belong to all tenants (users, companies, plans) are pinned to the default schema:
+
+```ruby
+class User < ApplicationRecord
+  include Apartment::Model
+  pin_tenant
+end
+```
+
+Why `pin_tenant`:
+
+- Declarative: the model declares its own tenancy, not a distant config list
+- Zeitwerk-safe: no string-to-class resolution at boot time
+- Composable: works with `connected_to(role: :reading)` for read replicas
+
+Use `has_many :through` for associations between pinned and tenant models. `has_and_belongs_to_many` is not supported across schemas.
+
+Pinned models work correctly inside `connected_to(role: :reading)` blocks. The pin bypasses Apartment's tenant routing; Rails' own role routing takes over.
+
+For the edge case of models using `connects_to` with a separate database, see [Known Limitations](#known-limitations).
 
 ## Callbacks
 
 Hook into tenant lifecycle events:
 
 ```ruby
-require 'apartment/adapters/abstract_adapter'
-
 Apartment::Adapters::AbstractAdapter.set_callback :create, :after do |adapter|
   # runs after a new tenant is created
 end
@@ -244,46 +272,73 @@ Apartment::Adapters::AbstractAdapter.set_callback :switch, :before do |adapter|
 end
 ```
 
+## Migrations
+
+Rake tasks:
+
+- `apartment:create`: create all tenants from `tenants_provider`
+- `apartment:drop`: drop all tenants
+- `apartment:migrate`: run pending migrations on all tenants
+- `apartment:seed`: seed all tenants
+- `apartment:rollback`: rollback last migration on all tenants
+
+The Railtie hooks the primary `db:migrate` task (when defined) so that tenant migrations run after the primary database migrates.
+
+### Parallel Migrations
+
+For applications with many schemas:
+
+```ruby
+config.parallel_migration_threads = 4    # 0 = sequential (default)
+```
+
+Platform notes: parallel migrations use threads. On macOS, libpq has known fork-safety issues, so threads are preferred over processes. Parallel migrations disable PostgreSQL advisory locks; ensure your migrations are safe to run concurrently.
+
+## Known Limitations
+
+### `connects_to` with Separate Databases
+
+If a model (or its abstract base class) uses `connects_to` to point at a completely different database (not just different roles on the same DB), Apartment's `connection_pool` patch will attempt to create a tenant pool for it.
+
+Workaround: add `include Apartment::Model` and `pin_tenant` on the abstract class or model that declares `connects_to` to a separate database.
+
+The common pattern of `ApplicationRecord` using `connects_to` with multiple roles (writing/reading) on the same database works correctly; Apartment keys pools by `tenant:role` and respects Rails' role routing.
+
 ## Background Workers
 
-For Sidekiq and ActiveJob tenant propagation:
+Use block-scoped switching in jobs:
+
+```ruby
+class TenantJob < ApplicationJob
+  def perform(tenant, data)
+    Apartment::Tenant.switch(tenant) do
+      # process job
+    end
+  end
+end
+```
+
+For automatic tenant propagation:
 
 - [apartment-sidekiq](https://github.com/rails-on-services/apartment-sidekiq)
 - [apartment-activejob](https://github.com/rails-on-services/apartment-activejob)
 
-## Rails Console
-
-Apartment adds console helpers:
-
-- `tenant_list` — list available tenants
-- `st('tenant_name')` — switch to a tenant
-
-For a tenant-aware prompt, add `require 'apartment/custom_console'` to `application.rb` (requires `pry-rails`).
-
 ## Troubleshooting
 
-**Skip initial DB connection on boot:**
+If tenant switching raises unexpected errors, verify that `tenants_provider` returns valid tenant names and that the tenant exists in the database.
 
-```bash
-APARTMENT_DISABLE_INIT=true rails runner 'puts 1'
-```
+## Upgrading from v3
 
-**Skip tenant presence check** (saves one query per switch on PostgreSQL):
-
-```ruby
-config.tenant_presence_check = false
-```
+See the [upgrade guide](docs/upgrading-to-v4.md) for a complete list of breaking changes and migration steps.
 
 ## Contributing
 
 1. Check [existing issues](https://github.com/rails-on-services/apartment/issues) and [discussions](https://github.com/rails-on-services/apartment/discussions)
 2. Fork and create a feature branch
-3. Write tests — we don't merge without them
+3. Write tests: we don't merge without them
 4. Run `bundle exec rspec spec/unit/` and `bundle exec rubocop`
 5. Use [Appraisal](https://github.com/thoughtbot/appraisal) to test across Rails versions: `bundle exec appraisal rspec spec/unit/`
-6. Submit PR to the `development` branch
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
+6. Submit PR to the `main` branch
 
 ## License
 

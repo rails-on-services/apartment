@@ -1,3 +1,5 @@
+> **Note:** This changelog covers Apartment v3.x and earlier. For v4+, see [GitHub Releases](https://github.com/rails-on-services/apartment/releases).
+
 # Changelog [DEPRECATED]
 
 Changes are now being tracked in the [releases](https://github.com/rails-on-services/apartment/releases) section of the repository.
