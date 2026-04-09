@@ -237,7 +237,7 @@ The `Header` elevator trusts whatever value is in the header. Ensure the header 
 
 **Example failure**: Without proper positioning, `www.acme.com` might load session data from `widgets.com` tenant if session middleware runs first.
 
-**How to verify**: Run `Rails.application.middleware` and confirm elevator appears before `ActionDispatch::Session::CookieStore` and authentication middleware like `Warden::Manager`.
+**How to verify**: Run `Rails.application.middleware` and confirm elevator appears after `ActionDispatch::Callbacks` and before `ActionDispatch::Session::CookieStore` / `Warden::Manager`.
 
 ## Creating Custom Elevators
 
@@ -313,7 +313,7 @@ Create test tenants in before hooks, make requests to different subdomains/hosts
 
 ## Best Practices
 
-1. **Position elevators early** in middleware stack
+1. **Elevator position**: auto-inserted after `ActionDispatch::Callbacks` (before sessions/auth)
 2. **Handle errors gracefully** (don't expose internals)
 3. **Cache lookups** if using database queries
 4. **Test thoroughly** with multiple tenants
