@@ -64,33 +64,45 @@ RSpec.describe('Apartment::Railtie') do
       end
     end
 
-    it 'appends with use when elevator_insert_before is nil' do
+    it 'appends with use when insert_before is nil' do
       expect(middleware_stack).to(receive(:use).with(elevator_class))
       Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
     end
 
-    it 'inserts before the specified middleware when elevator_insert_before is set' do
-      Apartment.configure do |config|
-        config.tenant_strategy = :schema
-        config.tenants_provider = -> { [] }
-        config.elevator = :subdomain
-        config.elevator_insert_before = 'Warden::Manager'
-      end
-
-      expect(middleware_stack).to(receive(:insert_before).with('Warden::Manager', elevator_class))
-      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
+    it 'appends with use and forwards kwargs when insert_before is nil' do
+      expect(middleware_stack).to(receive(:use).with(elevator_class, foo: :bar))
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class, foo: :bar)
     end
 
-    it 'forwards elevator_options as keyword arguments' do
-      Apartment.configure do |config|
-        config.tenant_strategy = :schema
-        config.tenants_provider = -> { [] }
-        config.elevator = :subdomain
-        config.elevator_insert_before = 'ActionDispatch::Session'
-      end
+    it 'inserts before the specified middleware' do
+      expect(middleware_stack).to(receive(:insert_before).with('Warden::Manager', elevator_class))
+      Apartment::Railtie.insert_elevator_middleware(
+        middleware_stack, elevator_class, insert_before: 'Warden::Manager'
+      )
+    end
 
+    it 'inserts before a Class target' do
+      target_class = Class.new
+      expect(middleware_stack).to(receive(:insert_before).with(target_class, elevator_class))
+      Apartment::Railtie.insert_elevator_middleware(
+        middleware_stack, elevator_class, insert_before: target_class
+      )
+    end
+
+    it 'forwards kwargs when using insert_before' do
       expect(middleware_stack).to(receive(:insert_before).with('ActionDispatch::Session', elevator_class, foo: :bar))
-      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class, foo: :bar)
+      Apartment::Railtie.insert_elevator_middleware(
+        middleware_stack, elevator_class, insert_before: 'ActionDispatch::Session', foo: :bar
+      )
+    end
+
+    it 'wraps RuntimeError from insert_before as ConfigurationError' do
+      allow(middleware_stack).to(receive(:insert_before).and_raise(RuntimeError, 'No such middleware'))
+      expect do
+        Apartment::Railtie.insert_elevator_middleware(
+          middleware_stack, elevator_class, insert_before: 'NonExistent::Middleware'
+        )
+      end.to(raise_error(Apartment::ConfigurationError, /elevator_insert_before.*NonExistent::Middleware/))
     end
   end
 

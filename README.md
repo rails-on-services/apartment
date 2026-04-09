@@ -110,9 +110,10 @@ All options are set in `config/initializers/apartment.rb` inside an `Apartment.c
 ```ruby
 config.elevator = :subdomain
 config.elevator_options = {}
+config.elevator_insert_before = 'Warden::Manager' # optional: position before auth middleware
 ```
 
-The Railtie auto-inserts elevator middleware. No manual `config.middleware.use` needed.
+The Railtie auto-inserts elevator middleware. Use `elevator_insert_before` to control positioning.
 
 See the [Elevators](#elevators) section for available options.
 
@@ -217,7 +218,14 @@ Apartment.configure do |config|
 end
 ```
 
-The Railtie inserts the elevator as middleware automatically. You do not need `config.middleware.use` or `config.middleware.insert_before`.
+The Railtie inserts the elevator as middleware automatically. By default it appends to the end of the middleware stack. If you need the elevator to run before a specific middleware (e.g., before authentication so tenant context is available during auth), use `elevator_insert_before`:
+
+```ruby
+Apartment.configure do |config|
+  config.elevator = :subdomain
+  config.elevator_insert_before = 'Warden::Manager' # String or Class
+end
+```
 
 ### Custom Elevator
 

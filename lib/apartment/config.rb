@@ -155,6 +155,12 @@ module Apartment
               "check_pending_migrations must be true or false, got: #{@check_pending_migrations.inspect}")
       end
 
+      if @elevator_insert_before &&
+         !@elevator_insert_before.is_a?(String) && !@elevator_insert_before.is_a?(Class)
+        raise(ConfigurationError,
+              "elevator_insert_before must be nil, a String, or a Class, got: #{@elevator_insert_before.inspect}")
+      end
+
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)
 
       raise(ConfigurationError,

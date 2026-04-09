@@ -224,6 +224,37 @@ RSpec.describe(Apartment::Tenant) do
       expect(Apartment::Current.tenant).to(eq('original'))
     end
 
+    it 'raises ConfigurationError when tenants_provider returns nil' do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = ->(*) { nil } # rubocop:disable Style/NilLambda
+        config.default_tenant = 'public'
+      end
+      Apartment.adapter = mock_adapter
+
+      expect do
+        described_class.each { |_t| }
+      end.to(raise_error(Apartment::ConfigurationError, /tenants_provider must return an Enumerable/))
+    end
+
+    it 'raises ConfigurationError when Apartment is not configured' do
+      Apartment.clear_config
+      expect do
+        described_class.each { |_t| }
+      end.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+
+    it 'stops iteration on first exception (fail-fast)' do
+      visited = []
+      expect do
+        described_class.each(%w[tenant1 tenant2 tenant3]) do |t|
+          visited << t
+          raise('fail on tenant2') if t == 'tenant2'
+        end
+      end.to(raise_error(RuntimeError, 'fail on tenant2'))
+      expect(visited).to(eq(%w[tenant1 tenant2]))
+    end
+
     it 'is a no-op for an empty tenant list' do
       called = false
       described_class.each([]) { |_t| called = true }

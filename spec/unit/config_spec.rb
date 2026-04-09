@@ -19,6 +19,7 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.environmentify_strategy).to(be_nil) }
     it { expect(config.elevator).to(be_nil) }
     it { expect(config.elevator_options).to(eq({})) }
+    it { expect(config.elevator_insert_before).to(be_nil) }
     it { expect(config.tenant_not_found_handler).to(be_nil) }
     it { expect(config.active_record_log).to(be(false)) }
     it { expect(config.postgres_config).to(be_nil) }
@@ -230,6 +231,37 @@ RSpec.describe(Apartment::Config) do
         config.check_pending_migrations = false
         expect { config.validate! }.not_to(raise_error)
       end
+    end
+  end
+
+  describe '#elevator_insert_before validation' do
+    before do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+    end
+
+    it 'accepts nil (default)' do
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts a String' do
+      config.elevator_insert_before = 'Warden::Manager'
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts a Class' do
+      config.elevator_insert_before = String
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'rejects a Symbol' do
+      config.elevator_insert_before = :warden
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /elevator_insert_before/))
+    end
+
+    it 'rejects an Integer' do
+      config.elevator_insert_before = 42
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /elevator_insert_before/))
     end
   end
 

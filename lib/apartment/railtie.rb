@@ -45,7 +45,10 @@ module Apartment
         WARNING
       end
 
-      Apartment::Railtie.insert_elevator_middleware(app.middleware, elevator_class, **opts)
+      Apartment::Railtie.insert_elevator_middleware(
+        app.middleware, elevator_class,
+        insert_before: Apartment.config.elevator_insert_before, **opts
+      )
     end
 
     rake_tasks do
@@ -66,15 +69,19 @@ module Apartment
       end
     end
 
-    # Insert elevator middleware into the stack. Uses insert_before when configured,
+    # Insert elevator middleware into the stack. Uses insert_before when provided,
     # otherwise appends with use. Class method for testability.
-    def self.insert_elevator_middleware(middleware_stack, elevator_class, **)
-      insert_before = Apartment.config.elevator_insert_before
+    def self.insert_elevator_middleware(middleware_stack, elevator_class, insert_before: nil, **)
       if insert_before
         middleware_stack.insert_before(insert_before, elevator_class, **)
       else
         middleware_stack.use(elevator_class, **)
       end
+    rescue RuntimeError => e
+      raise(Apartment::ConfigurationError,
+            "elevator_insert_before: #{insert_before.inspect} not found in the middleware stack. " \
+            "Ensure the target middleware is loaded before Apartment's initializer. " \
+            "Original error: #{e.message}")
     end
 
     # Whether the Header elevator trust warning should fire. Class method for testability.
