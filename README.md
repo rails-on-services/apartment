@@ -330,6 +330,12 @@ For automatic tenant propagation:
 - [apartment-sidekiq](https://github.com/rails-on-services/apartment-sidekiq)
 - [apartment-activejob](https://github.com/rails-on-services/apartment-activejob)
 
+## Convenience Methods
+
+`Apartment.tenant_names` returns the current tenant list (delegates to `config.tenants_provider.call`). Preserves the v3 API so existing call sites work without changes.
+
+`Apartment.excluded_models` returns the excluded models list (delegates to `config.excluded_models`). Deprecated in v4; use `Apartment::Model` + `pin_tenant` instead.
+
 ## Troubleshooting
 
 If tenant switching raises unexpected errors, verify that `tenants_provider` returns valid tenant names and that the tenant exists in the database.

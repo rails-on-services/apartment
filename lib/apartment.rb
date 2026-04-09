@@ -65,6 +65,22 @@ module Apartment
       @activated == true
     end
 
+    # v3 compatibility: Apartment.tenant_names returns the current tenant list.
+    # Delegates to config.tenants_provider.call.
+    def tenant_names
+      raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.') unless @config
+
+      @config.tenants_provider.call
+    end
+
+    # v3 compatibility: Apartment.excluded_models returns the excluded models list.
+    # Deprecated in v4 (use Apartment::Model + pin_tenant instead).
+    def excluded_models
+      raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.') unless @config
+
+      @config.excluded_models
+    end
+
     def process_pinned_model(klass)
       adapter&.process_pinned_model(klass)
     end
