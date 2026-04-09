@@ -79,10 +79,10 @@ Each tenant gets its own connection pool with tenant-specific config baked in at
 ```ruby
 def resolve_connection_config(tenant)
   base_config.merge(
-    schema_search_path: [tenant, *persistent_schemas].join(",")
+    schema_search_path: [tenant, *persistent_schemas].map { |s| %("#{s}") }.join(",")
   )
 end
-# Example: schema_search_path: "acme,ext,public"
+# Example: schema_search_path: '"acme","ext","public"'
 ```
 
 **MySQL (database_name strategy):**
@@ -389,7 +389,7 @@ Primary strategy. Pool config sets `schema_search_path` at connection creation t
 ```ruby
 def resolve_connection_config(tenant)
   base_config.merge(
-    schema_search_path: [tenant, *persistent_schemas].join(",")
+    schema_search_path: [tenant, *persistent_schemas].map { |s| %("#{s}") }.join(",")
   )
 end
 ```
