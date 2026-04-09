@@ -312,6 +312,42 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       end
     end
 
+    context 'pinned model inside Tenant.each' do
+      before do
+        require_relative('../../../lib/apartment/concerns/model')
+      end
+
+      it 'returns the default pool for a pinned model while iterating tenants' do
+        pinned_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('PinnedInsideEach', pinned_class)
+        pinned_class.pin_tenant
+
+        pools_during_each = []
+        Apartment::Tenant.each(%w[acme widgets]) do |_tenant|
+          pools_during_each << pinned_class.connection_pool
+        end
+
+        expect(pools_during_each).to(all(equal(default_pool)))
+      end
+
+      it 'routes unpinned models to tenant pools while iterating' do
+        unpinned = Class.new(ActiveRecord::Base)
+        stub_const('UnpinnedInsideEach', unpinned)
+
+        pools_during_each = []
+        Apartment::Tenant.each(%w[acme widgets]) do |_tenant|
+          pools_during_each << unpinned.connection_pool
+        end
+
+        pools_during_each.each do |pool|
+          expect(pool).not_to(equal(default_pool))
+        end
+        expect(pools_during_each[0]).not_to(equal(pools_during_each[1]))
+      end
+    end
+
     context 'custom shard_key_prefix' do
       before do
         Apartment.configure do |config|

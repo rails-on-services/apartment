@@ -19,7 +19,7 @@ module Apartment
                   :seed_after_create, :seed_data_file,
                   :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
-                  :elevator, :elevator_options,
+                  :elevator, :elevator_options, :elevator_insert_before,
                   :tenant_not_found_handler, :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations
@@ -40,6 +40,7 @@ module Apartment
       @environmentify_strategy = nil
       @elevator = nil
       @elevator_options = {}
+      @elevator_insert_before = nil
       @tenant_not_found_handler = nil
       @active_record_log = false
       @sql_query_tags = false
@@ -152,6 +153,12 @@ module Apartment
       unless [true, false].include?(@check_pending_migrations)
         raise(ConfigurationError,
               "check_pending_migrations must be true or false, got: #{@check_pending_migrations.inspect}")
+      end
+
+      if @elevator_insert_before &&
+         !@elevator_insert_before.is_a?(String) && !@elevator_insert_before.is_a?(Class)
+        raise(ConfigurationError,
+              "elevator_insert_before must be nil, a String, or a Class, got: #{@elevator_insert_before.inspect}")
       end
 
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)
