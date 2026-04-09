@@ -73,15 +73,17 @@ module Apartment
     # otherwise appends with use. Class method for testability.
     def self.insert_elevator_middleware(middleware_stack, elevator_class, insert_before: nil, **)
       if insert_before
-        middleware_stack.insert_before(insert_before, elevator_class, **)
+        begin
+          middleware_stack.insert_before(insert_before, elevator_class, **)
+        rescue RuntimeError => e
+          raise(Apartment::ConfigurationError,
+                "elevator_insert_before: #{insert_before.inspect} not found in the middleware stack. " \
+                "Ensure the target middleware is loaded before Apartment's initializer. " \
+                "Original error: #{e.message}")
+        end
       else
         middleware_stack.use(elevator_class, **)
       end
-    rescue RuntimeError => e
-      raise(Apartment::ConfigurationError,
-            "elevator_insert_before: #{insert_before.inspect} not found in the middleware stack. " \
-            "Ensure the target middleware is loaded before Apartment's initializer. " \
-            "Original error: #{e.message}")
     end
 
     # Whether the Header elevator trust warning should fire. Class method for testability.
