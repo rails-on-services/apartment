@@ -15,7 +15,7 @@ module Apartment
       def resolve_connection_config(tenant, base_config: nil)
         config = base_config || send(:base_config)
         persistent = Apartment.config.postgres_config&.persistent_schemas || []
-        search_path = [tenant, *persistent].join(',')
+        search_path = [tenant, *persistent].map { |s| %("#{s}") }.join(',')
 
         config.merge('schema_search_path' => search_path)
       end
