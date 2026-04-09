@@ -50,7 +50,13 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     it 'returns config with schema_search_path set to tenant name' do
       result = adapter.resolve_connection_config('acme')
 
-      expect(result['schema_search_path']).to(eq('acme'))
+      expect(result['schema_search_path']).to(eq('"acme"'))
+    end
+
+    it 'quotes schema names to handle special characters like hyphens' do
+      result = adapter.resolve_connection_config('test-tenant')
+
+      expect(result['schema_search_path']).to(eq('"test-tenant"'))
     end
 
     it 'stringifies all config keys' do
@@ -71,7 +77,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       result = adapter.resolve_connection_config('acme')
 
-      expect(result['schema_search_path']).to(eq('acme,shared,extensions'))
+      expect(result['schema_search_path']).to(eq('"acme","shared","extensions"'))
     end
 
     it 'works when no postgres_config is set (nil persistent schemas)' do
@@ -80,7 +86,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       result = adapter.resolve_connection_config('acme')
 
-      expect(result['schema_search_path']).to(eq('acme'))
+      expect(result['schema_search_path']).to(eq('"acme"'))
     end
 
     it 'works when postgres_config exists but persistent_schemas is empty' do
@@ -92,7 +98,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       result = adapter.resolve_connection_config('acme')
 
-      expect(result['schema_search_path']).to(eq('acme'))
+      expect(result['schema_search_path']).to(eq('"acme"'))
     end
 
     it 'preserves all original connection config keys' do
@@ -264,14 +270,14 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       expect(result['host']).to(eq('replica.example.com'))
       expect(result['username']).to(eq('readonly'))
-      expect(result['schema_search_path']).to(eq('acme'))
+      expect(result['schema_search_path']).to(eq('"acme"'))
     end
 
     it 'falls back to adapter base_config when override is nil' do
       result = adapter.validated_connection_config('acme', base_config_override: nil)
 
       expect(result['host']).to(eq('localhost'))
-      expect(result['schema_search_path']).to(eq('acme'))
+      expect(result['schema_search_path']).to(eq('"acme"'))
     end
   end
 end
