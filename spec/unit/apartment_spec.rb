@@ -54,6 +54,40 @@ RSpec.describe(Apartment) do
     end
   end
 
+  describe '.tenant_names' do
+    it 'delegates to config.tenants_provider.call' do
+      tenants = %w[acme widgets]
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { tenants }
+      end
+
+      expect(described_class.tenant_names).to(eq(%w[acme widgets]))
+    end
+
+    it 'raises ConfigurationError when not configured' do
+      described_class.clear_config
+      expect { described_class.tenant_names }.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+  end
+
+  describe '.excluded_models' do
+    it 'delegates to config.excluded_models' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.excluded_models = %w[Account]
+      end
+
+      expect(described_class.excluded_models).to(eq(%w[Account]))
+    end
+
+    it 'raises ConfigurationError when not configured' do
+      described_class.clear_config
+      expect { described_class.excluded_models }.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+  end
+
   describe '.clear_config' do
     it 'resets the adapter' do
       described_class.configure do |config|
