@@ -70,7 +70,7 @@ DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integrat
 **Multi-tenancy via database isolation**: One app, many customers, data fully separated.
 - **PostgreSQL (schemas)**: Namespaces in single DB. Fast (<1ms switch), scales to 100+ tenants.
 - **MySQL (databases)**: Separate DB per tenant. Complete isolation, slower switching.
-- **Elevators**: Rack middleware extracts tenant from request. Must be before session middleware.
+- **Elevators**: Rack middleware extracts tenant from request. Auto-inserted after `ActionDispatch::Callbacks` (before sessions/auth).
 - **Pinned models**: Global tables declared with `Apartment::Model` + `pin_tenant`. Bypasses tenant routing. Use `has_many :through`, not HABTM. Replaces `excluded_models` (deprecated in v4).
 
 See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strategy trade-offs, `docs/elevators.md` for middleware rationale.
