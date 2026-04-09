@@ -104,6 +104,13 @@ RSpec.describe('Apartment::Railtie') do
         )
       end.to(raise_error(Apartment::ConfigurationError, /elevator_insert_before.*NonExistent::Middleware/))
     end
+
+    it 'does not wrap RuntimeError from the use (append) path' do
+      allow(middleware_stack).to(receive(:use).and_raise(RuntimeError, 'something else broke'))
+      expect do
+        Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
+      end.to(raise_error(RuntimeError, 'something else broke'))
+    end
   end
 
   describe '.header_trust_warning?' do
