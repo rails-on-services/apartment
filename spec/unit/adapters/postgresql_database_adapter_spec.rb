@@ -54,6 +54,12 @@ RSpec.describe(Apartment::Adapters::PostgresqlDatabaseAdapter) do
     end
   end
 
+  describe '#shared_connection_supported?' do
+    it 'returns false (PG fully isolates databases)' do
+      expect(adapter.shared_connection_supported?).to(be(false))
+    end
+  end
+
   describe '#resolve_connection_config' do
     it 'returns config with database key set to tenant name (nil strategy = plain name)' do
       result = adapter.resolve_connection_config('acme')

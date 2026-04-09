@@ -43,6 +43,12 @@ RSpec.describe(Apartment::Adapters::Sqlite3Adapter) do
     end
   end
 
+  describe '#shared_connection_supported?' do
+    it 'returns false (separate files, no cross-database transactions)' do
+      expect(adapter.shared_connection_supported?).to(be(false))
+    end
+  end
+
   describe '#resolve_connection_config' do
     it 'returns config with database key set to file path' do
       result = adapter.resolve_connection_config('acme')

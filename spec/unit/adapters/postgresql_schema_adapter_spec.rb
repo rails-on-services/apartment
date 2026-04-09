@@ -46,6 +46,30 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     end
   end
 
+  describe '#shared_connection_supported?' do
+    it 'returns true (schemas live in the same catalog)' do
+      expect(adapter.shared_connection_supported?).to(be(true))
+    end
+  end
+
+  describe '#qualify_pinned_table_name (private)' do
+    it 'prefixes table name with default schema' do
+      model_class = Class.new
+      allow(model_class).to(receive(:table_name).and_return('delayed_jobs'))
+      expect(model_class).to(receive(:table_name=).with('public.delayed_jobs'))
+
+      adapter.send(:qualify_pinned_table_name, model_class)
+    end
+
+    it 'strips existing schema prefix before re-qualifying' do
+      model_class = Class.new
+      allow(model_class).to(receive(:table_name).and_return('old_schema.delayed_jobs'))
+      expect(model_class).to(receive(:table_name=).with('public.delayed_jobs'))
+
+      adapter.send(:qualify_pinned_table_name, model_class)
+    end
+  end
+
   describe '#resolve_connection_config' do
     it 'returns config with schema_search_path set to tenant name' do
       result = adapter.resolve_connection_config('acme')

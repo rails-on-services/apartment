@@ -12,6 +12,12 @@ module Apartment
     # Apartment.config.postgres_config. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class PostgresqlSchemaAdapter < AbstractAdapter
+      # PG schemas live in the same catalog — cross-schema queries work on
+      # a single connection (e.g. public.delayed_jobs from any search_path).
+      def shared_connection_supported?
+        true
+      end
+
       def resolve_connection_config(tenant, base_config: nil)
         config = base_config || send(:base_config)
         persistent = Apartment.config.postgres_config&.persistent_schemas || []
@@ -33,6 +39,12 @@ module Apartment
       end
 
       private
+
+      # Qualify with the default schema (e.g. "public.delayed_jobs").
+      def qualify_pinned_table_name(klass)
+        table = klass.table_name.split('.').last
+        klass.table_name = "#{default_tenant}.#{table}"
+      end
 
       def grant_privileges(tenant, connection, role_name) # rubocop:disable Metrics/MethodLength
         quoted_schema = connection.quote_table_name(tenant)

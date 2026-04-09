@@ -117,6 +117,31 @@ config.active_support.isolation_level = :fiber
 
 The Railtie emits a boot-time warning if `isolation_level` is `:thread`.
 
+### Pinned Model Connections
+
+In v3, pinned (excluded) models always received their own connection pool via `establish_connection`. This meant they never participated in the same database transaction as tenant-scoped models. The behavior was also inconsistent: direct access (`Delayed::Job.create!`) used the separate pool, while JOINs initiated from a tenant model (`Order.joins(:delayed_jobs)`) accidentally ran on the tenant's connection.
+
+v4 fixes this for strategies where the database engine supports cross-schema/database queries on a single connection:
+
+| Strategy | Pinned model connection in v4 |
+|---|---|
+| PostgreSQL schema | Shares tenant connection (qualified table name) |
+| MySQL / Trilogy single-server | Shares tenant connection (qualified table name) |
+| PostgreSQL database-per-tenant | Separate pool (unchanged from v3) |
+| SQLite | Separate pool (unchanged from v3) |
+| Multi-server | Separate pool (unchanged from v3) |
+
+For MySQL/Trilogy and PG schema tenancy, pinned models now use the tenant's connection pool with a fully qualified table name (e.g. `default_db.delayed_jobs`). This means pinned model writes participate in the same transaction as tenant DML — a rollback rolls back both.
+
+**Action required if you relied on the old behavior:**
+
+If your code assumes that pinned model writes survive a tenant transaction rollback (e.g., enqueuing a job and deliberately rolling back tenant data), this will no longer work. Common patterns to check:
+
+- `after_commit` callbacks that enqueue jobs — these still work correctly and are the recommended pattern. No changes needed.
+- Manual transaction coordination where a pinned model write was expected to persist independently of the tenant transaction — wrap the pinned model write in its own `ActiveRecord::Base.transaction` on the pinned model's class if you need this isolation.
+
+For PG database-per-tenant, SQLite, and multi-server setups, pinned model behavior is unchanged from v3.
+
 Key config options for pool tuning:
 
 | Option | Default | Description |
@@ -175,6 +200,8 @@ end
 Once all models are converted, delete the `config.excluded_models` line entirely.
 
 For third-party gem models you cannot modify directly, `config.excluded_models` remains available as a transitional escape hatch.
+
+If your pinned models are used inside `ActiveRecord::Base.transaction` blocks alongside tenant models, verify that your transaction boundaries are still correct. In v4, pinned model writes on MySQL/Trilogy and PG schema tenancy now participate in the tenant's transaction (they didn't in v3). This is usually the desired behavior, but review any code where you intentionally relied on pinned models being outside the transaction scope.
 
 ### Step 3: Update Tenant Switching
 

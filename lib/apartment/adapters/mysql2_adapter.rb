@@ -10,6 +10,12 @@ module Apartment
     # to the environmentified tenant name. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class Mysql2Adapter < AbstractAdapter
+      # MySQL supports cross-database queries on the same server connection
+      # (e.g. default_db.delayed_jobs from any USE database context).
+      def shared_connection_supported?
+        true
+      end
+
       def resolve_connection_config(tenant, base_config: nil)
         config = base_config || send(:base_config)
         config.merge('database' => environmentify(tenant))
@@ -30,6 +36,13 @@ module Apartment
       end
 
       private
+
+      # Qualify with the actual default database name from base_config
+      # (e.g. "apartment_v4_test.delayed_jobs").
+      def qualify_pinned_table_name(klass)
+        table = klass.table_name.split('.').last
+        klass.table_name = "#{base_config['database']}.#{table}"
+      end
 
       def grant_privileges(tenant, connection, role_name)
         db_name = environmentify(tenant)

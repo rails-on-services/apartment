@@ -96,6 +96,21 @@ module Apartment
         end
       end
 
+      # Whether this adapter can route pinned model queries through the tenant's
+      # connection pool using fully qualified table names. When true,
+      # process_pinned_model qualifies the table name instead of calling
+      # establish_connection, so pinned and tenant models share a transaction.
+      #
+      # Returns true for strategies where the default tenant's tables are
+      # reachable from any tenant connection (PG schemas in one catalog,
+      # MySQL databases on one server). Returns false when cross-database
+      # queries are impossible (PG database-per-tenant, SQLite, multi-server).
+      #
+      # Subclasses override. Default: false (separate pool, safe fallback).
+      def shared_connection_supported?
+        false
+      end
+
       # Process all pinned models — establish separate connections pinned to default tenant.
       def process_pinned_models
         return if Apartment.pinned_models.empty?
@@ -107,6 +122,11 @@ module Apartment
 
       # Process a single pinned model. Called by process_pinned_models (batch)
       # and by Apartment::Model.pin_tenant (when activated? is true).
+      #
+      # When shared_connection_supported? is true, only qualifies the table name
+      # so the model uses the tenant's pool (preserving transactional integrity).
+      # Otherwise, establishes a separate connection pool (required when
+      # cross-database queries are impossible).
       def process_pinned_model(klass)
         # Idempotent: skip if already processed. Uses a class-level flag rather
         # than connection_specification_name comparison — the spec name differs
@@ -114,19 +134,19 @@ module Apartment
         # establish_connection, so it's not a reliable "already processed" signal.
         return if klass.instance_variable_get(:@apartment_connection_established)
 
-        # Use base_config (the adapter's raw connection config) rather than
-        # resolve_connection_config(default_tenant). For database-per-tenant
-        # strategies (MySQL, SQLite), resolve_connection_config would set the
-        # database key to the default tenant NAME (e.g. 'default'), not the
-        # actual default database (e.g. 'apartment_v4_test'). base_config
-        # points to the real default database.
-        klass.establish_connection(base_config)
+        if shared_connection_supported?
+          qualify_pinned_table_name(klass)
+        else
+          # Use base_config (the adapter's raw connection config) rather than
+          # resolve_connection_config(default_tenant). For database-per-tenant
+          # strategies (MySQL, SQLite), resolve_connection_config would set the
+          # database key to the default tenant NAME (e.g. 'default'), not the
+          # actual default database (e.g. 'apartment_v4_test'). base_config
+          # points to the real default database.
+          klass.establish_connection(base_config)
+        end
+
         klass.instance_variable_set(:@apartment_connection_established, true)
-
-        return unless Apartment.config.tenant_strategy == :schema
-
-        table = klass.table_name.split('.').last
-        klass.table_name = "#{default_tenant}.#{table}"
       end
 
       # Deprecated: use process_pinned_models instead.
@@ -184,6 +204,14 @@ module Apartment
       # No-op base implementation — PG schema and MySQL adapters override.
       def grant_privileges(tenant, connection, role_name)
         # intentional no-op
+      end
+
+      # Qualify a pinned model's table_name so it targets the default tenant's
+      # tables from any tenant connection. Subclasses override for strategy-
+      # specific prefixes (schema name for PG, database name for MySQL).
+      def qualify_pinned_table_name(klass)
+        raise(NotImplementedError,
+              "#{self.class}#qualify_pinned_table_name must be implemented when shared_connection_supported? is true")
       end
 
       # Connection config with string keys (used by subclasses to build tenant configs).

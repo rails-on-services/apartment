@@ -320,26 +320,83 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
   end
 
+  describe '#shared_connection_supported?' do
+    it 'returns false by default (safe fallback)' do
+      expect(adapter.shared_connection_supported?).to(be(false))
+    end
+  end
+
   describe '#process_pinned_models' do
-    it 'establishes connections for each pinned model' do
-      model_class = Class.new(ActiveRecord::Base) do
-        include Apartment::Model
+    context 'when shared_connection_supported? is false (separate pool)' do
+      it 'establishes connections for each pinned model' do
+        model_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('PinnedSetting', model_class)
+        allow(model_class).to(receive(:table_name).and_return('pinned_settings'))
+        allow(model_class).to(receive(:table_name=))
+
+        PinnedSetting.pin_tenant
+
+        # Pinned models use base_config (the adapter's raw connection config),
+        # not resolve_connection_config(default_tenant) — avoids database-per-tenant
+        # strategies setting database key to the tenant name instead of the real DB.
+        expected_config = { 'adapter' => 'postgresql', 'host' => 'localhost' }
+        expect(model_class).to(receive(:establish_connection)) do |arg|
+          expect(arg).to(eq(expected_config))
+        end
+
+        adapter.process_pinned_models
       end
-      stub_const('PinnedSetting', model_class)
-      allow(model_class).to(receive(:table_name).and_return('pinned_settings'))
-      allow(model_class).to(receive(:table_name=))
 
-      PinnedSetting.pin_tenant
+      it 'does not prefix table name for database_name strategy' do
+        model_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('DbPinned', model_class)
+        allow(model_class).to(receive(:establish_connection))
+        allow(model_class).to(receive(:table_name).and_return('db_pinned'))
 
-      # Pinned models use base_config (the adapter's raw connection config),
-      # not resolve_connection_config(default_tenant) — avoids database-per-tenant
-      # strategies setting database key to the tenant name instead of the real DB.
-      expected_config = { 'adapter' => 'postgresql', 'host' => 'localhost' }
-      expect(model_class).to(receive(:establish_connection)) do |arg|
-        expect(arg).to(eq(expected_config))
+        DbPinned.pin_tenant
+
+        reconfigure(tenant_strategy: :database_name)
+
+        expect(model_class).not_to(receive(:table_name=))
+        adapter.process_pinned_models
+      end
+    end
+
+    context 'when shared_connection_supported? is true (shared pool)' do
+      before do
+        allow(adapter).to(receive(:shared_connection_supported?).and_return(true))
+        allow(adapter).to(receive(:qualify_pinned_table_name))
       end
 
-      adapter.process_pinned_models
+      it 'does not call establish_connection' do
+        model_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('SharedPinned', model_class)
+        allow(model_class).to(receive(:table_name).and_return('shared_pinned'))
+
+        SharedPinned.pin_tenant
+
+        expect(model_class).not_to(receive(:establish_connection))
+        adapter.process_pinned_models
+      end
+
+      it 'calls qualify_pinned_table_name' do
+        model_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('QualifyPinned', model_class)
+        allow(model_class).to(receive(:table_name).and_return('qualify_pinned'))
+
+        QualifyPinned.pin_tenant
+
+        expect(adapter).to(receive(:qualify_pinned_table_name).with(model_class))
+        adapter.process_pinned_models
+      end
     end
 
     it 'skips models already processed (idempotent)' do
@@ -358,36 +415,6 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
 
       # Second call skips — @apartment_connection_established is set
       expect(model_class).not_to(receive(:establish_connection))
-      adapter.process_pinned_models
-    end
-
-    it 'prefixes table name with default schema for schema strategy' do
-      model_class = Class.new(ActiveRecord::Base) do
-        include Apartment::Model
-      end
-      stub_const('SchemaPinned', model_class)
-      allow(model_class).to(receive(:establish_connection))
-      allow(model_class).to(receive(:table_name).and_return('schema_pinned'))
-
-      SchemaPinned.pin_tenant
-
-      expect(model_class).to(receive(:table_name=).with('public.schema_pinned'))
-      adapter.process_pinned_models
-    end
-
-    it 'does not prefix table name for database_name strategy' do
-      model_class = Class.new(ActiveRecord::Base) do
-        include Apartment::Model
-      end
-      stub_const('DbPinned', model_class)
-      allow(model_class).to(receive(:establish_connection))
-      allow(model_class).to(receive(:table_name).and_return('db_pinned'))
-
-      DbPinned.pin_tenant
-
-      reconfigure(tenant_strategy: :database_name)
-
-      expect(model_class).not_to(receive(:table_name=))
       adapter.process_pinned_models
     end
 

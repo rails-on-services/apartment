@@ -66,13 +66,18 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
-  it 'pin_tenant establishes a dedicated connection for the model' do
-    expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
+  it 'pin_tenant does not establish a separate connection when shared connection is supported' do
+    if Apartment.adapter.shared_connection_supported?
+      # Shared connection: pinned model uses the same pool as AR::Base
+      expect(GlobalSetting.connection_specification_name).to(eq(ActiveRecord::Base.connection_specification_name))
+    else
+      # Separate pool: pinned model has its own connection
+      expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
+    end
   end
 
   it 'pin_tenant is idempotent' do
     expect { Apartment.adapter.process_pinned_models }.not_to(raise_error)
-    expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
   end
 
   it 'pinned model queries always target the default database' do
@@ -101,6 +106,41 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
 
     expect(GlobalSetting.find_by(key: 'inside_tenant')).to(be_present)
+  end
+
+  context 'transactional integrity', skip: (
+    V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.sqlite? &&
+    'SQLite uses separate files — cross-database transactions not supported'
+  ) do
+    it 'rolls back both pinned and tenant model writes on transaction rollback' do
+      skip 'requires shared_connection_supported?' unless Apartment.adapter.shared_connection_supported?
+
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.transaction do
+          Widget.create!(name: 'will_be_rolled_back')
+          GlobalSetting.create!(key: 'will_be_rolled_back', value: 'yes')
+          raise ActiveRecord::Rollback
+        end
+
+        # Both writes should be rolled back since they share the same connection
+        expect(Widget.count).to(eq(0))
+        expect(GlobalSetting.where(key: 'will_be_rolled_back').count).to(eq(0))
+      end
+    end
+
+    it 'commits both pinned and tenant model writes on successful transaction' do
+      skip 'requires shared_connection_supported?' unless Apartment.adapter.shared_connection_supported?
+
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.transaction do
+          Widget.create!(name: 'committed')
+          GlobalSetting.create!(key: 'committed', value: 'yes')
+        end
+
+        expect(Widget.find_by(name: 'committed')).to(be_present)
+        expect(GlobalSetting.find_by(key: 'committed')).to(be_present)
+      end
+    end
   end
 
   it 'tenant model (Widget) still routes through tenant pool during switch' do

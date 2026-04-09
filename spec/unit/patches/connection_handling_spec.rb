@@ -271,36 +271,74 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         require_relative('../../../lib/apartment/concerns/model')
       end
 
-      it 'returns the default pool for a pinned AR::Base subclass when tenant is set' do
-        pinned_class = Class.new(ActiveRecord::Base) do
-          include Apartment::Model
+      context 'when shared_connection_supported? is false (separate pool)' do
+        before do
+          allow(mock_adapter).to(receive(:shared_connection_supported?).and_return(false))
         end
-        stub_const('PinnedBypassModel', pinned_class)
-        pinned_class.pin_tenant
 
-        Apartment::Current.tenant = 'acme'
-        # Pinned class must use super (default pool), not the tenant pool
-        expect(pinned_class.connection_pool).to(equal(default_pool))
+        it 'returns the default pool for a pinned AR::Base subclass when tenant is set' do
+          pinned_class = Class.new(ActiveRecord::Base) do
+            include Apartment::Model
+          end
+          stub_const('PinnedBypassModel', pinned_class)
+          pinned_class.pin_tenant
+
+          Apartment::Current.tenant = 'acme'
+          # Pinned class must use super (default pool), not the tenant pool
+          expect(pinned_class.connection_pool).to(equal(default_pool))
+        end
+
+        it 'bypasses for STI subclass of a pinned model' do
+          parent = Class.new(ActiveRecord::Base) do
+            include Apartment::Model
+          end
+          stub_const('PinnedParentBypass', parent)
+          parent.pin_tenant
+
+          child = Class.new(parent)
+          stub_const('PinnedChildBypass', child)
+
+          Apartment::Current.tenant = 'acme'
+          expect(child.connection_pool).to(equal(default_pool))
+        end
+      end
+
+      context 'when shared_connection_supported? is true (shared pool)' do
+        before do
+          allow(mock_adapter).to(receive(:shared_connection_supported?).and_return(true))
+        end
+
+        it 'returns the tenant pool for a pinned model (transactional integrity)' do
+          pinned_class = Class.new(ActiveRecord::Base) do
+            include Apartment::Model
+          end
+          stub_const('PinnedSharedModel', pinned_class)
+          pinned_class.pin_tenant
+
+          Apartment::Current.tenant = 'acme'
+          # Pinned model should use the tenant pool, not the default pool
+          expect(pinned_class.connection_pool).not_to(equal(default_pool))
+        end
+
+        it 'returns the tenant pool for STI subclass of a pinned model' do
+          parent = Class.new(ActiveRecord::Base) do
+            include Apartment::Model
+          end
+          stub_const('PinnedSharedParent', parent)
+          parent.pin_tenant
+
+          child = Class.new(parent)
+          stub_const('PinnedSharedChild', child)
+
+          Apartment::Current.tenant = 'acme'
+          expect(child.connection_pool).not_to(equal(default_pool))
+        end
       end
 
       it 'does not bypass for ActiveRecord::Base itself' do
         Apartment::Current.tenant = 'acme'
         tenant_pool = ActiveRecord::Base.connection_pool
         expect(tenant_pool).not_to(equal(default_pool))
-      end
-
-      it 'bypasses for STI subclass of a pinned model' do
-        parent = Class.new(ActiveRecord::Base) do
-          include Apartment::Model
-        end
-        stub_const('PinnedParentBypass', parent)
-        parent.pin_tenant
-
-        child = Class.new(parent)
-        stub_const('PinnedChildBypass', child)
-
-        Apartment::Current.tenant = 'acme'
-        expect(child.connection_pool).to(equal(default_pool))
       end
 
       it 'does not bypass for an unpinned AR::Base subclass' do

@@ -220,6 +220,54 @@ RSpec.describe(Apartment::Adapters::Mysql2Adapter) do
     end
   end
 
+  describe '#shared_connection_supported?' do
+    let(:connection_config) { { adapter: 'mysql2', host: 'localhost', database: 'myapp' } }
+    let(:adapter) { described_class.new(connection_config) }
+
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[t1 t2] }
+        c.default_tenant = 'myapp'
+        c.schema_load_strategy = nil
+      end
+    end
+
+    it 'returns true (MySQL supports cross-database queries on same server)' do
+      expect(adapter.shared_connection_supported?).to(be(true))
+    end
+  end
+
+  describe '#qualify_pinned_table_name (private)' do
+    let(:connection_config) { { adapter: 'mysql2', host: 'localhost', database: 'myapp' } }
+    let(:adapter) { described_class.new(connection_config) }
+
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[t1 t2] }
+        c.default_tenant = 'myapp'
+        c.schema_load_strategy = nil
+      end
+    end
+
+    it 'prefixes table name with the default database from base_config' do
+      model_class = Class.new
+      allow(model_class).to(receive(:table_name).and_return('delayed_jobs'))
+      expect(model_class).to(receive(:table_name=).with('myapp.delayed_jobs'))
+
+      adapter.send(:qualify_pinned_table_name, model_class)
+    end
+
+    it 'strips existing database prefix before re-qualifying' do
+      model_class = Class.new
+      allow(model_class).to(receive(:table_name).and_return('old_db.delayed_jobs'))
+      expect(model_class).to(receive(:table_name=).with('myapp.delayed_jobs'))
+
+      adapter.send(:qualify_pinned_table_name, model_class)
+    end
+  end
+
   it_behaves_like 'a MySQL adapter' do
     let(:adapter_name) { 'mysql2' }
   end
@@ -233,6 +281,24 @@ RSpec.describe(Apartment::Adapters::TrilogyAdapter) do
 
     it 'is a subclass of AbstractAdapter' do
       expect(described_class).to(be < Apartment::Adapters::AbstractAdapter)
+    end
+  end
+
+  describe '#shared_connection_supported?' do
+    let(:connection_config) { { adapter: 'trilogy', host: 'localhost', database: 'myapp' } }
+    let(:adapter) { described_class.new(connection_config) }
+
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[t1 t2] }
+        c.default_tenant = 'myapp'
+        c.schema_load_strategy = nil
+      end
+    end
+
+    it 'inherits true from Mysql2Adapter' do
+      expect(adapter.shared_connection_supported?).to(be(true))
     end
   end
 
