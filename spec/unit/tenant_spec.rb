@@ -223,6 +223,17 @@ RSpec.describe(Apartment::Tenant) do
       end
       expect(Apartment::Current.tenant).to(eq('original'))
     end
+
+    it 'is a no-op for an empty tenant list' do
+      called = false
+      described_class.each([]) { |_t| called = true }
+      expect(called).to(be(false))
+    end
+
+    it 'returns the result of iterating the tenant list' do
+      result = described_class.each(%w[a b]) { |_t| }
+      expect(result).to(eq(%w[a b]))
+    end
   end
 
   describe '.create' do
