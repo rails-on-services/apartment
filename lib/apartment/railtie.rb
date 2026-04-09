@@ -45,7 +45,7 @@ module Apartment
         WARNING
       end
 
-      app.middleware.use(elevator_class, **opts)
+      Apartment::Railtie.insert_elevator_middleware(app.middleware, elevator_class, **opts)
     end
 
     rake_tasks do
@@ -63,6 +63,17 @@ module Apartment
         Rake::Task["db:migrate:#{primary_db_name}"].enhance do
           Rake::Task['apartment:migrate'].invoke if Rake::Task.task_defined?('apartment:migrate')
         end
+      end
+    end
+
+    # Insert elevator middleware into the stack. Uses insert_before when configured,
+    # otherwise appends with use. Class method for testability.
+    def self.insert_elevator_middleware(middleware_stack, elevator_class, **)
+      insert_before = Apartment.config.elevator_insert_before
+      if insert_before
+        middleware_stack.insert_before(insert_before, elevator_class, **)
+      else
+        middleware_stack.use(elevator_class, **)
       end
     end
 

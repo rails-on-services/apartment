@@ -52,6 +52,48 @@ RSpec.describe('Apartment::Railtie') do
     end
   end
 
+  describe '.insert_elevator_middleware' do
+    let(:middleware_stack) { double('MiddlewareStack') }
+    let(:elevator_class) { Apartment::Elevators::Subdomain }
+
+    before do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.elevator = :subdomain
+      end
+    end
+
+    it 'appends with use when elevator_insert_before is nil' do
+      expect(middleware_stack).to(receive(:use).with(elevator_class))
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
+    end
+
+    it 'inserts before the specified middleware when elevator_insert_before is set' do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.elevator = :subdomain
+        config.elevator_insert_before = 'Warden::Manager'
+      end
+
+      expect(middleware_stack).to(receive(:insert_before).with('Warden::Manager', elevator_class))
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
+    end
+
+    it 'forwards elevator_options as keyword arguments' do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.elevator = :subdomain
+        config.elevator_insert_before = 'ActionDispatch::Session'
+      end
+
+      expect(middleware_stack).to(receive(:insert_before).with('ActionDispatch::Session', elevator_class, foo: :bar))
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class, foo: :bar)
+    end
+  end
+
   describe '.header_trust_warning?' do
     it 'returns true for Header with trusted: false' do
       expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, {})).to(be(true))

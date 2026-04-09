@@ -179,6 +179,52 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
+  describe '.each' do
+    it 'requires a block' do
+      expect { described_class.each }.to(raise_error(ArgumentError, /requires a block/))
+    end
+
+    it 'iterates over all tenants from tenants_provider' do
+      visited = []
+      described_class.each { |t| visited << t } # rubocop:disable Style/MapIntoArray
+      expect(visited).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'switches into each tenant for the duration of the block' do
+      tenants_seen = []
+      described_class.each { |_t| tenants_seen << Apartment::Current.tenant } # rubocop:disable Style/MapIntoArray
+      expect(tenants_seen).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'restores tenant context after iteration' do
+      Apartment::Current.tenant = 'original'
+      described_class.each { |_t| }
+      expect(Apartment::Current.tenant).to(eq('original'))
+    end
+
+    it 'accepts a custom tenant list' do
+      visited = []
+      described_class.each(%w[custom1 custom2]) { |t| visited << t }
+      expect(visited).to(eq(%w[custom1 custom2]))
+    end
+
+    it 'propagates exceptions from the block' do
+      expect do
+        described_class.each { raise('boom') } # rubocop:disable Lint/UnreachableLoop
+      end.to(raise_error(RuntimeError, 'boom'))
+    end
+
+    it 'restores tenant context after an exception' do
+      Apartment::Current.tenant = 'original'
+      begin
+        described_class.each { raise('boom') } # rubocop:disable Lint/UnreachableLoop
+      rescue RuntimeError
+        nil
+      end
+      expect(Apartment::Current.tenant).to(eq('original'))
+    end
+  end
+
   describe '.create' do
     it 'delegates to adapter' do
       expect(mock_adapter).to(receive(:create).with('new_tenant'))

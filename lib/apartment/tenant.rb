@@ -64,6 +64,15 @@ module Apartment
         adapter.seed(tenant)
       end
 
+      # Iterate over all tenants, switching into each for the duration of the block.
+      # Accepts an optional tenant list; defaults to tenants_provider.
+      def each(tenants = nil)
+        raise(ArgumentError, 'Apartment::Tenant.each requires a block') unless block_given?
+
+        tenants ||= Apartment.config.tenants_provider.call
+        tenants.each { |tenant| switch(tenant) { yield(tenant) } }
+      end
+
       # Pool stats delegated to pool_manager.
       def pool_stats
         Apartment.pool_manager&.stats || {}
