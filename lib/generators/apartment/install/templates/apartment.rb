@@ -36,7 +36,7 @@ Apartment.configure do |config|
 
   # == Elevator (Request Tenant Detection) =================================
 
-  # The Railtie auto-inserts the elevator before ActionDispatch::Cookies.
+  # The Railtie auto-inserts the elevator after ActionDispatch::Callbacks.
   # For custom positioning, skip config.elevator and use
   # config.middleware.insert_before in config/application.rb instead.
   #

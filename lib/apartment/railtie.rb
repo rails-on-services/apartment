@@ -66,12 +66,12 @@ module Apartment
       end
     end
 
-    # Insert elevator middleware before ActionDispatch::Cookies.
-    # This ensures tenant context is established before sessions, authentication,
-    # or anything else that might query the database.
+    # Insert elevator middleware after ActionDispatch::Callbacks.
+    # In the full stack this places it just before Cookies/Session/Auth.
+    # In API mode (where Cookies is absent), Callbacks is still present.
     # Class method for testability.
     def self.insert_elevator_middleware(middleware_stack, elevator_class, **)
-      middleware_stack.insert_before(ActionDispatch::Cookies, elevator_class, **)
+      middleware_stack.insert_after(ActionDispatch::Callbacks, elevator_class, **)
     end
 
     # Whether the Header elevator trust warning should fire. Class method for testability.

@@ -64,14 +64,14 @@ RSpec.describe('Apartment::Railtie') do
       end
     end
 
-    it 'inserts before ActionDispatch::Cookies' do
-      expect(middleware_stack).to(receive(:insert_before).with(ActionDispatch::Cookies, elevator_class))
+    it 'inserts after ActionDispatch::Callbacks' do
+      expect(middleware_stack).to(receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class))
       Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
     end
 
-    it 'forwards kwargs to insert_before' do
+    it 'forwards kwargs to insert_after' do
       expect(middleware_stack).to(
-        receive(:insert_before).with(ActionDispatch::Cookies, elevator_class, foo: :bar)
+        receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class, foo: :bar)
       )
       Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class, foo: :bar)
     end

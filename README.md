@@ -112,7 +112,7 @@ config.elevator = :subdomain
 config.elevator_options = {}
 ```
 
-The Railtie auto-inserts elevator middleware before `ActionDispatch::Cookies`, ensuring tenant context is set before sessions, authentication, or anything that queries the database.
+The Railtie auto-inserts elevator middleware after `ActionDispatch::Callbacks` (just before cookies/sessions in full mode; works in API mode too).
 
 See the [Elevators](#elevators) section for available options.
 
@@ -217,7 +217,7 @@ Apartment.configure do |config|
 end
 ```
 
-The Railtie inserts the elevator before `ActionDispatch::Cookies` automatically. This position ensures tenant context is established before sessions, authentication (Warden/Devise), and any middleware that might query the database.
+The Railtie inserts the elevator after `ActionDispatch::Callbacks` automatically. In the full middleware stack this places it just before cookies, sessions, and authentication. In API mode (where cookies/sessions are absent), `Callbacks` is still present so the elevator works without changes.
 
 If you need different positioning, skip `config.elevator` and insert manually:
 
