@@ -36,8 +36,9 @@ Apartment.configure do |config|
 
   # == Elevator (Request Tenant Detection) =================================
 
-  # The Railtie auto-inserts the elevator as middleware.
-  # No manual insertion into config.middleware is needed.
+  # The Railtie auto-inserts the elevator before ActionDispatch::Cookies.
+  # For custom positioning, skip config.elevator and use
+  # config.middleware.insert_before in config/application.rb instead.
   #
   # config.elevator = :subdomain
   # config.elevator_options = {}

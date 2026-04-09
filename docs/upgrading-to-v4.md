@@ -91,7 +91,7 @@ end
 
 ### Middleware
 
-The v4 Railtie auto-inserts elevator middleware when `config.elevator` is set. Remove any manual `config.middleware.use` or `config.middleware.insert_before` lines from your application config.
+The v4 Railtie auto-inserts elevator middleware before `ActionDispatch::Cookies` when `config.elevator` is set. Remove any manual `config.middleware.use` or `config.middleware.insert_before` lines from your application config. If you need custom middleware positioning, skip `config.elevator` and use the standard Rails `config.middleware.insert_before` API directly.
 
 Configure via symbol:
 
@@ -272,7 +272,7 @@ end
 1. Run your full test suite
 2. Check connection pool behavior under load in staging: `Apartment::Tenant.pool_stats` returns per-tenant pool metrics
 3. Monitor for `FrozenError` exceptions, which indicate code attempting to mutate config after boot
-4. Verify elevator middleware position with `Rails.application.middleware` (should appear before session middleware)
+4. Verify elevator middleware position with `Rails.application.middleware` (should appear before `ActionDispatch::Cookies`)
 
 ## connects_to Compatibility
 
