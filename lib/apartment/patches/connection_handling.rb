@@ -17,11 +17,15 @@ module Apartment
         return super if tenant.to_s == cfg.default_tenant.to_s
         return super unless Apartment.pool_manager
 
-        # Skip tenant override for Apartment pinned models.
-        # Uses explicit registry (not connection_specification_name heuristic)
-        # because ApplicationRecord subclasses have a different spec name than
-        # ActiveRecord::Base while sharing the same pool.
-        return super if self != ActiveRecord::Base && Apartment.pinned_model?(self)
+        # Skip tenant override for pinned models only when the adapter requires
+        # a separate pool (shared_pinned_connection? is false). When shared
+        # connections are supported (PG schema, MySQL single-server), pinned
+        # models fall through to the tenant pool lookup, preserving
+        # transactional integrity between pinned and tenant models.
+        if self != ActiveRecord::Base && Apartment.pinned_model?(self) &&
+           !Apartment.adapter&.shared_pinned_connection?
+          return super
+        end
 
         role = ActiveRecord::Base.current_role
         pool_key = "#{tenant}:#{role}"
