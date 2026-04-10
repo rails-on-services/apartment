@@ -22,7 +22,8 @@ module Apartment
                   :elevator, :elevator_options,
                   :tenant_not_found_handler, :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
-                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations
+                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
+                  :force_separate_pinned_pool
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
@@ -50,6 +51,7 @@ module Apartment
       @app_role = nil
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
+      @force_separate_pinned_pool = false
     end
 
     def excluded_models=(list)
@@ -159,6 +161,11 @@ module Apartment
       unless [true, false].include?(@check_pending_migrations)
         raise(ConfigurationError,
               "check_pending_migrations must be true or false, got: #{@check_pending_migrations.inspect}")
+      end
+
+      unless [true, false].include?(@force_separate_pinned_pool)
+        raise(ConfigurationError,
+              "force_separate_pinned_pool must be true or false, got: #{@force_separate_pinned_pool.inspect}")
       end
 
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)

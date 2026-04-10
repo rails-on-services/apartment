@@ -56,9 +56,15 @@ module Apartment
     end
 
     # Check if a class (or any of its ancestors) is a pinned model.
-    # Used by ConnectionHandling to skip tenant pool routing.
+    # Delegates to the class's own apartment_pinned? (defined by the
+    # Apartment::Model concern). Falls back to registry lookup for
+    # models registered via the excluded_models shim without the concern.
     def pinned_model?(klass)
-      klass.ancestors.any? { |a| a.is_a?(Class) && pinned_models.include?(a) }
+      if klass.respond_to?(:apartment_pinned?)
+        klass.apartment_pinned?
+      else
+        klass.ancestors.any? { |a| a.is_a?(Class) && pinned_models.include?(a) }
+      end
     end
 
     def activated?
@@ -120,12 +126,7 @@ module Apartment
     # Reset all configuration and stop background tasks.
     def clear_config
       teardown_old_state
-      # Reset per-model processing flags so re-configuration re-establishes connections.
-      @pinned_models&.each do |klass|
-        next unless klass.instance_variable_defined?(:@apartment_connection_established)
-
-        klass.remove_instance_variable(:@apartment_connection_established)
-      end
+      @pinned_models&.each { |klass| klass.apartment_restore! if klass.respond_to?(:apartment_restore!) }
       @config = nil
       @pool_manager = nil
       @pool_reaper = nil

@@ -12,6 +12,24 @@ module Apartment
     # Apartment.config.postgres_config. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class PostgresqlSchemaAdapter < AbstractAdapter
+      def shared_pinned_connection?
+        !Apartment.config.force_separate_pinned_pool
+      end
+
+      def qualify_pinned_table_name(klass)
+        if klass.apartment_explicit_table_name?
+          original = klass.table_name
+          table = original.sub(/\A[^.]+\./, '')
+          klass.table_name = "#{default_tenant}.#{table}"
+          klass.apartment_mark_processed!(:explicit, original)
+        else
+          original_prefix = klass.table_name_prefix
+          klass.table_name_prefix = "#{default_tenant}."
+          klass.reset_table_name
+          klass.apartment_mark_processed!(:convention, original_prefix)
+        end
+      end
+
       def resolve_connection_config(tenant, base_config: nil)
         config = base_config || send(:base_config)
         persistent = Apartment.config.postgres_config&.persistent_schemas || []

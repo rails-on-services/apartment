@@ -24,6 +24,7 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.postgres_config).to(be_nil) }
     it { expect(config.mysql_config).to(be_nil) }
     it { expect(config.shard_key_prefix).to(eq('apartment')) }
+    it { expect(config.force_separate_pinned_pool).to(be(false)) }
   end
 
   describe '#tenant_strategy=' do
@@ -266,6 +267,29 @@ RSpec.describe(Apartment::Config) do
       it 'accepts false' do
         config.check_pending_migrations = false
         expect { config.validate! }.not_to(raise_error)
+      end
+    end
+
+    describe '#force_separate_pinned_pool' do
+      it 'accepts true' do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.force_separate_pinned_pool = true
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'accepts false' do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.force_separate_pinned_pool = false
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'rejects non-boolean values' do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.force_separate_pinned_pool = 'yes'
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /force_separate_pinned_pool/))
       end
     end
   end

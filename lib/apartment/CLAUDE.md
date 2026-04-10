@@ -14,7 +14,7 @@ lib/apartment/
 │   ├── trilogy_adapter.rb     # Database-per-tenant on MySQL (trilogy driver, inherits Mysql2Adapter)
 │   └── sqlite3_adapter.rb     # File-per-tenant (FileUtils lifecycle)
 ├── concerns/              # ActiveRecord concerns for tenant-aware models
-│   └── model.rb               # Apartment::Model concern: pin_tenant, apartment_pinned?
+│   └── model.rb               # Apartment::Model concern: pin_tenant, pinned identity, table-name helpers
 ├── configs/               # Database-specific config objects
 │   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, enforce_search_path_reset
 │   └── mysql_config.rb        # MysqlConfig: placeholder
@@ -60,7 +60,7 @@ Background `Concurrent::TimerTask` instance that evicts idle and excess tenant p
 
 ### adapters/abstract_adapter.rb — Base Adapter
 
-Lifecycle ops (`create`, `drop`, `migrate`, `seed`), `ActiveSupport::Callbacks` on `:create`/`:switch`, `resolve_connection_config` (abstract — subclasses override), `process_excluded_models`, `environmentify`, `base_config` (stringified `connection_config`), `rails_env` (guarded `Rails.env` access). Constructor takes `connection_config` (raw AR hash, not `Apartment::Config`).
+Lifecycle ops (`create`, `drop`, `migrate`, `seed`), `ActiveSupport::Callbacks` on `:create`/`:switch`, `resolve_connection_config` (abstract — subclasses override), `process_excluded_models`, `environmentify`, `base_config` (stringified `connection_config`), `rails_env` (guarded `Rails.env` access). `process_pinned_model` / `qualify_pinned_table_name` call **`Apartment::Model` class methods** (`apartment_explicit_table_name?`, `apartment_mark_processed!`, etc.); no `instance_variable_*` on arbitrary model classes. Constructor takes `connection_config` (raw AR hash, not `Apartment::Config`).
 
 ### Concrete Adapters (Phase 2.2)
 
@@ -74,7 +74,15 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 ### concerns/model.rb — Model Pinning Concern
 
-`Apartment::Model` provides `pin_tenant` (class method) to declare a model as pinned to the default tenant. Registered models bypass the `ConnectionHandling` patch. Zeitwerk-safe: works whether called before or after `activate!`. `apartment_pinned?` checks the class and its superclass chain.
+`Apartment::Model` provides `pin_tenant` (class method) to declare a model as pinned to the default tenant. Registered models bypass the `ConnectionHandling` patch when the adapter uses a separate pool; when shared pinned connections are enabled, routing follows the tenant pool (see design docs). Zeitwerk-safe: works whether called before or after `activate!`.
+
+**Identity:** `apartment_pinned?` — the class answers whether it is pinned (ivars + superclass walk). `Apartment.pinned_model?(klass)` delegates to `klass.apartment_pinned?` when the concern is included; otherwise it falls back to registry lookup (`pinned_models`) for `excluded_models` shim classes that never included the concern.
+
+**Table naming:** `apartment_explicit_table_name?` — whether `self.table_name` was explicitly set vs convention (compares `@table_name` to `compute_table_name`). Lives here so adapters do not read `@table_name` or call `compute_table_name` from outside; **class instance variable access for pinning is confined to this concern**.
+
+**Lifecycle:** `apartment_pinned_processed?`, `apartment_mark_processed!`, `apartment_restore!` — qualification state and teardown. Adapters call these; `Apartment.clear_config` uses `apartment_restore!` with `respond_to?` so shim-registered models without the concern still clear safely. `apartment_mark_pinned!` — sets the pinned flag without triggering processing (used by `process_pinned_model` for shim classes to avoid `pin_tenant` recursion).
+
+**Shim compatibility:** `process_pinned_model` dynamically includes `Apartment::Model` on classes registered via the `excluded_models` shim that lack the concern. This is a runtime `include` on a partially-booted class — acceptable for the legacy shim path but new code should always use `include Apartment::Model` + `pin_tenant` explicitly.
 
 ### railtie.rb — v4 Rails Integration
 

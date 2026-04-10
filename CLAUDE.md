@@ -63,7 +63,7 @@ DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec
 DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/ --tag rbac
 ```
 
-**CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1 × PG 16+18, MySQL 8.4, SQLite3. See `.github/workflows/ci.yml`.
+**CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1/main × PG 16+18, MySQL 8.4, SQLite3. Rails main is a canary (`continue-on-error`). See `.github/workflows/ci.yml`.
 
 ## Core Concepts
 
@@ -83,10 +83,14 @@ See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strat
 - **Dynamic tenant discovery**: `tenants_provider` is a callable (proc/lambda) that queries the database at runtime.
 - **Tenant name validation**: `TenantNameValidator` does pure in-memory format checks (no DB queries). Enforced in `AbstractAdapter#create` and `ConnectionHandling#connection_pool`. Engine-specific rules for PG identifiers, MySQL names, SQLite paths.
 
+## Code style
+
+Prefer **SOLID** and explicit APIs over **metaprogramming** unless there is a concrete reason to break SOLID. Metaprogramming can be concise but is easy to misuse because it is powerful (e.g. ad hoc `instance_variable_*` on arbitrary classes). When state or behavior must live on models, use a concern and named public class methods; keep ivar details encapsulated inside that layer (adapters should not reach into AR classes). See `lib/apartment/CLAUDE.md` (`concerns/model.rb`) for pinned-model APIs (`apartment_pinned?`, `apartment_explicit_table_name?`, `apartment_mark_processed!`, `apartment_restore!`, etc.).
+
 ## Testing
 
 ```bash
-bundle exec rspec spec/unit/                    # v4 unit tests (585 specs)
+bundle exec rspec spec/unit/                    # v4 unit tests
 bundle exec appraisal rspec spec/unit/          # across all Rails versions
 ```
 
