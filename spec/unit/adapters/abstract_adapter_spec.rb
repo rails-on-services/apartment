@@ -493,6 +493,21 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
         raise_error(Apartment::ConfigurationError, /Failed to process pinned model BrokenPinned.*boom/)
       )
     end
+
+    it 'includes Apartment::Model and marks pinned for shim-registered models without the concern' do
+      # Simulate excluded_models shim: register without including the concern
+      klass = Class.new(ActiveRecord::Base)
+      stub_const('ShimModel', klass)
+      Apartment.register_pinned_model(klass)
+
+      allow(klass).to(receive(:establish_connection))
+
+      adapter.process_pinned_models
+
+      expect(klass.respond_to?(:apartment_pinned?)).to(be(true))
+      expect(klass.apartment_pinned?).to(be(true))
+      expect(klass.apartment_pinned_processed?).to(be(true))
+    end
   end
 
   describe '#process_excluded_models (deprecated)' do

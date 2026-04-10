@@ -80,7 +80,9 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 **Table naming:** `apartment_explicit_table_name?` — whether `self.table_name` was explicitly set vs convention (compares `@table_name` to `compute_table_name`). Lives here so adapters do not read `@table_name` or call `compute_table_name` from outside; **class instance variable access for pinning is confined to this concern**.
 
-**Lifecycle:** `apartment_pinned_processed?`, `apartment_mark_processed!`, `apartment_restore!` — qualification state and teardown. Adapters call these; `Apartment.clear_config` uses `apartment_restore!` with `respond_to?` so shim-registered models without the concern still clear safely.
+**Lifecycle:** `apartment_pinned_processed?`, `apartment_mark_processed!`, `apartment_restore!` — qualification state and teardown. Adapters call these; `Apartment.clear_config` uses `apartment_restore!` with `respond_to?` so shim-registered models without the concern still clear safely. `apartment_mark_pinned!` — sets the pinned flag without triggering processing (used by `process_pinned_model` for shim classes to avoid `pin_tenant` recursion).
+
+**Shim compatibility:** `process_pinned_model` dynamically includes `Apartment::Model` on classes registered via the `excluded_models` shim that lack the concern. This is a runtime `include` on a partially-booted class — acceptable for the legacy shim path but new code should always use `include Apartment::Model` + `pin_tenant` explicitly.
 
 ### railtie.rb — v4 Rails Integration
 
