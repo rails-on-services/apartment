@@ -91,6 +91,8 @@ This is more robust than checking `@table_name` alone, which can be set by lazy 
 
 PG schema example: when `default_tenant` is `'public'`, qualification produces `"public.delayed_jobs"`. MySQL example: when `base_config['database']` is `'myapp_production'`, qualification produces `"myapp_production.delayed_jobs"`. The qualifier is always derived from runtime config, never hardcoded.
 
+**Do not apply `environmentify` to qualifiers.** `environmentify` maps tenant keys to tenant database names (e.g., `acme` → `test_acme`); it does not apply to the default connection's database/schema identifiers. `default_tenant` (PG) and `base_config['database']` (MySQL) are already the real server-side names. Environmentifying them would produce wrong names under `:prepend`/`:append` strategies.
+
 When `force_separate_pinned_pool: true`, all adapters behave as separate-pool regardless of engine capability.
 
 ### Modified process_pinned_model
