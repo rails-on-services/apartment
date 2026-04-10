@@ -110,6 +110,35 @@ RSpec.describe(Apartment::Model) do
 
       klass.pin_tenant
     end
+
+    it 'raises ArgumentError when called on a non-ActiveRecord class' do
+      klass = Class.new do
+        include Apartment::Model
+      end
+      stub_const('NonARModel', klass)
+
+      expect { klass.pin_tenant }.to(raise_error(ArgumentError, /ActiveRecord model classes/))
+    end
+
+    it 'raises ArgumentError when called on a module' do
+      mod = Module.new do
+        extend Apartment::Model::ClassMethods
+      end
+      stub_const('PinnedModule', mod)
+
+      expect { mod.pin_tenant }.to(raise_error(ArgumentError, /ActiveRecord model classes/))
+    end
+
+    it 'warns for anonymous classes (Class.new) when activated' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      # klass.name is nil (anonymous)
+
+      expect { klass.pin_tenant }.to(output(/anonymous class/).to_stderr)
+      expect(klass.apartment_pinned?).to(be(true))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
   end
 
   describe '.apartment_explicit_table_name?' do

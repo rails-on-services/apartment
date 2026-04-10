@@ -45,32 +45,22 @@ None of these gems implement deferred processing via TracePoint. The dominant pa
 When `pin_tenant` is called and `Apartment.activated?` is true, instead of calling `Apartment.process_pinned_model(self)` immediately, register a one-shot `TracePoint(:end)` listener that fires after the class body closes:
 
 ```ruby
+# Abbreviated — see lib/apartment/concerns/model.rb for full implementation.
 def pin_tenant
+  raise(ArgumentError, "...") unless is_a?(Class) && self < ActiveRecord::Base
   return if apartment_pinned?
 
   @apartment_pinned = true
   Apartment.register_pinned_model(self)
+  return unless Apartment.activated?
 
-  apartment_defer_processing! if Apartment.activated?
-end
-
-private
-
-def apartment_defer_processing!
-  klass = self
-  trace = TracePoint.new(:end) do |t|
-    if t.self == klass
-      trace.disable
-      begin
-        Apartment.process_pinned_model(klass)
-      rescue StandardError => e
-        warn "[Apartment] Failed to process pinned model " \
-             "#{klass.name || klass.inspect}: #{e.class}: #{e.message}"
-        raise
-      end
-    end
+  # Anonymous classes (Class.new): :end won't fire. Warn and skip.
+  if name.nil?
+    warn "[Apartment] pin_tenant on anonymous class — call process_pinned_model explicitly."
+    return
   end
-  trace.enable(target_thread: Thread.current)
+
+  apartment_defer_processing!  # registers one-shot TracePoint(:end)
 end
 ```
 
