@@ -18,14 +18,26 @@ module Apartment
       # Safe to call before or after Apartment.activate!.
       # Idempotent: no-op if this class (or a parent) is already pinned.
       def pin_tenant
+        unless is_a?(Class) && self < ActiveRecord::Base
+          raise(ArgumentError, "pin_tenant can only be called on ActiveRecord model classes, got #{inspect}")
+        end
         return if apartment_pinned?
 
         @apartment_pinned = true
         Apartment.register_pinned_model(self)
 
-        # If Apartment is already activated, process immediately (Zeitwerk autoload path).
-        # Otherwise, activate! will process all registered models.
-        Apartment.process_pinned_model(self) if Apartment.activated?
+        return unless Apartment.activated?
+
+        # Defer processing until the class body closes via TracePoint(:end),
+        # so self.table_name and other declarations are visible.
+        # For Class.new { } (anonymous classes), :end does not fire.
+        if name.nil?
+          warn '[Apartment] pin_tenant on anonymous class (Class.new): TracePoint(:end) ' \
+               'will not fire. Call Apartment.process_pinned_model(klass) explicitly after the block.'
+          return
+        end
+
+        apartment_defer_processing!
       end
 
       # Mark this class as pinned without triggering processing.
@@ -93,6 +105,34 @@ module Apartment
         @apartment_qualification_path = nil
         @apartment_original_table_name = nil
         @apartment_original_table_name_prefix = nil
+      end
+
+      private
+
+      # Register a one-shot TracePoint(:end) that fires after the class body
+      # closes. Only :end is used — :b_return fires for ALL block returns in
+      # class context (each, tap, include hooks) and would trigger prematurely.
+      # :raise is not used — rescued raises still produce :end, and unconditional
+      # disable would prevent processing on successful load.
+      # MRI verified: :end fires for source-parsed class/module keywords even
+      # when the body raises (event order [:raise, :end]).
+      # For Class.new { }, :end does not fire; call process_pinned_model explicitly.
+      # See docs/designs/v4-deferred-pin-tenant-processing.md.
+      def apartment_defer_processing!
+        klass = self
+        trace = TracePoint.new(:end) do |t|
+          if t.self == klass
+            trace.disable
+            begin
+              Apartment.process_pinned_model(klass)
+            rescue StandardError => e
+              warn '[Apartment] Failed to process pinned model ' \
+                   "#{klass.name || klass.inspect}: #{e.class}: #{e.message}"
+              raise
+            end
+          end
+        end
+        trace.enable(target_thread: Thread.current)
       end
     end
   end

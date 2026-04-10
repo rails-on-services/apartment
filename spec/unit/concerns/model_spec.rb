@@ -40,16 +40,63 @@ RSpec.describe(Apartment::Model) do
       expect(Apartment.pinned_models.count { |m| m == IdempotentModel }).to(eq(1))
     end
 
-    it 'processes immediately when Apartment is already activated' do
+    it 'registers a TracePoint(:end) when activated (deferred processing)' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+
+      # Class.new does NOT fire :end (only source-parsed class Foo ... end does).
+      # So process_pinned_model should NOT be called for Class.new.
+      expect(Apartment).not_to(receive(:process_pinned_model))
+
       klass = Class.new(ActiveRecord::Base) do
         include Apartment::Model
+
+        pin_tenant
       end
-      stub_const('LateLoadedModel', klass)
+      stub_const('DeferredModel', klass)
 
-      expect(Apartment).to(receive(:activated?).and_return(true))
-      expect(Apartment).to(receive(:process_pinned_model).with(LateLoadedModel))
+      # Model is registered but not yet processed (deferred to :end or explicit call).
+      expect(Apartment.pinned_models).to(include(klass))
+      expect(klass.apartment_pinned?).to(be(true))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
 
-      klass.pin_tenant
+    it 'processes via TracePoint(:end) for source-parsed classes' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+      process_calls = []
+      allow(Apartment).to(receive(:process_pinned_model)) { |k| process_calls << k }
+
+      # eval simulates a source-parsed class (fires :end, unlike Class.new)
+      eval(<<~RUBY, binding, __FILE__, __LINE__ + 1)
+        class ::TracePointTestModel < ActiveRecord::Base
+          include Apartment::Model
+          pin_tenant
+        end
+      RUBY
+
+      expect(process_calls).to(eq([TracePointTestModel]))
+    ensure
+      Object.send(:remove_const, :TracePointTestModel) if defined?(TracePointTestModel) # rubocop:disable RSpec/RemoveConst
+    end
+
+    it 'processes after self.table_name when declared below pin_tenant (source-parsed)' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+      table_name_during_process = nil
+      allow(Apartment).to(receive(:process_pinned_model)) do |k|
+        table_name_during_process = k.instance_variable_get(:@table_name)
+      end
+
+      # The whole point: self.table_name BELOW pin_tenant is visible at processing time.
+      eval(<<~RUBY, binding, __FILE__, __LINE__ + 1)
+        class ::DeferredTableNameModel < ActiveRecord::Base
+          include Apartment::Model
+          pin_tenant
+          self.table_name = 'custom_reports'
+        end
+      RUBY
+
+      expect(table_name_during_process).to(eq('custom_reports'))
+    ensure
+      Object.send(:remove_const, :DeferredTableNameModel) if defined?(DeferredTableNameModel) # rubocop:disable RSpec/RemoveConst
     end
 
     it 'defers processing when Apartment is not yet activated' do
@@ -62,6 +109,35 @@ RSpec.describe(Apartment::Model) do
       stub_const('EarlyModel', klass)
 
       klass.pin_tenant
+    end
+
+    it 'raises ArgumentError when called on a non-ActiveRecord class' do
+      klass = Class.new do
+        include Apartment::Model
+      end
+      stub_const('NonARModel', klass)
+
+      expect { klass.pin_tenant }.to(raise_error(ArgumentError, /ActiveRecord model classes/))
+    end
+
+    it 'raises ArgumentError when called on a module' do
+      mod = Module.new do
+        extend Apartment::Model::ClassMethods
+      end
+      stub_const('PinnedModule', mod)
+
+      expect { mod.pin_tenant }.to(raise_error(ArgumentError, /ActiveRecord model classes/))
+    end
+
+    it 'warns for anonymous classes (Class.new) when activated' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      # klass.name is nil (anonymous)
+
+      expect { klass.pin_tenant }.to(output(/anonymous class/).to_stderr)
+      expect(klass.apartment_pinned?).to(be(true))
+      expect(klass.apartment_pinned_processed?).to(be(false))
     end
   end
 

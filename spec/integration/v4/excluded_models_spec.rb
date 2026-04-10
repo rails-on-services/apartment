@@ -187,6 +187,38 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
+  context 'deferred pin_tenant processing (table_name after pin_tenant)' do
+    it 'qualifies explicit table_name declared after pin_tenant' do
+      # Simulate the CampusESP pattern: pin_tenant above self.table_name.
+      # Name the class first so establish_connection works on all adapters,
+      # then drive process_pinned_model directly — the same call the TracePoint
+      # triggers after the class body closes. The unit spec covers TracePoint
+      # deferral; here we verify the qualification outcome with a real adapter.
+      klass = Class.new(ApplicationRecord)
+      stub_const('DeferredPinned', klass)
+      klass.include(Apartment::Model)
+      klass.table_name = 'global_settings'
+      Apartment.process_pinned_model(klass)
+
+      if Apartment.adapter.shared_pinned_connection?
+        expect(DeferredPinned.table_name).to(end_with('.global_settings'))
+      else
+        expect(DeferredPinned.table_name).to(eq('global_settings'))
+      end
+    end
+
+    it 'qualifies convention table_name via process_pinned_model' do
+      # Convention naming: no explicit self.table_name. Name first, then
+      # include + process so the adapter sees the class name and can qualify.
+      klass = Class.new(ApplicationRecord)
+      stub_const('ConventionDeferred', klass)
+      klass.include(Apartment::Model)
+      Apartment.process_pinned_model(klass)
+
+      expect(ConventionDeferred.table_name).to(include('.')) if Apartment.adapter.shared_pinned_connection?
+    end
+  end
+
   context 'config.excluded_models shim' do
     it 'still works via deprecated path' do
       # Re-setup with config.excluded_models instead of pin_tenant

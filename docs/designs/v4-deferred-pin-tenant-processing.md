@@ -45,26 +45,22 @@ None of these gems implement deferred processing via TracePoint. The dominant pa
 When `pin_tenant` is called and `Apartment.activated?` is true, instead of calling `Apartment.process_pinned_model(self)` immediately, register a one-shot `TracePoint(:end)` listener that fires after the class body closes:
 
 ```ruby
+# Abbreviated — see lib/apartment/concerns/model.rb for full implementation.
 def pin_tenant
+  raise(ArgumentError, "...") unless is_a?(Class) && self < ActiveRecord::Base
   return if apartment_pinned?
 
   @apartment_pinned = true
   Apartment.register_pinned_model(self)
-
   return unless Apartment.activated?
 
-  klass = self
-  trace = TracePoint.new(:end, :raise) do |t|
-    if t.event == :raise
-      # Disable unconditionally on any raise — even from nested
-      # classes/modules (t.self != klass). Prevents trace leak.
-      trace.disable
-    elsif t.self == klass
-      trace.disable
-      Apartment.process_pinned_model(klass)
-    end
+  # Anonymous classes (Class.new): :end won't fire. Warn and skip.
+  if name.nil?
+    warn "[Apartment] pin_tenant on anonymous class — call process_pinned_model explicitly."
+    return
   end
-  trace.enable(target_thread: Thread.current)
+
+  apartment_defer_processing!  # registers one-shot TracePoint(:end)
 end
 ```
 
@@ -79,13 +75,20 @@ end
 
 ### How TracePoint(:end) Works
 
-Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is reached. The TracePoint callback receives a `TracePoint` object where `t.self` is the class/module being closed.
+Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is reached in source-parsed files (Ruby docs: "Finish a class or module definition"). The implementation listens only for `:end`. The TracePoint callback receives a `TracePoint` object where `t.self` is the class/module being closed.
+
+**Why only `:end`:**
+- `:b_return` was considered but rejected: it fires for ALL block returns in class context (`each`, `tap`, `include` hooks), not just `Class.new` closing. Inner blocks would trigger premature processing — reintroducing the exact bug we're fixing.
+- `:raise` was considered but rejected: rescued raises (`begin; require 'x'; rescue LoadError; end` in a class body) still produce `:end`. Disabling on `:raise` would prevent processing on successful load after a rescued exception. `:end` always fires for source-parsed classes, even when the body raises (MRI verified: event order is `[:raise, :end]`).
+- For `Class.new { }` (tests, runtime metaprogramming), `:end` does NOT fire. Tests use `eval`'d source-parsed classes to exercise the TracePoint, or call `process_pinned_model` explicitly.
 
 **Scope:** The trace is active only from `pin_tenant` (mid-class body) until the class's closing `end`. In practice, this is microseconds of class body evaluation. Not on the request hot path.
 
 **Filtering:** `t.self == klass` ensures we only fire for our class. Other classes being defined concurrently (threaded autoload) are ignored.
 
 **One-shot:** `trace.disable` inside the callback prevents the listener from firing again. No accumulation of listeners over time.
+
+**No interference with user TracePoints:** Multiple TracePoints coexist independently in MRI. Disabling ours does not affect other traces. Both traces fire for the same `:end` event (no suppression). Verified empirically.
 
 **Cost:** With `target_thread: Thread.current`, MRI only invokes the callback for `:end` events in the current thread. The only events between enable and disable are nested modules/classes within the model's body (if any) and the model's own closing `end`. Negligible.
 
@@ -101,13 +104,11 @@ Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is
 
 **`eager_load = true` (production):** All models are loaded during boot before `activate!` runs. `pin_tenant` sees `activated? == false`, registers only, no TracePoint. `Tenant.init` processes the batch. No change from today.
 
-**TracePoint leak on class body raise:** If the class body raises during evaluation, Ruby unwinds without reaching the closing `end`, so `:end` for that class never fires. The trace stays enabled for that thread — the `t.self == klass` guard prevents wrong work, but the callback still runs on every subsequent `:end` event in the thread (cheap per-invocation, bad if accumulated across many failed loads).
+**TracePoint and class body raises:** MRI verified that `:end` fires even when the class body raises (both rescued and unrescued). Event order is `[:raise, :end]`. This means the trace disables normally via the `:end` handler in all cases for source-parsed classes. No separate `:raise` handling is needed.
 
-Mitigation: listen for `:raise` in the same TracePoint. On any `:raise` event, disable the trace **unconditionally** (not gated on `t.self == klass`). This is necessary because a raise inside a nested class/module within the model body would have `t.self` pointing to the nested class, not the model. Disabling on any raise is conservative but safe: the model is registered but unprocessed; it will fail on first use (class is broken anyway). See the code sketch in the Design section above.
+For `Class.new { }`, `:end` (the class/module keyword event) does not fire — only `:b_return` fires, which we don't listen for. With a raising block, the trace stays enabled but inert. This is acceptable: `pin_tenant` on anonymous classes warns and skips deferral (the `name.nil?` guard), so this path is only reachable via `apartment_defer_processing!` on named classes.
 
-Testing: add a unit test that simulates a class body raise after `pin_tenant` and asserts the trace is disabled (not leaked).
-
-**Unprocessed pinned models (`Tenant.init`):** Separately from the TracePoint leak concern, `process_pinned_models` (called by `Tenant.init`) should process any registered models not yet marked as processed. This catches models whose processing was skipped for any reason (raise, race condition, etc.). This does NOT clean up a leaked TracePoint — it only ensures the model gets processed if still loadable.
+**Unprocessed pinned models (`Tenant.init`):** `process_pinned_models` (called by `Tenant.init`) processes any registered models not yet marked as processed. This catches models loaded via `Class.new { pin_tenant }` where the TracePoint didn't fire, or any other path where processing was skipped.
 
 **Fiber safety:** Class body evaluation (`class Foo ... end`) is synchronous Ruby code — no `Fiber.yield` occurs between `pin_tenant` and the closing `end` unless explicitly coded. Zeitwerk synchronizes autoload via a monitor/mutex (not fiber-aware scheduling). Fiber-based servers (Falcon) use fibers for IO concurrency, not class loading. `target_thread: Thread.current` covers all fibers within that thread (fibers share `Thread.current`), but the `t.self == klass` guard ensures only our class triggers processing. The real fiber concern for Apartment v4 is `CurrentAttributes` isolation (handled by the Railtie's `isolation_level` warning), not TracePoint deferral.
 
@@ -125,11 +126,13 @@ Testing: add a unit test that simulates a class body raise after `pin_tenant` an
 
 ### Unit Tests (model_spec.rb)
 
-- `pin_tenant` when `activated?` is true does NOT call `process_pinned_model` immediately
-- `pin_tenant` when `activated?` is true calls `process_pinned_model` after the class body closes (simulate with `Class.new` block)
-- `pin_tenant` when `activated?` is false registers without TracePoint (existing behavior)
-- Idempotency: second `pin_tenant` call doesn't register a second TracePoint
-- Class body raise after `pin_tenant`: trace is disabled (not leaked), model stays registered but unprocessed
+- `pin_tenant` when `activated?` is true: `Class.new` registers but does NOT call `process_pinned_model` (`:end` doesn't fire for anonymous classes)
+- `pin_tenant` when `activated?` is true: source-parsed class (via `eval`) fires `:end` and processes
+- `pin_tenant` with `self.table_name` below it (source-parsed): table name visible at processing time
+- `pin_tenant` when `activated?` is false: registers without TracePoint (existing behavior)
+- `pin_tenant` on non-AR class: raises `ArgumentError`
+- `pin_tenant` on module: raises `ArgumentError`
+- `pin_tenant` on anonymous class when activated: warns and skips deferral
 
 ### Integration Test (new spec or addition to excluded_models_spec.rb)
 
