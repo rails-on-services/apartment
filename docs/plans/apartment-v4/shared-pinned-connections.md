@@ -754,9 +754,24 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `lib/apartment/patches/connection_handling.rb:20-24`
-- Modify: `spec/unit/patches/connection_handling_spec.rb:269-313`
+- Modify: `spec/unit/patches/connection_handling_spec.rb:47-49` (mock_adapter default)
+- Modify: `spec/unit/patches/connection_handling_spec.rb:269-349` (pinned model bypass + Tenant.each)
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Add `shared_pinned_connection?` to the default mock_adapter**
+
+In `spec/unit/patches/connection_handling_spec.rb`, update the `let(:mock_adapter)` (line 47) to include the new method:
+
+```ruby
+let(:mock_adapter) do
+  double('AbstractAdapter',
+         validated_connection_config: { 'adapter' => 'sqlite3', 'database' => ':memory:' },
+         shared_pinned_connection?: false)
+end
+```
+
+This ensures all existing tests that don't stub `shared_pinned_connection?` continue to see the default "separate pool" behavior.
+
+- [ ] **Step 2: Write the failing tests**
 
 Replace the `context 'pinned model bypass'` block in `spec/unit/patches/connection_handling_spec.rb` (lines 269-313) with:
 
@@ -846,12 +861,12 @@ context 'pinned model bypass' do
 end
 ```
 
-- [ ] **Step 2: Run tests to verify shared-pool tests fail**
+- [ ] **Step 3: Run tests to verify shared-pool tests fail**
 
 Run: `bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/patches/connection_handling_spec.rb --format documentation`
 Expected: shared-pool pinned model tests fail (pinned models still always bypass)
 
-- [ ] **Step 3: Implement the conditional routing**
+- [ ] **Step 4: Implement the conditional routing**
 
 In `lib/apartment/patches/connection_handling.rb`, replace lines 20-24:
 
@@ -877,12 +892,90 @@ if self != ActiveRecord::Base && Apartment.pinned_model?(self) &&
 end
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/patches/connection_handling_spec.rb --format documentation`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Update `context 'pinned model inside Tenant.each'`**
+
+Replace the `context 'pinned model inside Tenant.each'` block (lines 315-349) with:
+
+```ruby
+context 'pinned model inside Tenant.each' do
+  before do
+    require_relative('../../../lib/apartment/concerns/model')
+  end
+
+  context 'when shared_pinned_connection? is false (separate pool)' do
+    before do
+      allow(mock_adapter).to(receive(:shared_pinned_connection?).and_return(false))
+    end
+
+    it 'returns the default pool for a pinned model while iterating tenants' do
+      pinned_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('PinnedInsideEach', pinned_class)
+      pinned_class.pin_tenant
+
+      pools_during_each = []
+      Apartment::Tenant.each(%w[acme widgets]) do |_tenant|
+        pools_during_each << pinned_class.connection_pool
+      end
+
+      expect(pools_during_each).to(all(equal(default_pool)))
+    end
+  end
+
+  context 'when shared_pinned_connection? is true (shared pool)' do
+    before do
+      allow(mock_adapter).to(receive(:shared_pinned_connection?).and_return(true))
+    end
+
+    it 'returns the tenant pool for a pinned model while iterating tenants' do
+      pinned_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('PinnedSharedEach', pinned_class)
+      pinned_class.pin_tenant
+
+      pools_during_each = []
+      Apartment::Tenant.each(%w[acme widgets]) do |_tenant|
+        pools_during_each << pinned_class.connection_pool
+      end
+
+      # Pinned model should track tenant pools, not default
+      pools_during_each.each do |pool|
+        expect(pool).not_to(equal(default_pool))
+      end
+      expect(pools_during_each[0]).not_to(equal(pools_during_each[1]))
+    end
+  end
+
+  it 'routes unpinned models to tenant pools while iterating' do
+    unpinned = Class.new(ActiveRecord::Base)
+    stub_const('UnpinnedInsideEach', unpinned)
+
+    pools_during_each = []
+    Apartment::Tenant.each(%w[acme widgets]) do |_tenant|
+      pools_during_each << unpinned.connection_pool
+    end
+
+    pools_during_each.each do |pool|
+      expect(pool).not_to(equal(default_pool))
+    end
+    expect(pools_during_each[0]).not_to(equal(pools_during_each[1]))
+  end
+end
+```
+
+- [ ] **Step 7: Run tests to verify the Tenant.each tests pass**
+
+Run: `bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/patches/connection_handling_spec.rb --format documentation`
+Expected: all pass
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add lib/apartment/patches/connection_handling.rb spec/unit/patches/connection_handling_spec.rb
