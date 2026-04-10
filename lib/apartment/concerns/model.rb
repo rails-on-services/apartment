@@ -104,8 +104,10 @@ module Apartment
       # class context (each, tap, include hooks) and would trigger prematurely.
       # :raise is not used — rescued raises still produce :end, and unconditional
       # disable would prevent processing on successful load.
-      # :end always fires for source-parsed class/module keywords, even if the
-      # body raises (MRI verified). See docs/designs/v4-deferred-pin-tenant-processing.md.
+      # MRI verified: :end fires for source-parsed class/module keywords even
+      # when the body raises (event order [:raise, :end]).
+      # For Class.new { }, :end does not fire; call process_pinned_model explicitly.
+      # See docs/designs/v4-deferred-pin-tenant-processing.md.
       def apartment_defer_processing!
         klass = self
         trace = TracePoint.new(:end) do |t|

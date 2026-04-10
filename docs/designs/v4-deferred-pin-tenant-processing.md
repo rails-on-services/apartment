@@ -51,17 +51,23 @@ def pin_tenant
   @apartment_pinned = true
   Apartment.register_pinned_model(self)
 
-  return unless Apartment.activated?
+  apartment_defer_processing! if Apartment.activated?
+end
 
+private
+
+def apartment_defer_processing!
   klass = self
-  trace = TracePoint.new(:end, :raise) do |t|
-    if t.event == :raise
-      # Disable unconditionally on any raise — even from nested
-      # classes/modules (t.self != klass). Prevents trace leak.
+  trace = TracePoint.new(:end) do |t|
+    if t.self == klass
       trace.disable
-    elsif t.self == klass
-      trace.disable
-      Apartment.process_pinned_model(klass)
+      begin
+        Apartment.process_pinned_model(klass)
+      rescue StandardError => e
+        warn "[Apartment] Failed to process pinned model " \
+             "#{klass.name || klass.inspect}: #{e.class}: #{e.message}"
+        raise
+      end
     end
   end
   trace.enable(target_thread: Thread.current)
@@ -79,7 +85,12 @@ end
 
 ### How TracePoint(:end) Works
 
-Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is reached in source-parsed files. For `Class.new { }` anonymous classes (used in tests and runtime metaprogramming), `:end` does NOT fire — `:b_return` (block return) fires instead. The implementation listens for both `:end` and `:b_return` to handle both paths. The TracePoint callback receives a `TracePoint` object where `t.self` is the class/module being closed.
+Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is reached in source-parsed files (Ruby docs: "Finish a class or module definition"). The implementation listens only for `:end`. The TracePoint callback receives a `TracePoint` object where `t.self` is the class/module being closed.
+
+**Why only `:end`:**
+- `:b_return` was considered but rejected: it fires for ALL block returns in class context (`each`, `tap`, `include` hooks), not just `Class.new` closing. Inner blocks would trigger premature processing — reintroducing the exact bug we're fixing.
+- `:raise` was considered but rejected: rescued raises (`begin; require 'x'; rescue LoadError; end` in a class body) still produce `:end`. Disabling on `:raise` would prevent processing on successful load after a rescued exception. `:end` always fires for source-parsed classes, even when the body raises (MRI verified: event order is `[:raise, :end]`).
+- For `Class.new { }` (tests, runtime metaprogramming), `:end` does NOT fire. Tests use `eval`'d source-parsed classes to exercise the TracePoint, or call `process_pinned_model` explicitly.
 
 **Scope:** The trace is active only from `pin_tenant` (mid-class body) until the class's closing `end`. In practice, this is microseconds of class body evaluation. Not on the request hot path.
 
@@ -103,13 +114,11 @@ Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is
 
 **`eager_load = true` (production):** All models are loaded during boot before `activate!` runs. `pin_tenant` sees `activated? == false`, registers only, no TracePoint. `Tenant.init` processes the batch. No change from today.
 
-**TracePoint leak on class body raise:** If the class body raises during evaluation, Ruby unwinds without reaching the closing `end`, so `:end` for that class never fires. The trace stays enabled for that thread — the `t.self == klass` guard prevents wrong work, but the callback still runs on every subsequent `:end` event in the thread (cheap per-invocation, bad if accumulated across many failed loads).
+**TracePoint and class body raises:** MRI verified that `:end` fires even when the class body raises (both rescued and unrescued). Event order is `[:raise, :end]`. This means the trace disables normally via the `:end` handler in all cases for source-parsed classes. No separate `:raise` handling is needed.
 
-Mitigation: listen for `:raise` in the same TracePoint. On any `:raise` event, disable the trace **unconditionally** (not gated on `t.self == klass`). This is necessary because a raise inside a nested class/module within the model body would have `t.self` pointing to the nested class, not the model. Disabling on any raise is conservative but safe: the model is registered but unprocessed; it will fail on first use (class is broken anyway). See the code sketch in the Design section above.
+For `Class.new { }` with a raise, neither `:end` nor `:b_return` fires; the trace stays enabled. This is acceptable because `Class.new` is a test/metaprogramming construct, and the trace's `t.self == klass` guard means it only does an O(1) comparison on subsequent `:end` events — no wrong work, negligible cost.
 
-Testing: add a unit test that simulates a class body raise after `pin_tenant` and asserts the trace is disabled (not leaked).
-
-**Unprocessed pinned models (`Tenant.init`):** Separately from the TracePoint leak concern, `process_pinned_models` (called by `Tenant.init`) should process any registered models not yet marked as processed. This catches models whose processing was skipped for any reason (raise, race condition, etc.). This does NOT clean up a leaked TracePoint — it only ensures the model gets processed if still loadable.
+**Unprocessed pinned models (`Tenant.init`):** `process_pinned_models` (called by `Tenant.init`) processes any registered models not yet marked as processed. This catches models loaded via `Class.new { pin_tenant }` where the TracePoint didn't fire, or any other path where processing was skipped.
 
 **Fiber safety:** Class body evaluation (`class Foo ... end`) is synchronous Ruby code — no `Fiber.yield` occurs between `pin_tenant` and the closing `end` unless explicitly coded. Zeitwerk synchronizes autoload via a monitor/mutex (not fiber-aware scheduling). Fiber-based servers (Falcon) use fibers for IO concurrency, not class loading. `target_thread: Thread.current` covers all fibers within that thread (fibers share `Thread.current`), but the `t.self == klass` guard ensures only our class triggers processing. The real fiber concern for Apartment v4 is `CurrentAttributes` isolation (handled by the Railtie's `isolation_level` warning), not TracePoint deferral.
 
