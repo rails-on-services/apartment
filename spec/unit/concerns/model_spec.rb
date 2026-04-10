@@ -103,4 +103,82 @@ RSpec.describe(Apartment::Model) do
       expect(klass.respond_to?(:apartment_pinned?)).to(be(false))
     end
   end
+
+  describe '.apartment_pinned_processed?' do
+    it 'returns false before processing' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'returns true after apartment_mark_processed!' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      klass.apartment_mark_processed!
+      expect(klass.apartment_pinned_processed?).to(be(true))
+    end
+  end
+
+  describe '.apartment_mark_processed!' do
+    it 'records convention path with original prefix' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      klass.apartment_mark_processed!(:convention, 'myapp_')
+
+      expect(klass.apartment_pinned_processed?).to(be(true))
+    end
+
+    it 'records explicit path with original table name' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      klass.apartment_mark_processed!(:explicit, 'custom_jobs')
+
+      expect(klass.apartment_pinned_processed?).to(be(true))
+    end
+
+    it 'records nil path for separate-pool models' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      klass.apartment_mark_processed!
+
+      expect(klass.apartment_pinned_processed?).to(be(true))
+    end
+  end
+
+  describe '.apartment_restore!' do
+    it 'restores convention-path prefix and resets table name' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('ConventionRestore', klass)
+      allow(klass).to(receive(:table_name_prefix=))
+      allow(klass).to(receive(:reset_table_name))
+
+      klass.apartment_mark_processed!(:convention, 'myapp_')
+      klass.apartment_restore!
+
+      expect(klass).to(have_received(:table_name_prefix=).with('myapp_'))
+      expect(klass).to(have_received(:reset_table_name))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'restores explicit-path original table name' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('ExplicitRestore', klass)
+      allow(klass).to(receive(:table_name=))
+
+      klass.apartment_mark_processed!(:explicit, 'custom_jobs')
+      klass.apartment_restore!
+
+      expect(klass).to(have_received(:table_name=).with('custom_jobs'))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'is a no-op for separate-pool path' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('SeparateRestore', klass)
+
+      klass.apartment_mark_processed!
+      expect { klass.apartment_restore! }.not_to(raise_error)
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'is a no-op when not processed' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      expect { klass.apartment_restore! }.not_to(raise_error)
+    end
+  end
 end

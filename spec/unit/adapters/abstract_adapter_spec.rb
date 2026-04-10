@@ -479,7 +479,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       end
     end
 
-    it 'skips models already processed (idempotent via @apartment_pinned_processed)' do
+    it 'skips models already processed (idempotent via apartment_pinned_processed?)' do
       model_class = Class.new(ActiveRecord::Base) do
         include Apartment::Model
       end
@@ -493,7 +493,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       allow(model_class).to(receive(:establish_connection))
       adapter.process_pinned_models
 
-      # Second call skips — @apartment_pinned_processed is set
+      # Second call skips — apartment_pinned_processed? returns true
       expect(model_class).not_to(receive(:establish_connection))
       adapter.process_pinned_models
     end

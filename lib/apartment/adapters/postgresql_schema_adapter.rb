@@ -21,15 +21,12 @@ module Apartment
           original = klass.table_name
           table = original.sub(/\A[^.]+\./, '')
           klass.table_name = "#{default_tenant}.#{table}"
-          # Set tracking ivars after mutation succeeds to avoid inconsistent state on failure.
-          klass.instance_variable_set(:@apartment_original_table_name, original)
-          klass.instance_variable_set(:@apartment_qualification_path, :explicit)
+          klass.apartment_mark_processed!(:explicit, original)
         else
           original_prefix = klass.table_name_prefix
           klass.table_name_prefix = "#{default_tenant}."
           klass.reset_table_name
-          klass.instance_variable_set(:@apartment_original_table_name_prefix, original_prefix)
-          klass.instance_variable_set(:@apartment_qualification_path, :convention)
+          klass.apartment_mark_processed!(:convention, original_prefix)
         end
       end
 

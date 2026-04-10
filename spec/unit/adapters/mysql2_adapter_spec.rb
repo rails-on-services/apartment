@@ -115,7 +115,7 @@ RSpec.shared_examples('a MySQL adapter') do
 
   describe '#qualify_pinned_table_name' do
     it 'qualifies convention-named model with database name from base_config' do
-      klass = Class.new(ActiveRecord::Base)
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('MysqlPinned', klass)
 
       expect(klass).to(receive(:table_name_prefix=).with('myapp.'))
@@ -125,7 +125,7 @@ RSpec.shared_examples('a MySQL adapter') do
     end
 
     it 'qualifies explicit table_name with database name from base_config' do
-      klass = Class.new(ActiveRecord::Base)
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('MysqlExplicit', klass)
       klass.instance_variable_set(:@table_name, 'custom_jobs')
       allow(klass).to(receive_messages(compute_table_name: 'mysql_explicits', table_name: 'custom_jobs'))
@@ -136,7 +136,7 @@ RSpec.shared_examples('a MySQL adapter') do
     end
 
     it 'strips existing database prefix before re-qualifying' do
-      klass = Class.new(ActiveRecord::Base)
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('MysqlRequalify', klass)
       klass.instance_variable_set(:@table_name, 'old_db.jobs')
       allow(klass).to(receive_messages(compute_table_name: 'mysql_requalifies', table_name: 'old_db.jobs'))

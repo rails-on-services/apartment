@@ -21,14 +21,12 @@ module Apartment
           original = klass.table_name
           table = original.sub(/\A[^.]+\./, '')
           klass.table_name = "#{db_name}.#{table}"
-          klass.instance_variable_set(:@apartment_original_table_name, original)
-          klass.instance_variable_set(:@apartment_qualification_path, :explicit)
+          klass.apartment_mark_processed!(:explicit, original)
         else
           original_prefix = klass.table_name_prefix
           klass.table_name_prefix = "#{db_name}."
           klass.reset_table_name
-          klass.instance_variable_set(:@apartment_original_table_name_prefix, original_prefix)
-          klass.instance_variable_set(:@apartment_qualification_path, :convention)
+          klass.apartment_mark_processed!(:convention, original_prefix)
         end
       end
 

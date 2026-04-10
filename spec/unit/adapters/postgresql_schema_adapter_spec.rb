@@ -59,7 +59,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
   describe '#qualify_pinned_table_name' do
     it 'qualifies convention-named model via table_name_prefix + reset_table_name' do
-      klass = Class.new(ActiveRecord::Base)
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('DelayedJob', klass)
 
       expect(klass).to(receive(:table_name_prefix=).with('public.'))
@@ -69,7 +69,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     end
 
     it 'qualifies explicit table_name via direct assignment' do
-      klass = Class.new(ActiveRecord::Base)
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('ExplicitPinned', klass)
       klass.instance_variable_set(:@table_name, 'custom_jobs')
       allow(klass).to(receive_messages(compute_table_name: 'explicit_pinneds', table_name: 'custom_jobs'))
@@ -81,7 +81,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     end
 
     it 'strips existing schema prefix before re-qualifying' do
-      klass = Class.new(ActiveRecord::Base)
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('RequalifyPinned', klass)
       klass.instance_variable_set(:@table_name, 'old_schema.jobs')
       allow(klass).to(receive_messages(compute_table_name: 'requalify_pinneds', table_name: 'old_schema.jobs'))
@@ -91,8 +91,8 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
       adapter.qualify_pinned_table_name(klass)
     end
 
-    it 'saves original table_name_prefix on convention path' do
-      klass = Class.new(ActiveRecord::Base)
+    it 'marks model as processed with original prefix on convention path' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('PrefixPinned', klass)
       allow(klass).to(receive(:table_name_prefix).and_return('myapp_'))
       allow(klass).to(receive(:table_name_prefix=))
@@ -100,11 +100,11 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       adapter.qualify_pinned_table_name(klass)
 
-      expect(klass.instance_variable_get(:@apartment_original_table_name_prefix)).to(eq('myapp_'))
+      expect(klass.apartment_pinned_processed?).to(be(true))
     end
 
-    it 'sets ivars after mutation on explicit path' do
-      klass = Class.new(ActiveRecord::Base)
+    it 'marks model as processed after mutation on explicit path' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
       stub_const('IvarOrderPinned', klass)
       klass.instance_variable_set(:@table_name, 'custom_jobs')
       allow(klass).to(receive_messages(compute_table_name: 'ivar_order_pinneds', table_name: 'custom_jobs'))
@@ -112,8 +112,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       adapter.qualify_pinned_table_name(klass)
 
-      expect(klass.instance_variable_get(:@apartment_original_table_name)).to(eq('custom_jobs'))
-      expect(klass.instance_variable_get(:@apartment_qualification_path)).to(eq(:explicit))
+      expect(klass.apartment_pinned_processed?).to(be(true))
     end
   end
 

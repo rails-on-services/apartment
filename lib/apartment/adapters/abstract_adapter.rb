@@ -135,15 +135,14 @@ module Apartment
       # Otherwise, establishes a separate connection pool (required when
       # cross-database queries are impossible).
       def process_pinned_model(klass)
-        return if klass.instance_variable_get(:@apartment_pinned_processed)
+        return if klass.apartment_pinned_processed?
 
         if shared_pinned_connection?
           qualify_pinned_table_name(klass)
         else
           klass.establish_connection(pinned_model_config)
+          klass.apartment_mark_processed!
         end
-
-        klass.instance_variable_set(:@apartment_pinned_processed, true)
       end
 
       # Deprecated: use process_pinned_models instead.
