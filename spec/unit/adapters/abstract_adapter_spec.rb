@@ -513,9 +513,9 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       allow(adapter).to(receive(:shared_pinned_connection?).and_return(true))
       allow(adapter).to(receive(:qualify_pinned_table_name).and_raise(StandardError, 'boom'))
 
-      expect { adapter.process_pinned_models }.to(raise_error(
-        Apartment::ConfigurationError, /Failed to process pinned model BrokenPinned.*boom/
-      ))
+      expect { adapter.process_pinned_models }.to(
+        raise_error(Apartment::ConfigurationError, /Failed to process pinned model BrokenPinned.*boom/)
+      )
     end
   end
 
