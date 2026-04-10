@@ -126,11 +126,13 @@ For `Class.new { }` with a raise, neither `:end` nor `:b_return` fires; the trac
 
 ### Unit Tests (model_spec.rb)
 
-- `pin_tenant` when `activated?` is true does NOT call `process_pinned_model` immediately
-- `pin_tenant` when `activated?` is true calls `process_pinned_model` after the class body closes (simulate with `Class.new` block)
-- `pin_tenant` when `activated?` is false registers without TracePoint (existing behavior)
-- Idempotency: second `pin_tenant` call doesn't register a second TracePoint
-- Class body raise after `pin_tenant`: trace is disabled (not leaked), model stays registered but unprocessed
+- `pin_tenant` when `activated?` is true: `Class.new` registers but does NOT call `process_pinned_model` (`:end` doesn't fire for anonymous classes)
+- `pin_tenant` when `activated?` is true: source-parsed class (via `eval`) fires `:end` and processes
+- `pin_tenant` with `self.table_name` below it (source-parsed): table name visible at processing time
+- `pin_tenant` when `activated?` is false: registers without TracePoint (existing behavior)
+- `pin_tenant` on non-AR class: raises `ArgumentError`
+- `pin_tenant` on module: raises `ArgumentError`
+- `pin_tenant` on anonymous class when activated: warns and skips deferral
 
 ### Integration Test (new spec or addition to excluded_models_spec.rb)
 
