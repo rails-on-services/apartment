@@ -17,7 +17,7 @@ module Apartment
       def qualify_pinned_table_name(klass)
         db_name = base_config['database']
 
-        if explicit_table_name?(klass)
+        if klass.apartment_explicit_table_name?
           original = klass.table_name
           table = original.sub(/\A[^.]+\./, '')
           klass.table_name = "#{db_name}.#{table}"

@@ -65,6 +65,30 @@ RSpec.describe(Apartment::Model) do
     end
   end
 
+  describe '.apartment_explicit_table_name?' do
+    it 'returns false when @table_name is not set' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('NoTableName', klass)
+      expect(klass.apartment_explicit_table_name?).to(be(false))
+    end
+
+    it 'returns false when cached equals computed (convention naming)' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('ConventionModel', klass)
+      allow(klass).to(receive(:compute_table_name).and_return('convention_models'))
+      klass.instance_variable_set(:@table_name, 'convention_models')
+      expect(klass.apartment_explicit_table_name?).to(be(false))
+    end
+
+    it 'returns true when cached differs from computed (explicit assignment)' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('ExplicitModel', klass)
+      allow(klass).to(receive(:compute_table_name).and_return('explicit_models'))
+      klass.instance_variable_set(:@table_name, 'custom_table')
+      expect(klass.apartment_explicit_table_name?).to(be(true))
+    end
+  end
+
   describe '.apartment_pinned?' do
     it 'returns false for unpinned models' do
       klass = Class.new(ActiveRecord::Base) do

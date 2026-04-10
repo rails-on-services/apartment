@@ -35,6 +35,18 @@ module Apartment
         superclass.apartment_pinned?
       end
 
+      # Whether this model has an explicit self.table_name = assignment
+      # (as opposed to Rails' lazy convention computation). Returns false
+      # if the explicit value matches what convention would produce, since
+      # the convention path handles that case correctly.
+      # NOTE: compute_table_name is a private Rails API; tested against
+      # Rails main as a canary in CI.
+      def apartment_explicit_table_name?
+        return false unless instance_variable_defined?(:@table_name)
+
+        instance_variable_get(:@table_name) != send(:compute_table_name)
+      end
+
       # Whether process_pinned_model has already run for this class.
       def apartment_pinned_processed?
         @apartment_pinned_processed == true

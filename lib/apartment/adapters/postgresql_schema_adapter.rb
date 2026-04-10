@@ -17,7 +17,7 @@ module Apartment
       end
 
       def qualify_pinned_table_name(klass)
-        if explicit_table_name?(klass)
+        if klass.apartment_explicit_table_name?
           original = klass.table_name
           table = original.sub(/\A[^.]+\./, '')
           klass.table_name = "#{default_tenant}.#{table}"

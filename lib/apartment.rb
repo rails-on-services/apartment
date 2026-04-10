@@ -56,9 +56,15 @@ module Apartment
     end
 
     # Check if a class (or any of its ancestors) is a pinned model.
-    # Used by ConnectionHandling to skip tenant pool routing.
+    # Delegates to the class's own apartment_pinned? (defined by the
+    # Apartment::Model concern). Falls back to registry lookup for
+    # models registered via the excluded_models shim without the concern.
     def pinned_model?(klass)
-      klass.ancestors.any? { |a| a.is_a?(Class) && pinned_models.include?(a) }
+      if klass.respond_to?(:apartment_pinned?)
+        klass.apartment_pinned?
+      else
+        klass.ancestors.any? { |a| a.is_a?(Class) && pinned_models.include?(a) }
+      end
     end
 
     def activated?

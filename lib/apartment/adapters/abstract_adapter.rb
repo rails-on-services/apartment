@@ -221,20 +221,6 @@ module Apartment
         config.merge('schema_search_path' => search_path)
       end
 
-      # Detect whether a model has an explicit self.table_name = assignment
-      # (as opposed to Rails' lazy convention computation). Returns false if
-      # the explicit value matches what convention would produce, since the
-      # convention path handles that case correctly.
-      # NOTE: compute_table_name is a private Rails API; tested against Rails
-      # main as a canary in CI (see .github/workflows/ci.yml).
-      def explicit_table_name?(klass)
-        return false unless klass.instance_variable_defined?(:@table_name)
-
-        cached = klass.instance_variable_get(:@table_name)
-        computed = klass.send(:compute_table_name)
-        cached != computed
-      end
-
       def rails_env
         unless defined?(Rails)
           raise(Apartment::ConfigurationError,

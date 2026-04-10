@@ -335,30 +335,6 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
   end
 
-  describe '#explicit_table_name? (private)' do
-    it 'returns false when @table_name is not set' do
-      klass = Class.new(ActiveRecord::Base)
-      stub_const('NoTableName', klass)
-      expect(adapter.send(:explicit_table_name?, klass)).to(be(false))
-    end
-
-    it 'returns false when cached equals computed (convention naming)' do
-      klass = Class.new(ActiveRecord::Base)
-      stub_const('ConventionModel', klass)
-      allow(klass).to(receive(:compute_table_name).and_return('convention_models'))
-      klass.instance_variable_set(:@table_name, 'convention_models')
-      expect(adapter.send(:explicit_table_name?, klass)).to(be(false))
-    end
-
-    it 'returns true when cached differs from computed (explicit assignment)' do
-      klass = Class.new(ActiveRecord::Base)
-      stub_const('ExplicitModel', klass)
-      allow(klass).to(receive(:compute_table_name).and_return('explicit_models'))
-      klass.instance_variable_set(:@table_name, 'custom_table')
-      expect(adapter.send(:explicit_table_name?, klass)).to(be(true))
-    end
-  end
-
   describe '#process_pinned_models' do
     context 'when shared_pinned_connection? is false (separate pool)' do
       it 'calls establish_connection with pinned_model_config' do
