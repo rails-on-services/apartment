@@ -26,9 +26,36 @@ Two new methods on `AbstractAdapter`:
 
 **`shared_pinned_connection?`** — single decision point combining engine capability and config override. Returns `false` by default (safe fallback). PG schema adapter and MySQL adapters override to return `true` unless `Apartment.config.force_separate_pinned_pool` is set. Consumers (`process_pinned_model`, `ConnectionHandling`) call this one method; no scattered `&&` checks.
 
-**`qualify_pinned_table_name(klass)`** — abstract; required when `shared_pinned_connection?` returns `true`. Sets `klass.table_name` to a fully qualified name targeting the default tenant's tables. Raises `NotImplementedError` on the base class as a guard.
+**`qualify_pinned_table_name(klass)`** — abstract; required when `shared_pinned_connection?` returns `true`. Qualifies the model's table name so it targets the default tenant's tables from any tenant connection. Raises `NotImplementedError` on the base class as a guard. Subclasses provide the qualifier string (schema name for PG, database name for MySQL).
 
-Qualification logic: `klass.table_name.split('.').last` strips any existing prefix, then the adapter prepends the appropriate qualifier. This handles models with custom `self.table_name`, `table_name_prefix`, or `table_name_suffix` — all of which are already folded into `klass.table_name` by the time we read it. The result is a plain string (`"public.legacy_delayed_jobs"`); no `connection.quote_table_name` is applied here because ActiveRecord's query builder handles identifier quoting when it encounters the dot-separated form. This matches the existing behavior in `process_pinned_model` for the schema strategy path.
+#### Table Name Qualification Strategy (Hybrid)
+
+Qualification uses a hybrid approach that respects Rails' `table_name_prefix` / `table_name_suffix` machinery where possible, falling back to direct assignment for models with explicit `self.table_name`:
+
+```ruby
+def qualify_pinned_table_name(klass)
+  if klass.instance_variable_get(:@table_name)
+    # Model has explicit self.table_name = 'custom' — qualify directly.
+    # split('.').last strips any existing schema/db prefix.
+    table = klass.table_name.split('.').last
+    klass.table_name = "#{qualifier}.#{table}"
+  else
+    # Convention naming — set table_name_prefix, let Rails compose via
+    # compute_table_name. Preserves nested-class `contained` segments
+    # and table_name_suffix. reset_table_name recomputes @table_name.
+    klass.table_name_prefix = "#{qualifier}."
+    klass.reset_table_name
+  end
+end
+```
+
+Each adapter subclass implements this with its own `qualifier`: `default_tenant` for PG schema (e.g. `"public"`), `base_config['database']` for MySQL (e.g. `"myapp_production"`).
+
+**Why hybrid:** Rails' `table_name_prefix` is a `class_attribute` that feeds into `compute_table_name` (`full_table_name_prefix + contained + undecorated_table_name + full_table_name_suffix`). Using it means pinned models with `table_name_suffix`, nested-class naming, or module-level prefixes get composed correctly by Rails' own assembly. But `reset_table_name` overwrites `@table_name`, which destroys explicit `self.table_name = 'custom'` assignments. The `@table_name` ivar check detects this case and falls back to direct assignment.
+
+**STI:** Subclasses use `base_class.table_name`. Once the base class is qualified, STI children inherit the qualified name automatically. `table_name_prefix` is a `class_attribute` that also inherits to subclasses, so the convention path works for STI without extra handling. `apartment_pinned?` already walks the superclass chain (model.rb:28-30), so STI children are recognized as pinned without their own `pin_tenant` call.
+
+**`class_attribute` inheritance:** Setting `table_name_prefix` on a pinned class propagates to subclasses. This is correct for STI (all subclasses share the same table). Non-pinned classes should never inherit from pinned classes — use composition instead.
 
 **Limitation:** Qualification only affects AR-generated SQL via `table_name`. Raw SQL (`execute`, `find_by_sql`), Arel fragments that hardcode unqualified table names, and `FROM` clauses in custom scopes are not covered. This is the same limitation as v3's `excluded_models` and is documented rather than solved.
 
@@ -70,6 +97,8 @@ The ivar is renamed from `@apartment_connection_established` to `@apartment_pinn
 1. `lib/apartment/adapters/abstract_adapter.rb` — `process_pinned_model` (get and set)
 2. `lib/apartment.rb:124-127` — `clear_config` teardown (checks `defined?` then `remove_instance_variable`)
 3. `spec/unit/adapters/abstract_adapter_spec.rb` — idempotency test comment
+
+**Teardown in `clear_config`:** Beyond renaming the ivar, `clear_config` must also reset `table_name_prefix` on pinned models that used the convention path (to avoid leaking the qualifier after reconfiguration). The teardown loop should call `klass.table_name_prefix = ""` and `klass.reset_table_name` for models where the prefix was set, or track which models used which path to avoid unnecessary resets.
 
 Note: the existing shared path for schema strategy (`table_name = "#{default_tenant}.#{table}"` after `establish_connection`) is replaced — not duplicated — by the new `qualify_pinned_table_name` call. The shared path qualifies *without* `establish_connection`; the separate path calls `establish_connection` *without* qualifying (since the pinned pool's `schema_search_path` handles resolution).
 
@@ -134,6 +163,8 @@ Models (or abstract base classes) that use `connects_to` to point at a *differen
 - `AbstractAdapter#shared_pinned_connection?` returns `false` by default
 - `AbstractAdapter#process_pinned_model`: both code paths (shared vs separate), idempotency via `@apartment_pinned_processed`
 - Each concrete adapter: `shared_pinned_connection?` return value, `qualify_pinned_table_name` output (including already-qualified and custom table names)
+- `qualify_pinned_table_name` hybrid paths: convention-named model uses `table_name_prefix` + `reset_table_name`; explicit `self.table_name` model uses direct assignment
+- `qualify_pinned_table_name` with `table_name_suffix` set (convention path preserves it)
 - `ConnectionHandling#connection_pool`: pinned model routing for both shared and separate paths
 - `Config#force_separate_pinned_pool` validation and default
 
