@@ -118,6 +118,36 @@ config.active_support.isolation_level = :fiber
 
 The Railtie emits a boot-time warning if `isolation_level` is `:thread`.
 
+### Pinned Model Connections
+
+In v3, pinned (excluded) models always received their own connection pool via `establish_connection`. This meant they never participated in the same database transaction as tenant-scoped models.
+
+v4 fixes this for strategies where the database engine supports cross-schema/database queries on a single connection:
+
+| Strategy | Pinned model connection in v4 |
+|---|---|
+| PostgreSQL schema | Shares tenant connection (qualified table name) |
+| MySQL / Trilogy single-server | Shares tenant connection (qualified table name) |
+| PostgreSQL database-per-tenant | Separate pool (unchanged from v3) |
+| SQLite | Separate pool (unchanged from v3) |
+
+For PG schema and MySQL/Trilogy, pinned models now use the tenant's connection pool with a fully qualified table name (e.g. `public.delayed_jobs`). This means pinned model writes participate in the same transaction as tenant DML.
+
+**Action required if you relied on the old behavior:**
+
+If your code assumes that pinned model writes survive a tenant transaction rollback (e.g., enqueuing a job and deliberately rolling back tenant data), set `force_separate_pinned_pool: true` in your Apartment config:
+
+```ruby
+Apartment.configure do |config|
+  config.force_separate_pinned_pool = true
+  # ...
+end
+```
+
+`after_commit` callbacks still fire as before. The difference is that pinned model writes are now inside the tenant transaction, so an `ActiveRecord::Rollback` that aborts the transaction will also roll back pinned model writes. Apps using `after_commit` for job enqueueing are unaffected.
+
+For PG database-per-tenant, SQLite, and multi-server setups, pinned model behavior is unchanged from v3.
+
 Key config options for pool tuning:
 
 | Option | Default | Description |
