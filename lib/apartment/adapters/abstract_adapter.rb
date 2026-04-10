@@ -135,6 +135,14 @@ module Apartment
       # Otherwise, establishes a separate connection pool (required when
       # cross-database queries are impossible).
       def process_pinned_model(klass)
+        # Ensure the concern is included — models registered via the
+        # excluded_models shim may not have it yet. Uses apartment_mark_pinned!
+        # (not pin_tenant) to avoid recursion back into process_pinned_model.
+        unless klass.respond_to?(:apartment_pinned_processed?)
+          klass.include(Apartment::Model)
+          klass.apartment_mark_pinned!
+        end
+
         return if klass.apartment_pinned_processed?
 
         if shared_pinned_connection?

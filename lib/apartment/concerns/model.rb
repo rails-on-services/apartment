@@ -28,6 +28,13 @@ module Apartment
         Apartment.process_pinned_model(self) if Apartment.activated?
       end
 
+      # Mark this class as pinned without triggering processing.
+      # Used by process_pinned_model for shim-registered models that
+      # need the concern included but are already being processed.
+      def apartment_mark_pinned!
+        @apartment_pinned = true
+      end
+
       def apartment_pinned?
         return true if @apartment_pinned == true
         return false unless superclass.respond_to?(:apartment_pinned?)
