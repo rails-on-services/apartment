@@ -110,6 +110,13 @@ module Apartment
     def validate! # rubocop:disable Metrics/AbcSize
       raise(ConfigurationError, 'tenant_strategy is required') unless @tenant_strategy
 
+      # PostgreSQL's default schema is 'public'; avoid forcing every user to set it.
+      @default_tenant ||= 'public' if @tenant_strategy == :schema
+
+      if @default_tenant.is_a?(String) && @default_tenant.strip.empty?
+        raise(ConfigurationError, 'default_tenant cannot be an empty string')
+      end
+
       unless @tenants_provider.respond_to?(:call)
         raise(ConfigurationError, 'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
       end

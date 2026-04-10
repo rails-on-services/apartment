@@ -94,7 +94,7 @@ module Apartment
     # Migrate the primary (default) tenant using AR::Base's existing pool.
     # No tenant switch needed — the default connection is already correct.
     def migrate_primary # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
-      tenant_name = Apartment.config.default_tenant || 'public'
+      tenant_name = Apartment.config.default_tenant
       start = monotonic_now
 
       context = ActiveRecord::Base.connection_pool.migration_context

@@ -105,8 +105,9 @@ RSpec.describe(Apartment::CLI::Tenants) do
     end
 
     it 'prints none when no tenant context' do
+      # Use :database_name because :schema auto-defaults default_tenant to 'public'
       Apartment.configure do |c|
-        c.tenant_strategy = :schema
+        c.tenant_strategy = :database_name
         c.tenants_provider = -> { [] }
       end
       output = run_command('current')
