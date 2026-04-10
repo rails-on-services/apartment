@@ -46,6 +46,52 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     end
   end
 
+  describe '#shared_pinned_connection?' do
+    it 'returns true (schemas share a catalog)' do
+      expect(adapter.shared_pinned_connection?).to(be(true))
+    end
+
+    it 'returns false when force_separate_pinned_pool is true' do
+      reconfigure { |c| c.force_separate_pinned_pool = true }
+      expect(adapter.shared_pinned_connection?).to(be(false))
+    end
+  end
+
+  describe '#qualify_pinned_table_name' do
+    it 'qualifies convention-named model via table_name_prefix + reset_table_name' do
+      klass = Class.new(ActiveRecord::Base)
+      stub_const('DelayedJob', klass)
+
+      expect(klass).to(receive(:table_name_prefix=).with('public.'))
+      expect(klass).to(receive(:reset_table_name))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+
+    it 'qualifies explicit table_name via direct assignment' do
+      klass = Class.new(ActiveRecord::Base)
+      stub_const('ExplicitPinned', klass)
+      klass.instance_variable_set(:@table_name, 'custom_jobs')
+      allow(klass).to(receive_messages(compute_table_name: 'explicit_pinneds', table_name: 'custom_jobs'))
+
+      expect(klass).to(receive(:table_name=).with('public.custom_jobs'))
+      expect(klass).not_to(receive(:table_name_prefix=))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+
+    it 'strips existing schema prefix before re-qualifying' do
+      klass = Class.new(ActiveRecord::Base)
+      stub_const('RequalifyPinned', klass)
+      klass.instance_variable_set(:@table_name, 'old_schema.jobs')
+      allow(klass).to(receive_messages(compute_table_name: 'requalify_pinneds', table_name: 'old_schema.jobs'))
+
+      expect(klass).to(receive(:table_name=).with('public.jobs'))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+  end
+
   describe '#resolve_connection_config' do
     it 'returns config with schema_search_path set to tenant name' do
       result = adapter.resolve_connection_config('acme')
