@@ -320,6 +320,45 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     end
   end
 
+  describe '#shared_pinned_connection?' do
+    it 'returns false by default (safe fallback)' do
+      expect(adapter.shared_pinned_connection?).to(be(false))
+    end
+  end
+
+  describe '#qualify_pinned_table_name' do
+    it 'raises NotImplementedError on the abstract class' do
+      klass = Class.new(ActiveRecord::Base)
+      expect { adapter.qualify_pinned_table_name(klass) }.to(raise_error(
+        NotImplementedError, /qualify_pinned_table_name must be implemented/
+      ))
+    end
+  end
+
+  describe '#explicit_table_name? (private)' do
+    it 'returns false when @table_name is not set' do
+      klass = Class.new(ActiveRecord::Base)
+      stub_const('NoTableName', klass)
+      expect(adapter.send(:explicit_table_name?, klass)).to(be(false))
+    end
+
+    it 'returns false when cached equals computed (convention naming)' do
+      klass = Class.new(ActiveRecord::Base)
+      stub_const('ConventionModel', klass)
+      allow(klass).to(receive(:compute_table_name).and_return('convention_models'))
+      klass.instance_variable_set(:@table_name, 'convention_models')
+      expect(adapter.send(:explicit_table_name?, klass)).to(be(false))
+    end
+
+    it 'returns true when cached differs from computed (explicit assignment)' do
+      klass = Class.new(ActiveRecord::Base)
+      stub_const('ExplicitModel', klass)
+      allow(klass).to(receive(:compute_table_name).and_return('explicit_models'))
+      klass.instance_variable_set(:@table_name, 'custom_table')
+      expect(adapter.send(:explicit_table_name?, klass)).to(be(true))
+    end
+  end
+
   describe '#process_pinned_models' do
     it 'establishes connections for each pinned model' do
       model_class = Class.new(ActiveRecord::Base) do

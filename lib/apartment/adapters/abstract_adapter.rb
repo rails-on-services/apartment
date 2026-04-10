@@ -96,6 +96,25 @@ module Apartment
         end
       end
 
+      # Whether pinned models can share the tenant's connection pool using
+      # qualified table names. When true, process_pinned_model qualifies the
+      # table name instead of calling establish_connection.
+      #
+      # Combines engine capability with config override. Returns false by
+      # default (safe fallback — separate pool). Subclasses override to
+      # return true for engines that support cross-schema/database queries.
+      def shared_pinned_connection?
+        false
+      end
+
+      # Qualify a pinned model's table_name so it targets the default
+      # tenant's tables from any tenant connection. Subclasses must
+      # implement when shared_pinned_connection? returns true.
+      def qualify_pinned_table_name(_klass)
+        raise(NotImplementedError,
+              "#{self.class}#qualify_pinned_table_name must be implemented when shared_pinned_connection? is true")
+      end
+
       # Process all pinned models — establish separate connections pinned to default tenant.
       def process_pinned_models
         return if Apartment.pinned_models.empty?
@@ -189,6 +208,16 @@ module Apartment
       # Connection config with string keys (used by subclasses to build tenant configs).
       def base_config
         connection_config.transform_keys(&:to_s)
+      end
+
+      # Detect whether a model has an explicit self.table_name = assignment
+      # (as opposed to Rails' lazy convention computation).
+      def explicit_table_name?(klass)
+        return false unless klass.instance_variable_defined?(:@table_name)
+
+        cached = klass.instance_variable_get(:@table_name)
+        computed = klass.send(:compute_table_name)
+        cached != computed
       end
 
       def rails_env
