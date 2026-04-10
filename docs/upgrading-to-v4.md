@@ -38,9 +38,10 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  # default_tenant auto-defaults to 'public' for :schema strategy
 end
 ```
+
+`default_tenant` auto-defaults to `'public'` for `:schema` strategy. If you previously set it explicitly, you can remove the line. For `:database_name` strategy, you still need to set it.
 
 ### Tenant API
 
@@ -143,7 +144,6 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  # default_tenant auto-defaults to 'public' for :schema strategy
 
   # Optional: auto-load schema into new tenants
   # config.schema_load_strategy = :schema_rb

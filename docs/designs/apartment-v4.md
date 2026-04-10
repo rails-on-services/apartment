@@ -272,8 +272,8 @@ Apartment.configure do |config|
   # Required: callable returning current tenant list
   config.tenants_provider = -> { Company.pluck(:subdomain) }
 
-  # Default tenant (PostgreSQL: "public", MySQL: derived from database.yml)
-  config.default_tenant = "public"
+  # Default tenant (auto-defaults to "public" for :schema strategy)
+  # config.default_tenant = "public"
 
   # Models in shared/default tenant
   config.excluded_models = %w[User Company]
