@@ -329,9 +329,9 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
   describe '#qualify_pinned_table_name' do
     it 'raises NotImplementedError on the abstract class' do
       klass = Class.new(ActiveRecord::Base)
-      expect { adapter.qualify_pinned_table_name(klass) }.to(raise_error(
-        NotImplementedError, /qualify_pinned_table_name must be implemented/
-      ))
+      expect { adapter.qualify_pinned_table_name(klass) }.to(
+        raise_error(NotImplementedError, /qualify_pinned_table_name must be implemented/)
+      )
     end
   end
 
