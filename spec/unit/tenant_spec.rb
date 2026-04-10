@@ -155,7 +155,7 @@ RSpec.describe(Apartment::Tenant) do
 
       it 'skips models already in pinned_models registry (via pin_tenant)' do
         require 'apartment/concerns/model'
-        model_class = Class.new do
+        model_class = Class.new(ActiveRecord::Base) do
           include Apartment::Model
         end
         stub_const('AlreadyPinnedModel', model_class)

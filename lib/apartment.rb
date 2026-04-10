@@ -88,7 +88,12 @@ module Apartment
     end
 
     def process_pinned_model(klass)
-      adapter&.process_pinned_model(klass)
+      unless adapter
+        warn "[Apartment] Cannot process pinned model #{klass.name || klass.inspect}: " \
+             'adapter not initialized. Model registered but unprocessed.'
+        return
+      end
+      adapter.process_pinned_model(klass)
     end
 
     # Configure Apartment v4. Yields a Config instance, validates it,

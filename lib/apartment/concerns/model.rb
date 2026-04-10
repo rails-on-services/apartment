@@ -18,16 +18,26 @@ module Apartment
       # Safe to call before or after Apartment.activate!.
       # Idempotent: no-op if this class (or a parent) is already pinned.
       def pin_tenant
+        unless is_a?(Class) && self < ActiveRecord::Base
+          raise(ArgumentError, "pin_tenant can only be called on ActiveRecord model classes, got #{inspect}")
+        end
         return if apartment_pinned?
 
         @apartment_pinned = true
         Apartment.register_pinned_model(self)
 
+        return unless Apartment.activated?
+
         # Defer processing until the class body closes via TracePoint(:end),
         # so self.table_name and other declarations are visible.
-        # For Class.new { } (tests), :end does not fire; call
-        # process_pinned_model explicitly after the block.
-        apartment_defer_processing! if Apartment.activated?
+        # For Class.new { } (anonymous classes), :end does not fire.
+        if name.nil?
+          warn '[Apartment] pin_tenant on anonymous class (Class.new): TracePoint(:end) ' \
+               'will not fire. Call Apartment.process_pinned_model(klass) explicitly after the block.'
+          return
+        end
+
+        apartment_defer_processing!
       end
 
       # Mark this class as pinned without triggering processing.
