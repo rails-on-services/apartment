@@ -54,7 +54,7 @@ Phase 8: Docs & Upgrade
 
 **Produces:** A working, tested config + pool management layer with no database dependencies. Everything is unit-testable without PostgreSQL or MySQL.
 
-**Plan:** [`phase-1-foundation.md`](phase-1-foundation.md)
+**Implemented:** PRs #345-348. Design: [`docs/designs/apartment-v4.md`](../../designs/apartment-v4.md)
 
 ---
 
@@ -186,10 +186,9 @@ Phase 8: Docs & Upgrade
 - Phase 7 is deliberately last — it tests the integrated system, not individual components.
 - Phase 8 can start as soon as the API stabilizes (after Phase 2) but ships last.
 
-## Version Strategy
+## Implementation History
 
-- Each phase merges to `man/v4` (long-lived feature branch off `development`)
-- Alpha releases after Phase 2: `4.0.0.alpha1`
-- Beta after Phase 5: `4.0.0.beta1`
-- RC after Phase 7: `4.0.0.rc1`
-- Final after Phase 8: `4.0.0`
+All phases (1-8) implemented and merged to `main` in PRs #345-374. Per-phase plan files removed after completion; see design docs in `docs/designs/` and the merged PRs for implementation details.
+
+- **v4.0.0.alpha1** — released 2026-04-09 (Phases 1-8)
+- **v4.0.0.alpha2** — Shared pinned connections (#374), persistent_schemas validation (#376), convenience APIs (#372-373)
