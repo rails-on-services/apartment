@@ -38,7 +38,6 @@ jobs:
       matrix:
         ruby: ${{ github.event_name == 'workflow_dispatch' && inputs.ruby != 'all' && fromJSON(format('["{0}"]', inputs.ruby)) || fromJSON('["3.3","3.4","4.0"]') }}
         rails: ${{ github.event_name == 'workflow_dispatch' && inputs.rails != 'all' && fromJSON(format('["{0}"]', inputs.rails)) || fromJSON('["7.2","8.0","8.1","main"]') }}
-    continue-on-error: ${{ matrix.rails == 'main' }}
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_sqlite3.gemfile
     steps:
