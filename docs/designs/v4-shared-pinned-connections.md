@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Implemented in [#374](https://github.com/rails-on-services/apartment/pull/374)
 
 ## Problem
 

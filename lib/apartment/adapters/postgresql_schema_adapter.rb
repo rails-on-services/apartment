@@ -18,14 +18,18 @@ module Apartment
 
       def qualify_pinned_table_name(klass)
         if explicit_table_name?(klass)
-          klass.instance_variable_set(:@apartment_original_table_name, klass.table_name)
-          klass.instance_variable_set(:@apartment_qualification_path, :explicit)
-          table = klass.table_name.sub(/\A[^.]+\./, '')
+          original = klass.table_name
+          table = original.sub(/\A[^.]+\./, '')
           klass.table_name = "#{default_tenant}.#{table}"
+          # Set tracking ivars after mutation succeeds to avoid inconsistent state on failure.
+          klass.instance_variable_set(:@apartment_original_table_name, original)
+          klass.instance_variable_set(:@apartment_qualification_path, :explicit)
         else
-          klass.instance_variable_set(:@apartment_qualification_path, :convention)
+          original_prefix = klass.table_name_prefix
           klass.table_name_prefix = "#{default_tenant}."
           klass.reset_table_name
+          klass.instance_variable_set(:@apartment_original_table_name_prefix, original_prefix)
+          klass.instance_variable_set(:@apartment_qualification_path, :convention)
         end
       end
 

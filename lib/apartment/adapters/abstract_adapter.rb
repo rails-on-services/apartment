@@ -97,12 +97,11 @@ module Apartment
       end
 
       # Whether pinned models can share the tenant's connection pool using
-      # qualified table names. When true, process_pinned_model qualifies the
-      # table name instead of calling establish_connection.
+      # qualified table names instead of establish_connection.
       #
-      # Combines engine capability with config override. Returns false by
-      # default (safe fallback — separate pool). Subclasses override to
-      # return true for engines that support cross-schema/database queries.
+      # Returns false by default (separate pool). Subclasses override to
+      # return true when the engine supports cross-schema/database queries,
+      # gated by config.force_separate_pinned_pool.
       def shared_pinned_connection?
         false
       end
@@ -122,6 +121,9 @@ module Apartment
 
         Apartment.pinned_models.each do |klass|
           process_pinned_model(klass)
+        rescue StandardError => e
+          raise(Apartment::ConfigurationError,
+                "Failed to process pinned model #{klass.name}: #{e.class}: #{e.message}")
         end
       end
 
@@ -208,7 +210,8 @@ module Apartment
 
       # Connection config for pinned models on the separate-pool path.
       # For schema strategy, pins schema_search_path to the default tenant
-      # (plus persistent schemas) so FK constraints resolve correctly.
+      # (plus persistent schemas) so the connection resolves tables and FK
+      # constraints in the correct schema.
       # For database strategies, returns base_config unchanged.
       def pinned_model_config
         config = base_config
@@ -220,7 +223,11 @@ module Apartment
       end
 
       # Detect whether a model has an explicit self.table_name = assignment
-      # (as opposed to Rails' lazy convention computation).
+      # (as opposed to Rails' lazy convention computation). Returns false if
+      # the explicit value matches what convention would produce, since the
+      # convention path handles that case correctly.
+      # NOTE: compute_table_name is a private Rails API; tested against Rails
+      # main as a canary in CI (see .github/workflows/ci.yml).
       def explicit_table_name?(klass)
         return false unless klass.instance_variable_defined?(:@table_name)
 

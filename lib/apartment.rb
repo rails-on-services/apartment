@@ -34,7 +34,7 @@ loader.setup
 
 require_relative 'apartment/errors'
 
-module Apartment
+module Apartment # rubocop:disable Metrics/ModuleLength
   class << self
     attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
@@ -120,24 +120,7 @@ module Apartment
     # Reset all configuration and stop background tasks.
     def clear_config
       teardown_old_state
-      # Reset per-model processing flags and undo table name qualification.
-      @pinned_models&.each do |klass|
-        next unless klass.instance_variable_defined?(:@apartment_pinned_processed)
-
-        # Restore table name based on which qualification path was used.
-        case klass.instance_variable_get(:@apartment_qualification_path)
-        when :convention
-          klass.table_name_prefix = ''
-          klass.reset_table_name
-        when :explicit
-          original = klass.instance_variable_get(:@apartment_original_table_name)
-          klass.table_name = original if original
-        end
-
-        %i[@apartment_pinned_processed @apartment_qualification_path @apartment_original_table_name].each do |ivar|
-          klass.remove_instance_variable(ivar) if klass.instance_variable_defined?(ivar)
-        end
-      end
+      @pinned_models&.each { |klass| restore_pinned_model(klass) }
       @config = nil
       @pool_manager = nil
       @pool_reaper = nil
@@ -187,6 +170,33 @@ module Apartment
     end
 
     private
+
+    # Undo table name qualification and remove tracking ivars from a pinned model.
+    # Convention path: restore original prefix so reset_table_name recomputes.
+    # Explicit path: restore the original table_name that was overwritten.
+    # nil path: separate-pool models (establish_connection only, no table name changes).
+    def restore_pinned_model(klass)
+      return unless klass.instance_variable_defined?(:@apartment_pinned_processed)
+
+      case klass.instance_variable_get(:@apartment_qualification_path)
+      when :convention
+        original_prefix = klass.instance_variable_get(:@apartment_original_table_name_prefix) || ''
+        klass.table_name_prefix = original_prefix
+        klass.reset_table_name
+      when :explicit
+        original = klass.instance_variable_get(:@apartment_original_table_name)
+        klass.table_name = original if original
+      when nil then nil # Separate-pool path — no table name qualification to undo.
+      else
+        warn "[Apartment] clear_config: #{klass.name} has unexpected qualification_path " \
+             "#{klass.instance_variable_get(:@apartment_qualification_path).inspect}"
+      end
+
+      %i[@apartment_pinned_processed @apartment_qualification_path
+         @apartment_original_table_name @apartment_original_table_name_prefix].each do |ivar|
+        klass.remove_instance_variable(ivar) if klass.instance_variable_defined?(ivar)
+      end
+    end
 
     # Safely tear down old state. Stops the reaper first (so it doesn't
     # evict mid-cleanup), then deregisters tenant pools from AR's

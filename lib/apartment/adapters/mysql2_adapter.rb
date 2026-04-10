@@ -18,14 +18,17 @@ module Apartment
         db_name = base_config['database']
 
         if explicit_table_name?(klass)
-          klass.instance_variable_set(:@apartment_original_table_name, klass.table_name)
-          klass.instance_variable_set(:@apartment_qualification_path, :explicit)
-          table = klass.table_name.sub(/\A[^.]+\./, '')
+          original = klass.table_name
+          table = original.sub(/\A[^.]+\./, '')
           klass.table_name = "#{db_name}.#{table}"
+          klass.instance_variable_set(:@apartment_original_table_name, original)
+          klass.instance_variable_set(:@apartment_qualification_path, :explicit)
         else
-          klass.instance_variable_set(:@apartment_qualification_path, :convention)
+          original_prefix = klass.table_name_prefix
           klass.table_name_prefix = "#{db_name}."
           klass.reset_table_name
+          klass.instance_variable_set(:@apartment_original_table_name_prefix, original_prefix)
+          klass.instance_variable_set(:@apartment_qualification_path, :convention)
         end
       end
 

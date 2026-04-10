@@ -100,6 +100,63 @@ RSpec.describe(Apartment) do
 
       expect { described_class.adapter }.to(raise_error(Apartment::ConfigurationError))
     end
+
+    it 'restores convention-path table_name_prefix on pinned models' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('ConventionTeardown', klass)
+      allow(klass).to(receive(:table_name_prefix).and_return(''))
+      allow(klass).to(receive(:table_name_prefix=))
+      allow(klass).to(receive(:reset_table_name))
+
+      ConventionTeardown.pin_tenant
+      # Simulate convention-path qualification
+      klass.instance_variable_set(:@apartment_pinned_processed, true)
+      klass.instance_variable_set(:@apartment_qualification_path, :convention)
+      klass.instance_variable_set(:@apartment_original_table_name_prefix, 'myapp_')
+
+      described_class.clear_config
+
+      expect(klass).to(have_received(:table_name_prefix=).with('myapp_'))
+      expect(klass).to(have_received(:reset_table_name))
+      expect(klass.instance_variable_defined?(:@apartment_pinned_processed)).to(be(false))
+      expect(klass.instance_variable_defined?(:@apartment_qualification_path)).to(be(false))
+      expect(klass.instance_variable_defined?(:@apartment_original_table_name_prefix)).to(be(false))
+    end
+
+    it 'restores explicit-path table_name on pinned models' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('ExplicitTeardown', klass)
+      allow(klass).to(receive(:table_name=))
+
+      ExplicitTeardown.pin_tenant
+      klass.instance_variable_set(:@apartment_pinned_processed, true)
+      klass.instance_variable_set(:@apartment_qualification_path, :explicit)
+      klass.instance_variable_set(:@apartment_original_table_name, 'custom_jobs')
+
+      described_class.clear_config
+
+      expect(klass).to(have_received(:table_name=).with('custom_jobs'))
+      expect(klass.instance_variable_defined?(:@apartment_pinned_processed)).to(be(false))
+      expect(klass.instance_variable_defined?(:@apartment_original_table_name)).to(be(false))
+    end
+
+    it 'handles separate-pool path (nil qualification_path) without error' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('SeparatePoolTeardown', klass)
+
+      SeparatePoolTeardown.pin_tenant
+      klass.instance_variable_set(:@apartment_pinned_processed, true)
+      # No @apartment_qualification_path set (separate-pool path)
+
+      expect { described_class.clear_config }.not_to(raise_error)
+      expect(klass.instance_variable_defined?(:@apartment_pinned_processed)).to(be(false))
+    end
   end
 
   describe '.configure' do

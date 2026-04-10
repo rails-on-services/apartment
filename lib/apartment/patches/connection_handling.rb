@@ -19,11 +19,12 @@ module Apartment
 
         # Skip tenant override for pinned models only when the adapter requires
         # a separate pool (shared_pinned_connection? is false). When shared
-        # connections are supported (PG schema, MySQL single-server), pinned
-        # models fall through to the tenant pool lookup, preserving
-        # transactional integrity between pinned and tenant models.
+        # connections are supported (PG schema, MySQL), pinned models fall
+        # through to the tenant pool lookup, preserving transactional integrity.
+        # When adapter is nil (unconfigured), falls back to separate pool (safe default).
+        adapter = Apartment.adapter
         if self != ActiveRecord::Base && Apartment.pinned_model?(self) &&
-           !Apartment.adapter&.shared_pinned_connection?
+           (adapter.nil? || !adapter.shared_pinned_connection?)
           return super
         end
 

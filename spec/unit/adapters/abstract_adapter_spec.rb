@@ -501,6 +501,22 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
     it 'does nothing when no models are pinned' do
       expect { adapter.process_pinned_models }.not_to(raise_error)
     end
+
+    it 'wraps errors with model-identifying context' do
+      model_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('BrokenPinned', model_class)
+
+      BrokenPinned.pin_tenant
+
+      allow(adapter).to(receive(:shared_pinned_connection?).and_return(true))
+      allow(adapter).to(receive(:qualify_pinned_table_name).and_raise(StandardError, 'boom'))
+
+      expect { adapter.process_pinned_models }.to(raise_error(
+        Apartment::ConfigurationError, /Failed to process pinned model BrokenPinned.*boom/
+      ))
+    end
   end
 
   describe '#process_excluded_models (deprecated)' do

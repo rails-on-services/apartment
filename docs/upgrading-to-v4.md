@@ -127,7 +127,7 @@ v4 fixes this for strategies where the database engine supports cross-schema/dat
 | Strategy | Pinned model connection in v4 |
 |---|---|
 | PostgreSQL schema | Shares tenant connection (qualified table name) |
-| MySQL / Trilogy single-server | Shares tenant connection (qualified table name) |
+| MySQL / Trilogy | Shares tenant connection (qualified table name) |
 | PostgreSQL database-per-tenant | Separate pool (unchanged from v3) |
 | SQLite | Separate pool (unchanged from v3) |
 
@@ -146,7 +146,7 @@ end
 
 `after_commit` callbacks still fire as before. The difference is that pinned model writes are now inside the tenant transaction, so an `ActiveRecord::Rollback` that aborts the transaction will also roll back pinned model writes. Apps using `after_commit` for job enqueueing are unaffected.
 
-For PG database-per-tenant, SQLite, and multi-server setups, pinned model behavior is unchanged from v3.
+For PG database-per-tenant and SQLite, pinned model behavior is unchanged from v3. For MySQL multi-server setups where tenant databases are on different hosts, set `force_separate_pinned_pool: true`.
 
 Key config options for pool tuning:
 
