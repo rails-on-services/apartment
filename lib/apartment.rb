@@ -120,11 +120,23 @@ module Apartment
     # Reset all configuration and stop background tasks.
     def clear_config
       teardown_old_state
-      # Reset per-model processing flags so re-configuration re-establishes connections.
+      # Reset per-model processing flags and undo table name qualification.
       @pinned_models&.each do |klass|
         next unless klass.instance_variable_defined?(:@apartment_pinned_processed)
 
-        klass.remove_instance_variable(:@apartment_pinned_processed)
+        # Restore table name based on which qualification path was used.
+        case klass.instance_variable_get(:@apartment_qualification_path)
+        when :convention
+          klass.table_name_prefix = ''
+          klass.reset_table_name
+        when :explicit
+          original = klass.instance_variable_get(:@apartment_original_table_name)
+          klass.table_name = original if original
+        end
+
+        %i[@apartment_pinned_processed @apartment_qualification_path @apartment_original_table_name].each do |ivar|
+          klass.remove_instance_variable(ivar) if klass.instance_variable_defined?(ivar)
+        end
       end
       @config = nil
       @pool_manager = nil
