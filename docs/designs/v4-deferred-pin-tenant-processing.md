@@ -87,6 +87,8 @@ Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is
 
 **One-shot:** `trace.disable` inside the callback prevents the listener from firing again. No accumulation of listeners over time.
 
+**No interference with user TracePoints:** Multiple TracePoints coexist independently in MRI. Disabling ours does not affect other traces. Both traces fire for the same `:end` event (no suppression). Verified empirically.
+
 **Cost:** With `target_thread: Thread.current`, MRI only invokes the callback for `:end` events in the current thread. The only events between enable and disable are nested modules/classes within the model's body (if any) and the model's own closing `end`. Negligible.
 
 ### Edge Cases
