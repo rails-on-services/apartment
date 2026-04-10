@@ -40,52 +40,63 @@ RSpec.describe(Apartment::Model) do
       expect(Apartment.pinned_models.count { |m| m == IdempotentModel }).to(eq(1))
     end
 
-    it 'defers processing until class body closes when activated' do
+    it 'registers a TracePoint(:end) when activated (deferred processing)' do
       allow(Apartment).to(receive(:activated?).and_return(true))
 
-      processed = false
-      allow(Apartment).to(receive(:process_pinned_model)) { processed = true }
+      # Class.new does NOT fire :end (only source-parsed class Foo ... end does).
+      # So process_pinned_model should NOT be called for Class.new.
+      expect(Apartment).not_to(receive(:process_pinned_model))
 
-      # Class.new with a block simulates a class body — TracePoint(:end)
-      # fires when the block closes. pin_tenant should NOT process inline.
       klass = Class.new(ActiveRecord::Base) do
         include Apartment::Model
 
         pin_tenant
-        # At this point, process_pinned_model should NOT have been called yet.
       end
       stub_const('DeferredModel', klass)
 
-      # After the class body closes, TracePoint fires and processes.
-      expect(processed).to(be(true))
+      # Model is registered but not yet processed (deferred to :end or explicit call).
       expect(Apartment.pinned_models).to(include(klass))
+      expect(klass.apartment_pinned?).to(be(true))
+      expect(klass.apartment_pinned_processed?).to(be(false))
     end
 
-    it 'disables trace if class body raises (no leak)' do
+    it 'processes via TracePoint(:end) for source-parsed classes' do
       allow(Apartment).to(receive(:activated?).and_return(true))
       process_calls = []
       allow(Apartment).to(receive(:process_pinned_model)) { |k| process_calls << k }
 
-      expect do
-        Class.new(ActiveRecord::Base) do
+      # eval simulates a source-parsed class (fires :end, unlike Class.new)
+      eval(<<~RUBY, binding, __FILE__, __LINE__ + 1)
+        class ::TracepointTestModel < ActiveRecord::Base
           include Apartment::Model
-
           pin_tenant
-          raise 'simulated load failure'
         end
-      end.to(raise_error(RuntimeError, 'simulated load failure'))
+      RUBY
 
-      # The raise should have disabled the trace. Verify by defining
-      # a second pinned model — it should get its OWN trace and process
-      # exactly once (proving the first trace is dead, not double-firing).
-      second = Class.new(ActiveRecord::Base) do
-        include Apartment::Model
+      expect(process_calls).to(eq([TracepointTestModel]))
+    ensure
+      Object.send(:remove_const, :TracepointTestModel) if defined?(TracepointTestModel) # rubocop:disable RSpec/RemoveConst
+    end
 
-        pin_tenant
+    it 'processes after self.table_name when declared below pin_tenant (source-parsed)' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+      table_name_during_process = nil
+      allow(Apartment).to(receive(:process_pinned_model)) do |k|
+        table_name_during_process = k.instance_variable_get(:@table_name)
       end
-      stub_const('SecondModel', second)
 
-      expect(process_calls).to(eq([second]))
+      # The whole point: self.table_name BELOW pin_tenant is visible at processing time.
+      eval(<<~RUBY, binding, __FILE__, __LINE__ + 1)
+        class ::DeferredTableNameModel < ActiveRecord::Base
+          include Apartment::Model
+          pin_tenant
+          self.table_name = 'custom_reports'
+        end
+      RUBY
+
+      expect(table_name_during_process).to(eq('custom_reports'))
+    ensure
+      Object.send(:remove_const, :DeferredTableNameModel) if defined?(DeferredTableNameModel) # rubocop:disable RSpec/RemoveConst
     end
 
     it 'defers processing when Apartment is not yet activated' do
