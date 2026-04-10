@@ -139,6 +139,31 @@ RSpec.describe(Apartment::Config) do
       expect { config.validate! }.not_to(raise_error)
     end
 
+    context 'default_tenant auto-defaulting' do
+      before do
+        config.tenants_provider = -> { [] }
+      end
+
+      it 'defaults to public for schema strategy when not set' do
+        config.tenant_strategy = :schema
+        config.validate!
+        expect(config.default_tenant).to(eq('public'))
+      end
+
+      it 'preserves explicit default_tenant for schema strategy' do
+        config.tenant_strategy = :schema
+        config.default_tenant = 'custom'
+        config.validate!
+        expect(config.default_tenant).to(eq('custom'))
+      end
+
+      it 'does not default for database_name strategy' do
+        config.tenant_strategy = :database_name
+        config.validate!
+        expect(config.default_tenant).to(be_nil)
+      end
+    end
+
     context 'migration_role validation' do
       before do
         config.tenant_strategy = :schema

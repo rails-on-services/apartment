@@ -106,7 +106,7 @@ RSpec.describe(Apartment::CLI::Tenants) do
 
     it 'prints none when no tenant context' do
       Apartment.configure do |c|
-        c.tenant_strategy = :schema
+        c.tenant_strategy = :database_name
         c.tenants_provider = -> { [] }
       end
       output = run_command('current')

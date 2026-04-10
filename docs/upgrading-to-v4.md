@@ -38,7 +38,7 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
+  # default_tenant auto-defaults to 'public' for :schema strategy
 end
 ```
 
@@ -143,7 +143,7 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
+  # default_tenant auto-defaults to 'public' for :schema strategy
 
   # Optional: auto-load schema into new tenants
   # config.schema_load_strategy = :schema_rb

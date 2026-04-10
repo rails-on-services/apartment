@@ -60,7 +60,7 @@ The generated initializer at `config/initializers/apartment.rb` configures Apart
 Apartment.configure do |config|
   config.tenant_strategy = :schema          # :schema (PostgreSQL) or :database_name (MySQL/SQLite)
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
+  # config.default_tenant = 'public'       # auto-defaults to 'public' for :schema strategy
 end
 ```
 
