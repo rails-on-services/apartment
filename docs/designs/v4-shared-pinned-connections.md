@@ -67,6 +67,8 @@ end
 
 This is more robust than checking `@table_name` alone, which can be set by lazy convention computation. The `compute_table_name` call is cheap (string assembly, no IO).
 
+**Edge case:** If a model sets `self.table_name` to the exact string convention would compute (e.g., `self.table_name = 'delayed_jobs'` on a class named `DelayedJob`), `cached == computed` and the convention path runs. The result is still a correctly qualified name; the only difference is mechanism (prefix + reset vs direct assignment). This is acceptable — the convention path is the superset.
+
 **Why hybrid:** Rails' `table_name_prefix` is a `class_attribute` that feeds into `compute_table_name` (`full_table_name_prefix + contained + undecorated_table_name + full_table_name_suffix`). Using it means pinned models with `table_name_suffix`, nested-class naming, or module-level prefixes get composed correctly by Rails' own assembly. But `reset_table_name` overwrites `@table_name`, which destroys explicit `self.table_name = 'custom'` assignments. The `explicit_table_name?` check detects this case and falls back to direct assignment.
 
 **Explicit-path prefix stripping:** Uses `sub(/\A[^.]+\./, '')` instead of `split('.').last`, stripping at most one leading `schema.` or `database.` segment. This preserves names that contain dots for other reasons (unlikely in practice, but defensive).
@@ -116,7 +118,7 @@ The ivar is renamed from `@apartment_connection_established` to `@apartment_pinn
 2. `lib/apartment.rb:124-127` — `clear_config` teardown (checks `defined?` then `remove_instance_variable`)
 3. `spec/unit/adapters/abstract_adapter_spec.rb` — idempotency test comment
 
-Implementation must also run `rg apartment_connection_established` to catch any references in docs/plans that should be updated for consistency.
+Implementation must also run `rg apartment_connection_established` to catch any references in docs/plans that should be updated for consistency. Additionally, `clear_config` must clean up the new ivars (`@apartment_original_table_name`, `@apartment_qualification_path`) alongside `@apartment_pinned_processed`.
 
 **Teardown in `clear_config`:** Beyond renaming the ivar, `clear_config` must restore pinned models to their pre-qualification state. The approach depends on which qualification path was used:
 
@@ -192,6 +194,7 @@ Models (or abstract base classes) that use `connects_to` to point at a *differen
 - Each concrete adapter: `shared_pinned_connection?` return value, `qualify_pinned_table_name` output (including already-qualified and custom table names)
 - `qualify_pinned_table_name` hybrid paths: convention-named model uses `table_name_prefix` + `reset_table_name`; explicit `self.table_name` model uses direct assignment
 - `qualify_pinned_table_name` with `table_name_suffix` set (convention path preserves it)
+- `explicit_table_name?` helper: returns `true` when cached differs from computed, `false` when equal (convention path), `false` when `@table_name` not yet set
 - `ConnectionHandling#connection_pool`: pinned model routing for both shared and separate paths
 - `Config#force_separate_pinned_pool` validation and default
 
