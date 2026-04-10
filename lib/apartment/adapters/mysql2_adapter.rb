@@ -10,6 +10,25 @@ module Apartment
     # to the environmentified tenant name. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class Mysql2Adapter < AbstractAdapter
+      def shared_pinned_connection?
+        !Apartment.config.force_separate_pinned_pool
+      end
+
+      def qualify_pinned_table_name(klass)
+        db_name = base_config['database']
+
+        if explicit_table_name?(klass)
+          klass.instance_variable_set(:@apartment_original_table_name, klass.table_name)
+          klass.instance_variable_set(:@apartment_qualification_path, :explicit)
+          table = klass.table_name.sub(/\A[^.]+\./, '')
+          klass.table_name = "#{db_name}.#{table}"
+        else
+          klass.instance_variable_set(:@apartment_qualification_path, :convention)
+          klass.table_name_prefix = "#{db_name}."
+          klass.reset_table_name
+        end
+      end
+
       def resolve_connection_config(tenant, base_config: nil)
         config = base_config || send(:base_config)
         config.merge('database' => environmentify(tenant))
