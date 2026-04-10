@@ -122,9 +122,9 @@ module Apartment
       teardown_old_state
       # Reset per-model processing flags so re-configuration re-establishes connections.
       @pinned_models&.each do |klass|
-        next unless klass.instance_variable_defined?(:@apartment_connection_established)
+        next unless klass.instance_variable_defined?(:@apartment_pinned_processed)
 
-        klass.remove_instance_variable(:@apartment_connection_established)
+        klass.remove_instance_variable(:@apartment_pinned_processed)
       end
       @config = nil
       @pool_manager = nil

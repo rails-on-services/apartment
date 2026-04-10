@@ -115,7 +115,8 @@ module Apartment
               "#{self.class}#qualify_pinned_table_name must be implemented when shared_pinned_connection? is true")
       end
 
-      # Process all pinned models — establish separate connections pinned to default tenant.
+      # Process all pinned models. When shared_pinned_connection? is true, qualifies
+      # table names for shared pool routing. Otherwise, establishes separate connections.
       def process_pinned_models
         return if Apartment.pinned_models.empty?
 
@@ -126,26 +127,21 @@ module Apartment
 
       # Process a single pinned model. Called by process_pinned_models (batch)
       # and by Apartment::Model.pin_tenant (when activated? is true).
+      #
+      # When shared_pinned_connection? is true, qualifies the table name so
+      # the model uses the tenant's pool (preserving transactional integrity).
+      # Otherwise, establishes a separate connection pool (required when
+      # cross-database queries are impossible).
       def process_pinned_model(klass)
-        # Idempotent: skip if already processed. Uses a class-level flag rather
-        # than connection_specification_name comparison — the spec name differs
-        # from ActiveRecord::Base for ApplicationRecord subclasses even before
-        # establish_connection, so it's not a reliable "already processed" signal.
-        return if klass.instance_variable_get(:@apartment_connection_established)
+        return if klass.instance_variable_get(:@apartment_pinned_processed)
 
-        # Use base_config (the adapter's raw connection config) rather than
-        # resolve_connection_config(default_tenant). For database-per-tenant
-        # strategies (MySQL, SQLite), resolve_connection_config would set the
-        # database key to the default tenant NAME (e.g. 'default'), not the
-        # actual default database (e.g. 'apartment_v4_test'). base_config
-        # points to the real default database.
-        klass.establish_connection(base_config)
-        klass.instance_variable_set(:@apartment_connection_established, true)
+        if shared_pinned_connection?
+          qualify_pinned_table_name(klass)
+        else
+          klass.establish_connection(pinned_model_config)
+        end
 
-        return unless Apartment.config.tenant_strategy == :schema
-
-        table = klass.table_name.split('.').last
-        klass.table_name = "#{default_tenant}.#{table}"
+        klass.instance_variable_set(:@apartment_pinned_processed, true)
       end
 
       # Deprecated: use process_pinned_models instead.
@@ -208,6 +204,19 @@ module Apartment
       # Connection config with string keys (used by subclasses to build tenant configs).
       def base_config
         connection_config.transform_keys(&:to_s)
+      end
+
+      # Connection config for pinned models on the separate-pool path.
+      # For schema strategy, pins schema_search_path to the default tenant
+      # (plus persistent schemas) so FK constraints resolve correctly.
+      # For database strategies, returns base_config unchanged.
+      def pinned_model_config
+        config = base_config
+        return config unless Apartment.config.tenant_strategy == :schema
+
+        persistent = Apartment.config.postgres_config&.persistent_schemas || []
+        search_path = [default_tenant, *persistent].map { |s| %("#{s}") }.join(',')
+        config.merge('schema_search_path' => search_path)
       end
 
       # Detect whether a model has an explicit self.table_name = assignment
