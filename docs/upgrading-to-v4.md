@@ -41,7 +41,9 @@ Apartment.configure do |config|
 end
 ```
 
-`default_tenant` auto-defaults to `'public'` for `:schema` strategy. If you previously set it explicitly, you can remove the line. For `:database_name` strategy, you still need to set it.
+`default_tenant` auto-defaults to `'public'` for `:schema` strategy. If you previously set it explicitly, you can remove the line. If your primary schema is something other than `public` (e.g., `shared`), set `config.default_tenant` to match. For `:database_name` strategy, you still need to set it.
+
+**Note:** Code that previously observed `Apartment::Tenant.current` as `nil` before the first `switch` will now see `'public'` (or your configured value). Update any introspection or assertions that relied on the `nil` state.
 
 ### Tenant API
 
