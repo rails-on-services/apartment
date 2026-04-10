@@ -313,7 +313,6 @@ Apartment.configure do |config|
   # Database-specific config blocks
   config.configure_postgres do |pg|
     pg.persistent_schemas = %w[ext public]
-    pg.enforce_search_path_reset = true
     pg.include_schemas_in_dump = %w[ext shared]
   end
 

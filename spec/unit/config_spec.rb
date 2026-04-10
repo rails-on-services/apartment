@@ -63,12 +63,10 @@ RSpec.describe(Apartment::Config) do
     it 'creates a PostgresqlConfig' do
       pg = config.configure_postgres do |pg|
         pg.persistent_schemas = ['shared']
-        pg.enforce_search_path_reset = true
       end
 
       expect(pg).to(be_a(Apartment::Configs::PostgresqlConfig))
       expect(pg.persistent_schemas).to(eq(['shared']))
-      expect(pg.enforce_search_path_reset).to(be(true))
       expect(config.postgres_config).to(eq(pg))
     end
   end
@@ -291,6 +289,42 @@ RSpec.describe(Apartment::Config) do
         config.force_separate_pinned_pool = 'yes'
         expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /force_separate_pinned_pool/))
       end
+    end
+  end
+
+  describe 'persistent_schemas validation' do
+    before do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+    end
+
+    it 'accepts valid PostgreSQL identifiers' do
+      config.configure_postgres { |pg| pg.persistent_schemas = %w[shared ext] }
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts empty persistent_schemas' do
+      config.configure_postgres { |pg| pg.persistent_schemas = [] }
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'rejects schemas exceeding 63 characters' do
+      config.configure_postgres { |pg| pg.persistent_schemas = ['a' * 64] }
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /persistent_schema.*too long/i))
+    end
+
+    it 'rejects schemas with invalid characters' do
+      config.configure_postgres { |pg| pg.persistent_schemas = ['invalid schema!'] }
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /persistent_schema/))
+    end
+
+    it 'rejects schemas starting with pg_ prefix' do
+      config.configure_postgres { |pg| pg.persistent_schemas = ['pg_temp'] }
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /persistent_schema.*pg_/))
+    end
+
+    it 'skips validation when postgres_config is nil' do
+      expect { config.validate! }.not_to(raise_error)
     end
   end
 
