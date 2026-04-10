@@ -51,18 +51,20 @@ def pin_tenant
   @apartment_pinned = true
   Apartment.register_pinned_model(self)
 
-  if Apartment.activated?
-    klass = self
-    trace = TracePoint.new(:end, :raise) do |t|
-      if t.self == klass
-        trace.disable
-        Apartment.process_pinned_model(klass) if t.event == :end
-        # :raise → class body failed; disable to prevent leak.
-        # Model stays registered but unprocessed (class is broken).
-      end
+  return unless Apartment.activated?
+
+  klass = self
+  trace = TracePoint.new(:end, :raise) do |t|
+    if t.event == :raise
+      # Disable unconditionally on any raise — even from nested
+      # classes/modules (t.self != klass). Prevents trace leak.
+      trace.disable
+    elsif t.self == klass
+      trace.disable
+      Apartment.process_pinned_model(klass)
     end
-    trace.enable(target_thread: Thread.current)
   end
+  trace.enable(target_thread: Thread.current)
 end
 ```
 
@@ -101,22 +103,7 @@ Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is
 
 **TracePoint leak on class body raise:** If the class body raises during evaluation, Ruby unwinds without reaching the closing `end`, so `:end` for that class never fires. The trace stays enabled for that thread — the `t.self == klass` guard prevents wrong work, but the callback still runs on every subsequent `:end` event in the thread (cheap per-invocation, bad if accumulated across many failed loads).
 
-Mitigation: listen for `:raise` in the same TracePoint. If a `:raise` fires while our trace is active and the exception escapes the class body (detectable by checking whether a subsequent `:end` for our class follows), disable the trace. The implementation:
-
-```ruby
-trace = TracePoint.new(:end, :raise) do |t|
-  if t.event == :end && t.self == klass
-    trace.disable
-    Apartment.process_pinned_model(klass)
-  elsif t.event == :raise && t.self == klass
-    # Class body raised — disable to prevent leak.
-    # Model stays registered but unprocessed; it will fail
-    # on first use (class is broken anyway).
-    trace.disable
-  end
-end
-trace.enable(target_thread: Thread.current)
-```
+Mitigation: listen for `:raise` in the same TracePoint. On any `:raise` event, disable the trace **unconditionally** (not gated on `t.self == klass`). This is necessary because a raise inside a nested class/module within the model body would have `t.self` pointing to the nested class, not the model. Disabling on any raise is conservative but safe: the model is registered but unprocessed; it will fail on first use (class is broken anyway). See the code sketch in the Design section above.
 
 Testing: add a unit test that simulates a class body raise after `pin_tenant` and asserts the trace is disabled (not leaked).
 
