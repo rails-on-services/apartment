@@ -40,16 +40,52 @@ RSpec.describe(Apartment::Model) do
       expect(Apartment.pinned_models.count { |m| m == IdempotentModel }).to(eq(1))
     end
 
-    it 'processes immediately when Apartment is already activated' do
+    it 'defers processing until class body closes when activated' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+
+      processed = false
+      allow(Apartment).to(receive(:process_pinned_model)) { processed = true }
+
+      # Class.new with a block simulates a class body — TracePoint(:end)
+      # fires when the block closes. pin_tenant should NOT process inline.
       klass = Class.new(ActiveRecord::Base) do
         include Apartment::Model
+
+        pin_tenant
+        # At this point, process_pinned_model should NOT have been called yet.
       end
-      stub_const('LateLoadedModel', klass)
+      stub_const('DeferredModel', klass)
 
-      expect(Apartment).to(receive(:activated?).and_return(true))
-      expect(Apartment).to(receive(:process_pinned_model).with(LateLoadedModel))
+      # After the class body closes, TracePoint fires and processes.
+      expect(processed).to(be(true))
+      expect(Apartment.pinned_models).to(include(klass))
+    end
 
-      klass.pin_tenant
+    it 'disables trace if class body raises (no leak)' do
+      allow(Apartment).to(receive(:activated?).and_return(true))
+      process_calls = []
+      allow(Apartment).to(receive(:process_pinned_model)) { |k| process_calls << k }
+
+      expect do
+        Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+
+          pin_tenant
+          raise 'simulated load failure'
+        end
+      end.to(raise_error(RuntimeError, 'simulated load failure'))
+
+      # The raise should have disabled the trace. Verify by defining
+      # a second pinned model — it should get its OWN trace and process
+      # exactly once (proving the first trace is dead, not double-firing).
+      second = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+
+        pin_tenant
+      end
+      stub_const('SecondModel', second)
+
+      expect(process_calls).to(eq([second]))
     end
 
     it 'defers processing when Apartment is not yet activated' do

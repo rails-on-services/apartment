@@ -26,12 +26,13 @@ module Apartment
         return unless Apartment.activated?
 
         # Defer processing until the class body closes, so self.table_name
-        # and other class-level declarations are visible. Uses TracePoint(:end)
-        # to detect the class's closing `end` keyword.
+        # and other class-level declarations are visible.
+        # :end fires for `class Foo ... end` syntax (file-loaded classes).
+        # :b_return fires for `Class.new { }` anonymous class blocks.
         # :raise disables unconditionally to prevent trace leaks — even if
         # the raise originates in a nested class/module (t.self != klass).
         klass = self
-        trace = TracePoint.new(:end, :raise) do |t|
+        trace = TracePoint.new(:end, :b_return, :raise) do |t|
           if t.event == :raise
             trace.disable
           elsif t.self == klass
