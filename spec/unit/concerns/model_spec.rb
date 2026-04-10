@@ -67,15 +67,15 @@ RSpec.describe(Apartment::Model) do
 
       # eval simulates a source-parsed class (fires :end, unlike Class.new)
       eval(<<~RUBY, binding, __FILE__, __LINE__ + 1)
-        class ::TracepointTestModel < ActiveRecord::Base
+        class ::TracePointTestModel < ActiveRecord::Base
           include Apartment::Model
           pin_tenant
         end
       RUBY
 
-      expect(process_calls).to(eq([TracepointTestModel]))
+      expect(process_calls).to(eq([TracePointTestModel]))
     ensure
-      Object.send(:remove_const, :TracepointTestModel) if defined?(TracepointTestModel) # rubocop:disable RSpec/RemoveConst
+      Object.send(:remove_const, :TracePointTestModel) if defined?(TracePointTestModel) # rubocop:disable RSpec/RemoveConst
     end
 
     it 'processes after self.table_name when declared below pin_tenant (source-parsed)' do

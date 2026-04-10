@@ -207,7 +207,7 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
       end
     end
 
-    it 'qualifies convention table_name with pin_tenant anywhere in body' do
+    it 'qualifies convention table_name via process_pinned_model' do
       # Convention naming: no explicit self.table_name. Name first, then
       # include + process so the adapter sees the class name and can qualify.
       klass = Class.new(ApplicationRecord)

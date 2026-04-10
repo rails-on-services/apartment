@@ -106,7 +106,7 @@ Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is
 
 **TracePoint and class body raises:** MRI verified that `:end` fires even when the class body raises (both rescued and unrescued). Event order is `[:raise, :end]`. This means the trace disables normally via the `:end` handler in all cases for source-parsed classes. No separate `:raise` handling is needed.
 
-For `Class.new { }` with a raise, neither `:end` nor `:b_return` fires; the trace stays enabled. This is acceptable because `Class.new` is a test/metaprogramming construct, and the trace's `t.self == klass` guard means it only does an O(1) comparison on subsequent `:end` events — no wrong work, negligible cost.
+For `Class.new { }`, `:end` (the class/module keyword event) does not fire — only `:b_return` fires, which we don't listen for. With a raising block, the trace stays enabled but inert. This is acceptable: `pin_tenant` on anonymous classes warns and skips deferral (the `name.nil?` guard), so this path is only reachable via `apartment_defer_processing!` on named classes.
 
 **Unprocessed pinned models (`Tenant.init`):** `process_pinned_models` (called by `Tenant.init`) processes any registered models not yet marked as processed. This catches models loaded via `Class.new { pin_tenant }` where the TracePoint didn't fire, or any other path where processing was skipped.
 
