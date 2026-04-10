@@ -162,6 +162,18 @@ RSpec.describe(Apartment::Config) do
         config.validate!
         expect(config.default_tenant).to(be_nil)
       end
+
+      it 'rejects an empty string' do
+        config.tenant_strategy = :schema
+        config.default_tenant = ''
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /empty string/))
+      end
+
+      it 'rejects a whitespace-only string' do
+        config.tenant_strategy = :schema
+        config.default_tenant = '  '
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /empty string/))
+      end
     end
 
     context 'migration_role validation' do
