@@ -16,7 +16,7 @@ lib/apartment/
 ├── concerns/              # ActiveRecord concerns for tenant-aware models
 │   └── model.rb               # Apartment::Model concern: pin_tenant, pinned identity, table-name helpers
 ├── configs/               # Database-specific config objects
-│   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, enforce_search_path_reset
+│   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, include_schemas_in_dump
 │   └── mysql_config.rb        # MysqlConfig: placeholder
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md); v4 uses constructor keyword args, no class-level state; Generic, Subdomain, FirstSubdomain, Domain, Host, HostHash, Header
 ├── patches/               # ActiveRecord patches for tenant-aware connections

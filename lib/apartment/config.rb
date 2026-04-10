@@ -127,6 +127,8 @@ module Apartment
         raise(ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time')
       end
 
+      @postgres_config&.validate!
+
       unless @tenant_pool_size.is_a?(Integer) && @tenant_pool_size.positive?
         raise(ConfigurationError, "tenant_pool_size must be a positive integer, got: #{@tenant_pool_size.inspect}")
       end
