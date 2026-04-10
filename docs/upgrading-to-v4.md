@@ -148,6 +148,8 @@ end
 
 For PG database-per-tenant and SQLite, pinned model behavior is unchanged from v3. For MySQL multi-server setups where tenant databases are on different hosts, set `force_separate_pinned_pool: true`.
 
+`pin_tenant` defers processing until the class body closes (when called after `Apartment.activate!`), so `self.table_name` can appear anywhere in the class body. No ordering requirement between `pin_tenant` and `self.table_name`.
+
 Key config options for pool tuning:
 
 | Option | Default | Description |
