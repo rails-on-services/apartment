@@ -23,9 +23,23 @@ module Apartment
         @apartment_pinned = true
         Apartment.register_pinned_model(self)
 
-        # If Apartment is already activated, process immediately (Zeitwerk autoload path).
-        # Otherwise, activate! will process all registered models.
-        Apartment.process_pinned_model(self) if Apartment.activated?
+        return unless Apartment.activated?
+
+        # Defer processing until the class body closes, so self.table_name
+        # and other class-level declarations are visible. Uses TracePoint(:end)
+        # to detect the class's closing `end` keyword.
+        # :raise disables unconditionally to prevent trace leaks — even if
+        # the raise originates in a nested class/module (t.self != klass).
+        klass = self
+        trace = TracePoint.new(:end, :raise) do |t|
+          if t.event == :raise
+            trace.disable
+          elsif t.self == klass
+            trace.disable
+            Apartment.process_pinned_model(klass)
+          end
+        end
+        trace.enable(target_thread: Thread.current)
       end
 
       # Mark this class as pinned without triggering processing.
