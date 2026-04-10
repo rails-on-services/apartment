@@ -79,7 +79,7 @@ end
 
 ### How TracePoint(:end) Works
 
-Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is reached. The TracePoint callback receives a `TracePoint` object where `t.self` is the class/module being closed.
+Ruby's `:end` event fires when a `class` or `module` keyword's matching `end` is reached in source-parsed files. For `Class.new { }` anonymous classes (used in tests and runtime metaprogramming), `:end` does NOT fire — `:b_return` (block return) fires instead. The implementation listens for both `:end` and `:b_return` to handle both paths. The TracePoint callback receives a `TracePoint` object where `t.self` is the class/module being closed.
 
 **Scope:** The trace is active only from `pin_tenant` (mid-class body) until the class's closing `end`. In practice, this is microseconds of class body evaluation. Not on the request hot path.
 
