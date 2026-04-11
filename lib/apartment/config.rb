@@ -23,7 +23,7 @@ module Apartment
                   :tenant_not_found_handler, :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
-                  :force_separate_pinned_pool
+                  :force_separate_pinned_pool, :test_fixture_cleanup
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
@@ -52,6 +52,7 @@ module Apartment
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
       @force_separate_pinned_pool = false
+      @test_fixture_cleanup = true
     end
 
     def excluded_models=(list)
