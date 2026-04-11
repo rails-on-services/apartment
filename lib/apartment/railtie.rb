@@ -48,6 +48,17 @@ module Apartment
       Apartment::Railtie.insert_elevator_middleware(app.middleware, elevator_class, **opts)
     end
 
+    # In test environments, clean up apartment's tenant pools before Rails'
+    # fixture setup iterates shards. See docs/designs/v4-test-fixtures-compatibility.md.
+    if Rails.env.test?
+      ActiveSupport.on_load(:active_record_fixtures) do
+        if Apartment.config&.test_fixture_cleanup
+          require 'apartment/test_fixtures'
+          prepend Apartment::TestFixtures
+        end
+      end
+    end
+
     rake_tasks do
       load File.expand_path('tasks/v4.rake', __dir__)
 
