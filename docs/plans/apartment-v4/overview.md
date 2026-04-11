@@ -188,7 +188,8 @@ Phase 8: Docs & Upgrade
 
 ## Implementation History
 
-All phases (1-8) implemented and merged to `main` in PRs #345-374. Per-phase plan files removed after completion; see design docs in `docs/designs/` and the merged PRs for implementation details.
+All phases (1-8) implemented and merged to `main` in PRs #345-374. All per-phase and per-feature plan files removed after completion; see design docs in `docs/designs/` and the merged PRs for implementation details.
 
 - **v4.0.0.alpha1** — released 2026-04-09 (Phases 1-8)
 - **v4.0.0.alpha2** — Shared pinned connections (#374), persistent_schemas validation (#376), convenience APIs (#372-373)
+- **Post-alpha2** — Deferred pin_tenant processing (#378), TestFixtures compatibility (#379, #380)
