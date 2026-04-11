@@ -18,10 +18,10 @@ module Apartment
     private
 
     def setup_shared_connection_pool
-      unless @apartment_fixtures_cleaned
-        @apartment_fixtures_cleaned = true
-        Apartment.reset_tenant_pools! if Apartment.pool_manager
-      end
+      return if @apartment_fixtures_cleaned
+
+      @apartment_fixtures_cleaned = true
+      Apartment.reset_tenant_pools! if Apartment.pool_manager
       super
     end
 

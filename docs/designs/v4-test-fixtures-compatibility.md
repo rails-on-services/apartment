@@ -33,9 +33,23 @@ end
 
 ### When it surfaces
 
+Two distinct triggers produce the same `ArgumentError`:
+
+**Trigger A — stale pools from prior tests (addressed in initial PR #379)**
+
 1. A `before(:all)` block (or prior test) triggers the elevator, creating a tenant pool under a non-writing role (e.g., `connected_to(role: :reading)` during a request)
-2. A subsequent test example's fixture setup (Minitest's `before_setup`, or the equivalent RSpec fixture lifecycle via `RSpec::Rails::FixtureSupport`) calls `setup_transactional_fixtures` -> `setup_shared_connection_pool`
+2. A subsequent test example's fixture setup (Minitest's `before_setup`, or the equivalent RSpec fixture lifecycle via `RSpec::Rails::FixtureSupport`) calls `setup_transactional_fixtures` → `setup_shared_connection_pool`
 3. The fixture machinery discovers the apartment shard, tries to map it across roles, raises `ArgumentError`
+
+**Trigger B — subscriber re-entry with live pools (discovered post-merge)**
+
+1. Initial `setup_shared_connection_pool` call runs cleanup, calls `super` — clean, no apartment pools
+2. `setup_transactional_fixtures` subscribes to `!connection.active_record`
+3. During the test, the elevator switches tenants → `ConnectionHandling#connection_pool` → `establish_connection` fires `!connection.active_record` **synchronously** while the pool_config is already stored in Rails' PoolManager
+4. Subscriber fires → calls `setup_shared_connection_pool` again
+5. Guard is set → cleanup skipped → `super` runs → finds the apartment shard that was just registered → `writing_pool_config` is nil → `ArgumentError`
+
+The key insight: `establish_connection` stores the pool_config in Rails' PoolManager via `set_pool_config` **before** firing the notification (the notification wraps `pool_config.pool` inside the `instrument` block). By the time the subscriber calls `setup_shared_connection_pool`, the apartment shard is visible to `shard_names` but has no `:writing` counterpart.
 
 The writing role is unaffected because `writing_pool_config` is non-nil for shards created under `:writing`, making the `next if pool_config == writing_pool_config` guard short-circuit correctly.
 
@@ -63,14 +77,10 @@ module Apartment
     private
 
     def setup_shared_connection_pool
-      unless @apartment_fixtures_cleaned
-        @apartment_fixtures_cleaned = true
-        if Apartment.pool_manager
-          Apartment.send(:deregister_all_tenant_pools)
-          Apartment.pool_manager.clear
-          Apartment::Current.reset
-        end
-      end
+      return if @apartment_fixtures_cleaned
+
+      @apartment_fixtures_cleaned = true
+      Apartment.reset_tenant_pools! if Apartment.pool_manager
       super
     end
 
@@ -82,12 +92,20 @@ module Apartment
 end
 ```
 
-The cleanup runs once per setup/teardown cycle, guarded by `@apartment_fixtures_cleaned`. This prevents re-entry: `setup_transactional_fixtures` registers a `!connection.active_record` notification subscriber that calls `setup_shared_connection_pool` again whenever a new pool is established mid-example. Without the guard, tenant pools created during a test (via `establish_connection` inside the `ConnectionHandling` patch) would trigger the subscriber, which would deregister the pool that was just registered -- leaving it in apartment's PoolManager but orphaned from the ConnectionHandler.
+The guard serves two purposes:
+
+1. **First call** (guard unset): cleanup runs, `super` runs against a clean ConnectionHandler. This handles Trigger A (stale pools from prior tests).
+
+2. **Subscriber re-entry** (guard set): `return` skips both cleanup AND `super`. This handles Trigger B. Apartment pools registered mid-test must NOT pass through `setup_shared_connection_pool`; they violate Rails' invariant that every shard has a `:writing` pool_config.
+
+**Why skipping `super` on re-entry is safe**: The subscriber (in `setup_transactional_fixtures`) runs its own logic after `setup_shared_connection_pool` returns — it still pins the new connection and leases it, regardless of whether the shared pool config swapping ran. The shared pool config swap is only needed once at initial setup; its purpose is to make `:reading` connections share the `:writing` pool so reads can see uncommitted fixture data within the transaction. Apartment pools are entirely separate tenant connections, not reading replicas of the default `:writing` pool, so the swap is semantically wrong for them anyway.
+
+**Edge case — non-apartment connections mid-test**: If a legitimate non-apartment connection is established mid-test (e.g., a model's `connects_to` for a separate database fires lazily), skipping `super` means its `:reading` role won't be swapped to share `:writing`. In practice, all database connections are established during app boot, before the first test runs. If this becomes a real issue, the fix would be to replace `super` with apartment-aware iteration that skips shards with the `shard_key_prefix` prefix (see Alternatives).
 
 Three operations on first call:
-- `deregister_all_tenant_pools` -- removes apartment shards from AR's ConnectionHandler so `setup_shared_connection_pool` doesn't iterate them
-- `pool_manager.clear` -- clears apartment's internal pool cache (pools rebuild lazily on next `connection_pool` call)
-- `Current.reset` -- clears tenant context so no stale tenant leaks into fixture setup
+- `deregister_all_tenant_pools` (via `reset_tenant_pools!`) — removes apartment shards from AR's ConnectionHandler so `setup_shared_connection_pool` doesn't iterate them
+- `pool_manager.clear` — clears apartment's internal pool cache (pools rebuild lazily on next `connection_pool` call)
+- `Current.reset` — clears tenant context so no stale tenant leaks into fixture setup
 
 The teardown override resets the guard for the next example's setup cycle.
 
@@ -116,15 +134,17 @@ This applies to both Minitest and RSpec: `RSpec::Rails::FixtureSupport` includes
 
 Addition to `lib/apartment/config.rb`:
 
-Add `:test_fixture_cleanup` to `attr_accessor` and set `@test_fixture_cleanup = true` in `initialize`. No validation needed; boolean with a safe default.
+Add `:test_fixture_cleanup` to `attr_accessor` and set `@test_fixture_cleanup = true` in `initialize`. Boolean validation in `validate!` ensures misconfiguration fails fast.
 
 ### Scope boundaries
 
 This patch does NOT:
 
-- Affect non-test environments -- the `on_load` hook only fires when `Rails.env.test?` is true.
-- Change pool key format or registration strategy -- custom shard keys remain; the fix is cleanup before the fixture machinery iterates them.
-- Interfere with the `!connection.active_record` subscriber in `setup_transactional_fixtures` -- the `@apartment_fixtures_cleaned` guard ensures cleanup runs only once per setup cycle; subscriber-triggered re-entries of `setup_shared_connection_pool` pass through to `super` without cleanup.
+- Affect non-test environments — the `on_load` hook only fires when `Rails.env.test?` is true.
+- Change pool key format or registration strategy — custom shard keys remain; the fix is cleanup before the fixture machinery iterates them.
+- Interfere with the `!connection.active_record` subscriber in `setup_transactional_fixtures` — subscriber-triggered re-entries return early, but the subscriber's own pin/lease logic still executes normally. Apartment pools get pinned and leased; they just skip the shared pool config swap.
+
+**Residual risk**: `deregister_all_tenant_pools` enumerates `Apartment.pool_manager.stats[:tenants]`. A pool that exists in the ConnectionHandler but not in apartment's PoolManager would be missed, and the first `super` could still crash. In practice this requires a code path that registers apartment-prefixed shards in the ConnectionHandler without going through `ConnectionHandling#connection_pool` → `fetch_or_create`, which is the only registration path. If this surfaces, the fix is to extend cleanup to enumerate handler shards matching the `shard_key_prefix` directly.
 
 ### Interaction with other gems
 
@@ -140,7 +160,7 @@ Exercises the scenario directly:
 2. Verify that calling `setup_shared_connection_pool` without the patch raises `ArgumentError`
 3. Verify that with the patch prepended, `setup_shared_connection_pool` succeeds
 4. Verify pools are lazily recreated after cleanup
-5. Verify the guard prevents cleanup on re-entrant calls (simulating the `!connection.active_record` subscriber path)
+5. Verify the guard prevents re-entrant calls from iterating apartment shards (simulating the `!connection.active_record` subscriber path — Trigger B). Specifically: first call cleans up and runs `super`, then a pool is added mid-test, second call returns early without calling `super` or crashing
 6. Verify `teardown_shared_connection_pool` resets the guard for the next cycle
 7. Verify `config.test_fixture_cleanup = false` prevents the prepend
 
@@ -167,3 +187,9 @@ Users add the include to their test base class manually.
 Overwrite the `(:reading, :default)` pool entry with tenant-specific config.
 
 **Rejected**: Breaks the clean namespace separation apartment uses. Clobbers the default reading pool, complicating cleanup and PoolManager tracking. Would require reworking the existing pool key architecture.
+
+### D. Replace `super` with apartment-aware iteration
+
+Copy Rails' `setup_shared_connection_pool` logic but skip shards whose name starts with the `shard_key_prefix`. This would allow `super`-equivalent behavior on every call (including subscriber re-entry) without crashing on apartment shards, and would handle the edge case of non-apartment connections established mid-test.
+
+**Deferred**: Copies Rails internals, creating a maintenance burden across Rails versions. The current guard-based approach handles all known production scenarios. If the mid-test non-apartment connection edge case surfaces in practice, this becomes the right escalation path.
