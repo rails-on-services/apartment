@@ -20,11 +20,7 @@ module Apartment
     def setup_shared_connection_pool
       unless @apartment_fixtures_cleaned
         @apartment_fixtures_cleaned = true
-        if Apartment.pool_manager
-          Apartment.send(:deregister_all_tenant_pools)
-          Apartment.pool_manager.clear
-          Apartment::Current.reset
-        end
+        Apartment.reset_tenant_pools! if Apartment.pool_manager
       end
       super
     end

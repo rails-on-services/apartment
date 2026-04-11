@@ -192,7 +192,3 @@ All phases (1-8) implemented and merged to `main` in PRs #345-374. Per-phase pla
 
 - **v4.0.0.alpha1** — released 2026-04-09 (Phases 1-8)
 - **v4.0.0.alpha2** — Shared pinned connections (#374), persistent_schemas validation (#376), convenience APIs (#372-373)
-
-## Post-Alpha Plans
-
-- [`test-fixtures-compatibility.md`](test-fixtures-compatibility.md) — Fix `ArgumentError` from Rails' `setup_shared_connection_pool` when tenant pools exist under non-writing roles. Design: [`docs/designs/v4-test-fixtures-compatibility.md`](../../designs/v4-test-fixtures-compatibility.md)

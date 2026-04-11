@@ -171,6 +171,11 @@ module Apartment
               "force_separate_pinned_pool must be true or false, got: #{@force_separate_pinned_pool.inspect}")
       end
 
+      unless [true, false].include?(@test_fixture_cleanup)
+        raise(ConfigurationError,
+              "test_fixture_cleanup must be true or false, got: #{@test_fixture_cleanup.inspect}")
+      end
+
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)
 
       raise(ConfigurationError,
