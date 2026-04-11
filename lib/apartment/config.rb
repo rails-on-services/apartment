@@ -22,7 +22,8 @@ module Apartment
                   :elevator, :elevator_options,
                   :tenant_not_found_handler, :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
-                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations
+                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
+                  :force_separate_pinned_pool, :test_fixture_cleanup
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
@@ -50,6 +51,8 @@ module Apartment
       @app_role = nil
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
+      @force_separate_pinned_pool = false
+      @test_fixture_cleanup = true
     end
 
     def excluded_models=(list)
@@ -110,6 +113,13 @@ module Apartment
     def validate! # rubocop:disable Metrics/AbcSize
       raise(ConfigurationError, 'tenant_strategy is required') unless @tenant_strategy
 
+      # PostgreSQL's default schema is 'public'; avoid forcing every user to set it.
+      @default_tenant ||= 'public' if @tenant_strategy == :schema
+
+      if @default_tenant.is_a?(String) && @default_tenant.strip.empty?
+        raise(ConfigurationError, 'default_tenant cannot be an empty string')
+      end
+
       unless @tenants_provider.respond_to?(:call)
         raise(ConfigurationError, 'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
       end
@@ -117,6 +127,8 @@ module Apartment
       if @postgres_config && @mysql_config
         raise(ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time')
       end
+
+      @postgres_config&.validate!
 
       unless @tenant_pool_size.is_a?(Integer) && @tenant_pool_size.positive?
         raise(ConfigurationError, "tenant_pool_size must be a positive integer, got: #{@tenant_pool_size.inspect}")
@@ -152,6 +164,16 @@ module Apartment
       unless [true, false].include?(@check_pending_migrations)
         raise(ConfigurationError,
               "check_pending_migrations must be true or false, got: #{@check_pending_migrations.inspect}")
+      end
+
+      unless [true, false].include?(@force_separate_pinned_pool)
+        raise(ConfigurationError,
+              "force_separate_pinned_pool must be true or false, got: #{@force_separate_pinned_pool.inspect}")
+      end
+
+      unless [true, false].include?(@test_fixture_cleanup)
+        raise(ConfigurationError,
+              "test_fixture_cleanup must be true or false, got: #{@test_fixture_cleanup.inspect}")
       end
 
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)

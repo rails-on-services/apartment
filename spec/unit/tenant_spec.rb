@@ -155,7 +155,7 @@ RSpec.describe(Apartment::Tenant) do
 
       it 'skips models already in pinned_models registry (via pin_tenant)' do
         require 'apartment/concerns/model'
-        model_class = Class.new do
+        model_class = Class.new(ActiveRecord::Base) do
           include Apartment::Model
         end
         stub_const('AlreadyPinnedModel', model_class)
@@ -176,6 +176,94 @@ RSpec.describe(Apartment::Tenant) do
         described_class.init
         expect(Apartment.pinned_models.size).to(eq(count_before))
       end
+    end
+  end
+
+  describe '.each' do
+    it 'requires a block' do
+      expect { described_class.each }.to(raise_error(ArgumentError, /requires a block/))
+    end
+
+    it 'iterates over all tenants from tenants_provider' do
+      visited = []
+      described_class.each { |t| visited << t } # rubocop:disable Style/MapIntoArray
+      expect(visited).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'switches into each tenant for the duration of the block' do
+      tenants_seen = []
+      described_class.each { |_t| tenants_seen << Apartment::Current.tenant } # rubocop:disable Style/MapIntoArray
+      expect(tenants_seen).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'restores tenant context after iteration' do
+      Apartment::Current.tenant = 'original'
+      described_class.each { |_t| }
+      expect(Apartment::Current.tenant).to(eq('original'))
+    end
+
+    it 'accepts a custom tenant list' do
+      visited = []
+      described_class.each(%w[custom1 custom2]) { |t| visited << t }
+      expect(visited).to(eq(%w[custom1 custom2]))
+    end
+
+    it 'propagates exceptions from the block' do
+      expect do
+        described_class.each { raise('boom') } # rubocop:disable Lint/UnreachableLoop
+      end.to(raise_error(RuntimeError, 'boom'))
+    end
+
+    it 'restores tenant context after an exception' do
+      Apartment::Current.tenant = 'original'
+      begin
+        described_class.each { raise('boom') } # rubocop:disable Lint/UnreachableLoop
+      rescue RuntimeError
+        nil
+      end
+      expect(Apartment::Current.tenant).to(eq('original'))
+    end
+
+    it 'raises ConfigurationError when tenants_provider returns nil' do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = ->(*) { nil } # rubocop:disable Style/NilLambda
+        config.default_tenant = 'public'
+      end
+      Apartment.adapter = mock_adapter
+
+      expect do
+        described_class.each { |_t| }
+      end.to(raise_error(Apartment::ConfigurationError, /tenants_provider must return an Enumerable/))
+    end
+
+    it 'raises ConfigurationError when Apartment is not configured' do
+      Apartment.clear_config
+      expect do
+        described_class.each { |_t| }
+      end.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+
+    it 'stops iteration on first exception (fail-fast)' do
+      visited = []
+      expect do
+        described_class.each(%w[tenant1 tenant2 tenant3]) do |t|
+          visited << t
+          raise('fail on tenant2') if t == 'tenant2'
+        end
+      end.to(raise_error(RuntimeError, 'fail on tenant2'))
+      expect(visited).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'is a no-op for an empty tenant list' do
+      called = false
+      described_class.each([]) { |_t| called = true }
+      expect(called).to(be(false))
+    end
+
+    it 'returns the result of iterating the tenant list' do
+      result = described_class.each(%w[a b]) { |_t| }
+      expect(result).to(eq(%w[a b]))
     end
   end
 

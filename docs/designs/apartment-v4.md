@@ -79,10 +79,10 @@ Each tenant gets its own connection pool with tenant-specific config baked in at
 ```ruby
 def resolve_connection_config(tenant)
   base_config.merge(
-    schema_search_path: [tenant, *persistent_schemas].join(",")
+    schema_search_path: [tenant, *persistent_schemas].map { |s| %("#{s}") }.join(",")
   )
 end
-# Example: schema_search_path: "acme,ext,public"
+# Example: schema_search_path: '"acme","ext","public"'
 ```
 
 **MySQL (database_name strategy):**
@@ -272,8 +272,8 @@ Apartment.configure do |config|
   # Required: callable returning current tenant list
   config.tenants_provider = -> { Company.pluck(:subdomain) }
 
-  # Default tenant (PostgreSQL: "public", MySQL: derived from database.yml)
-  config.default_tenant = "public"
+  # Default tenant (auto-defaults to "public" for :schema strategy)
+  # config.default_tenant = "public"
 
   # Models in shared/default tenant
   config.excluded_models = %w[User Company]
@@ -313,7 +313,6 @@ Apartment.configure do |config|
   # Database-specific config blocks
   config.configure_postgres do |pg|
     pg.persistent_schemas = %w[ext public]
-    pg.enforce_search_path_reset = true
     pg.include_schemas_in_dump = %w[ext shared]
   end
 
@@ -389,7 +388,7 @@ Primary strategy. Pool config sets `schema_search_path` at connection creation t
 ```ruby
 def resolve_connection_config(tenant)
   base_config.merge(
-    schema_search_path: [tenant, *persistent_schemas].join(",")
+    schema_search_path: [tenant, *persistent_schemas].map { |s| %("#{s}") }.join(",")
   )
 end
 ```

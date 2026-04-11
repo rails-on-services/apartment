@@ -24,6 +24,8 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.postgres_config).to(be_nil) }
     it { expect(config.mysql_config).to(be_nil) }
     it { expect(config.shard_key_prefix).to(eq('apartment')) }
+    it { expect(config.force_separate_pinned_pool).to(be(false)) }
+    it { expect(config.test_fixture_cleanup).to(be(true)) }
   end
 
   describe '#tenant_strategy=' do
@@ -62,12 +64,10 @@ RSpec.describe(Apartment::Config) do
     it 'creates a PostgresqlConfig' do
       pg = config.configure_postgres do |pg|
         pg.persistent_schemas = ['shared']
-        pg.enforce_search_path_reset = true
       end
 
       expect(pg).to(be_a(Apartment::Configs::PostgresqlConfig))
       expect(pg.persistent_schemas).to(eq(['shared']))
-      expect(pg.enforce_search_path_reset).to(be(true))
       expect(config.postgres_config).to(eq(pg))
     end
   end
@@ -137,6 +137,43 @@ RSpec.describe(Apartment::Config) do
       config.tenant_strategy = :schema
       config.tenants_provider = -> { [] }
       expect { config.validate! }.not_to(raise_error)
+    end
+
+    context 'default_tenant auto-defaulting' do
+      before do
+        config.tenants_provider = -> { [] }
+      end
+
+      it 'defaults to public for schema strategy when not set' do
+        config.tenant_strategy = :schema
+        config.validate!
+        expect(config.default_tenant).to(eq('public'))
+      end
+
+      it 'preserves explicit default_tenant for schema strategy' do
+        config.tenant_strategy = :schema
+        config.default_tenant = 'custom'
+        config.validate!
+        expect(config.default_tenant).to(eq('custom'))
+      end
+
+      it 'does not default for database_name strategy' do
+        config.tenant_strategy = :database_name
+        config.validate!
+        expect(config.default_tenant).to(be_nil)
+      end
+
+      it 'rejects an empty string' do
+        config.tenant_strategy = :schema
+        config.default_tenant = ''
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /empty string/))
+      end
+
+      it 'rejects a whitespace-only string' do
+        config.tenant_strategy = :schema
+        config.default_tenant = '  '
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /empty string/))
+      end
     end
 
     context 'migration_role validation' do
@@ -230,6 +267,65 @@ RSpec.describe(Apartment::Config) do
         config.check_pending_migrations = false
         expect { config.validate! }.not_to(raise_error)
       end
+    end
+
+    describe '#force_separate_pinned_pool' do
+      it 'accepts true' do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.force_separate_pinned_pool = true
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'accepts false' do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.force_separate_pinned_pool = false
+        expect { config.validate! }.not_to(raise_error)
+      end
+
+      it 'rejects non-boolean values' do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.force_separate_pinned_pool = 'yes'
+        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /force_separate_pinned_pool/))
+      end
+    end
+  end
+
+  describe 'persistent_schemas validation' do
+    before do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+    end
+
+    it 'accepts valid PostgreSQL identifiers' do
+      config.configure_postgres { |pg| pg.persistent_schemas = %w[shared ext] }
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts empty persistent_schemas' do
+      config.configure_postgres { |pg| pg.persistent_schemas = [] }
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'rejects schemas exceeding 63 characters' do
+      config.configure_postgres { |pg| pg.persistent_schemas = ['a' * 64] }
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /persistent_schema.*too long/i))
+    end
+
+    it 'rejects schemas with invalid characters' do
+      config.configure_postgres { |pg| pg.persistent_schemas = ['invalid schema!'] }
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /persistent_schema/))
+    end
+
+    it 'rejects schemas starting with pg_ prefix' do
+      config.configure_postgres { |pg| pg.persistent_schemas = ['pg_temp'] }
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /persistent_schema.*pg_/))
+    end
+
+    it 'skips validation when postgres_config is nil' do
+      expect { config.validate! }.not_to(raise_error)
     end
   end
 

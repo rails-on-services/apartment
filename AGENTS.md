@@ -12,7 +12,7 @@ Nested `CLAUDE.md` files exist in `lib/apartment/`, `lib/apartment/adapters/`, `
 
 ## Key Principle
 
-Check `CLAUDE.md` before copying patterns from existing code - it documents preferred patterns, design rationale, and known pitfalls.
+Check `CLAUDE.md` before copying patterns from existing code - it documents preferred patterns, design rationale, and known pitfalls. Maintainer code-style preferences (e.g. SOLID vs metaprogramming) live in the root **`CLAUDE.md`** under **Code style**, not in this file.
 
 ## Adding Documentation
 

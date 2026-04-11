@@ -31,11 +31,13 @@ All elevators are Rack middleware that intercept requests, extract tenant identi
 
 ### v4 Constructor Pattern
 
-v4 elevators use constructor keyword args — no class-level mutable state. Options are passed at middleware insertion time:
+v4 elevators use constructor keyword args — no class-level mutable state. The Railtie auto-inserts the elevator after `ActionDispatch::Callbacks` when `config.elevator` is set, passing `elevator_options` as keyword args.
+
+For manual positioning (skipping `config.elevator`), options are passed at middleware insertion time:
 
 ```ruby
-config.middleware.use Apartment::Elevators::Subdomain, excluded_subdomains: %w[www api]
-config.middleware.use Apartment::Elevators::Header, header: 'X-Tenant-Id'
+config.middleware.insert_before 'Warden::Manager', Apartment::Elevators::Subdomain, excluded_subdomains: %w[www api]
+config.middleware.insert_before 'Warden::Manager', Apartment::Elevators::Header, header: 'X-Tenant-Id'
 ```
 
 This replaces the v3 pattern of setting class attributes (`Subdomain.excluded_subdomains = [...]`) after adding to the stack. Each instance carries its own config.
@@ -217,10 +219,11 @@ Normalizes the header name to Rack's `HTTP_*` convention at init time. See `Head
 
 ### Configuration
 
-Pass `header:` keyword arg (defaults to `'X-Tenant-Id'`):
+Pass `header:` keyword arg (defaults to `'X-Tenant-Id'`) via `elevator_options`:
 
 ```ruby
-config.middleware.use Apartment::Elevators::Header, header: 'X-Tenant-Id'
+config.elevator = :header
+config.elevator_options = { header: 'X-Tenant-Id' }
 ```
 
 ### Security Note
@@ -237,7 +240,7 @@ The `Header` elevator trusts whatever value is in the header. Ensure the header 
 
 **Example failure**: Without proper positioning, `www.acme.com` might load session data from `widgets.com` tenant if session middleware runs first.
 
-**How to verify**: Run `Rails.application.middleware` and confirm elevator appears before `ActionDispatch::Session::CookieStore` and authentication middleware like `Warden::Manager`.
+**How to verify**: Run `Rails.application.middleware` and confirm elevator appears after `ActionDispatch::Callbacks` and before `ActionDispatch::Session::CookieStore` / `Warden::Manager`.
 
 ## Creating Custom Elevators
 
@@ -313,7 +316,7 @@ Create test tenants in before hooks, make requests to different subdomains/hosts
 
 ## Best Practices
 
-1. **Position elevators early** in middleware stack
+1. **Elevator position**: auto-inserted after `ActionDispatch::Callbacks` (before sessions/auth)
 2. **Handle errors gracefully** (don't expose internals)
 3. **Cache lookups** if using database queries
 4. **Test thoroughly** with multiple tenants

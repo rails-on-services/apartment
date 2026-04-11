@@ -52,6 +52,31 @@ RSpec.describe('Apartment::Railtie') do
     end
   end
 
+  describe '.insert_elevator_middleware' do
+    let(:middleware_stack) { double('MiddlewareStack') }
+    let(:elevator_class) { Apartment::Elevators::Subdomain }
+
+    before do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.elevator = :subdomain
+      end
+    end
+
+    it 'inserts after ActionDispatch::Callbacks' do
+      expect(middleware_stack).to(receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class))
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
+    end
+
+    it 'forwards kwargs to insert_after' do
+      expect(middleware_stack).to(
+        receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class, foo: :bar)
+      )
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class, foo: :bar)
+    end
+  end
+
   describe '.header_trust_warning?' do
     it 'returns true for Header with trusted: false' do
       expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, {})).to(be(true))

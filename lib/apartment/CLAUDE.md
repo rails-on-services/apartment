@@ -14,9 +14,9 @@ lib/apartment/
 │   ├── trilogy_adapter.rb     # Database-per-tenant on MySQL (trilogy driver, inherits Mysql2Adapter)
 │   └── sqlite3_adapter.rb     # File-per-tenant (FileUtils lifecycle)
 ├── concerns/              # ActiveRecord concerns for tenant-aware models
-│   └── model.rb               # Apartment::Model concern: pin_tenant, apartment_pinned?
+│   └── model.rb               # Apartment::Model concern: pin_tenant, pinned identity, table-name helpers
 ├── configs/               # Database-specific config objects
-│   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, enforce_search_path_reset
+│   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, include_schemas_in_dump
 │   └── mysql_config.rb        # MysqlConfig: placeholder
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md); v4 uses constructor keyword args, no class-level state; Generic, Subdomain, FirstSubdomain, Domain, Host, HostHash, Header
 ├── patches/               # ActiveRecord patches for tenant-aware connections
@@ -60,7 +60,7 @@ Background `Concurrent::TimerTask` instance that evicts idle and excess tenant p
 
 ### adapters/abstract_adapter.rb — Base Adapter
 
-Lifecycle ops (`create`, `drop`, `migrate`, `seed`), `ActiveSupport::Callbacks` on `:create`/`:switch`, `resolve_connection_config` (abstract — subclasses override), `process_excluded_models`, `environmentify`, `base_config` (stringified `connection_config`), `rails_env` (guarded `Rails.env` access). Constructor takes `connection_config` (raw AR hash, not `Apartment::Config`).
+Lifecycle ops (`create`, `drop`, `migrate`, `seed`), `ActiveSupport::Callbacks` on `:create`/`:switch`, `resolve_connection_config` (abstract — subclasses override), `process_excluded_models`, `environmentify`, `base_config` (stringified `connection_config`), `rails_env` (guarded `Rails.env` access). `process_pinned_model` / `qualify_pinned_table_name` call **`Apartment::Model` class methods** (`apartment_explicit_table_name?`, `apartment_mark_processed!`, etc.); no `instance_variable_*` on arbitrary model classes. Constructor takes `connection_config` (raw AR hash, not `Apartment::Config`).
 
 ### Concrete Adapters (Phase 2.2)
 
@@ -74,7 +74,19 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 ### concerns/model.rb — Model Pinning Concern
 
-`Apartment::Model` provides `pin_tenant` (class method) to declare a model as pinned to the default tenant. Registered models bypass the `ConnectionHandling` patch. Zeitwerk-safe: works whether called before or after `activate!`. `apartment_pinned?` checks the class and its superclass chain.
+`Apartment::Model` provides `pin_tenant` (class method) to declare a model as pinned to the default tenant. Registered models bypass the `ConnectionHandling` patch when the adapter uses a separate pool; when shared pinned connections are enabled, routing follows the tenant pool (see design docs). Zeitwerk-safe: works whether called before or after `activate!`.
+
+**Identity:** `apartment_pinned?` — the class answers whether it is pinned (ivars + superclass walk). `Apartment.pinned_model?(klass)` delegates to `klass.apartment_pinned?` when the concern is included; otherwise it falls back to registry lookup (`pinned_models`) for `excluded_models` shim classes that never included the concern.
+
+**Table naming:** `apartment_explicit_table_name?` — whether `self.table_name` was explicitly set vs convention (compares `@table_name` to `compute_table_name`). Lives here so adapters do not read `@table_name` or call `compute_table_name` from outside; **class instance variable access for pinning is confined to this concern**.
+
+**Lifecycle:** `apartment_pinned_processed?`, `apartment_mark_processed!`, `apartment_restore!` — qualification state and teardown. Adapters call these; `Apartment.clear_config` uses `apartment_restore!` with `respond_to?` so shim-registered models without the concern still clear safely. `apartment_mark_pinned!` — sets the pinned flag without triggering processing (used by `process_pinned_model` for shim classes to avoid `pin_tenant` recursion).
+
+**Guards:** `pin_tenant` raises `ArgumentError` if called on a non-AR class or module. For anonymous classes (`Class.new`), it warns that `TracePoint(:end)` won't fire and skips deferral; call `process_pinned_model` explicitly after assigning the constant.
+
+**Deferred processing:** When `Apartment.activated?` is true (Zeitwerk lazy-load path), `pin_tenant` defers `process_pinned_model` via `apartment_defer_processing!` — a one-shot `TracePoint(:end)` constrained to `Thread.current`. Only `:end` is used: `:b_return` fires for ALL block returns in class context (each, include hooks) and would trigger prematurely; `:raise` is not used because rescued raises still produce `:end` (MRI verified). For `Class.new { }` (tests, runtime metaprogramming), `:end` does not fire; call `process_pinned_model` explicitly. Models loaded before `activate!` are unaffected (processed in batch by `Tenant.init`). Reopening a pinned class does not re-trigger processing (idempotent via `apartment_pinned?`).
+
+**Shim compatibility:** `process_pinned_model` dynamically includes `Apartment::Model` on classes registered via the `excluded_models` shim that lack the concern. This is a runtime `include` on a partially-booted class — acceptable for the legacy shim path but new code should always use `include Apartment::Model` + `pin_tenant` explicitly.
 
 ### railtie.rb — v4 Rails Integration
 

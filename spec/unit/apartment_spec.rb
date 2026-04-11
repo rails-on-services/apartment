@@ -54,6 +54,40 @@ RSpec.describe(Apartment) do
     end
   end
 
+  describe '.tenant_names' do
+    it 'delegates to config.tenants_provider.call' do
+      tenants = %w[acme widgets]
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { tenants }
+      end
+
+      expect(described_class.tenant_names).to(eq(%w[acme widgets]))
+    end
+
+    it 'raises ConfigurationError when not configured' do
+      described_class.clear_config
+      expect { described_class.tenant_names }.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+  end
+
+  describe '.excluded_models' do
+    it 'delegates to config.excluded_models' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.excluded_models = %w[Account]
+      end
+
+      expect(described_class.excluded_models).to(eq(%w[Account]))
+    end
+
+    it 'raises ConfigurationError when not configured' do
+      described_class.clear_config
+      expect { described_class.excluded_models }.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+  end
+
   describe '.clear_config' do
     it 'resets the adapter' do
       described_class.configure do |config|
@@ -65,6 +99,54 @@ RSpec.describe(Apartment) do
       described_class.clear_config
 
       expect { described_class.adapter }.to(raise_error(Apartment::ConfigurationError))
+    end
+
+    it 'restores convention-path table_name_prefix on pinned models' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('ConventionTeardown', klass)
+      allow(klass).to(receive(:table_name_prefix).and_return(''))
+      allow(klass).to(receive(:table_name_prefix=))
+      allow(klass).to(receive(:reset_table_name))
+
+      ConventionTeardown.pin_tenant
+      klass.apartment_mark_processed!(:convention, 'myapp_')
+
+      described_class.clear_config
+
+      expect(klass).to(have_received(:table_name_prefix=).with('myapp_'))
+      expect(klass).to(have_received(:reset_table_name))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'restores explicit-path table_name on pinned models' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('ExplicitTeardown', klass)
+      allow(klass).to(receive(:table_name=))
+
+      ExplicitTeardown.pin_tenant
+      klass.apartment_mark_processed!(:explicit, 'custom_jobs')
+
+      described_class.clear_config
+
+      expect(klass).to(have_received(:table_name=).with('custom_jobs'))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'handles separate-pool path (nil qualification_path) without error' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('SeparatePoolTeardown', klass)
+
+      SeparatePoolTeardown.pin_tenant
+      klass.apartment_mark_processed!
+
+      expect { described_class.clear_config }.not_to(raise_error)
+      expect(klass.apartment_pinned_processed?).to(be(false))
     end
   end
 

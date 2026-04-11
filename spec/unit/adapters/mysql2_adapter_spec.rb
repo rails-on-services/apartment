@@ -102,6 +102,51 @@ RSpec.shared_examples('a MySQL adapter') do
     end
   end
 
+  describe '#shared_pinned_connection?' do
+    it 'returns true (MySQL supports cross-database queries on same server)' do
+      expect(adapter.shared_pinned_connection?).to(be(true))
+    end
+
+    it 'returns false when force_separate_pinned_pool is true' do
+      reconfigure(force_separate_pinned_pool: true)
+      expect(adapter.shared_pinned_connection?).to(be(false))
+    end
+  end
+
+  describe '#qualify_pinned_table_name' do
+    it 'qualifies convention-named model with database name from base_config' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('MysqlPinned', klass)
+
+      expect(klass).to(receive(:table_name_prefix=).with('myapp.'))
+      expect(klass).to(receive(:reset_table_name))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+
+    it 'qualifies explicit table_name with database name from base_config' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('MysqlExplicit', klass)
+      klass.instance_variable_set(:@table_name, 'custom_jobs')
+      allow(klass).to(receive_messages(compute_table_name: 'mysql_explicits', table_name: 'custom_jobs'))
+
+      expect(klass).to(receive(:table_name=).with('myapp.custom_jobs'))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+
+    it 'strips existing database prefix before re-qualifying' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('MysqlRequalify', klass)
+      klass.instance_variable_set(:@table_name, 'old_db.jobs')
+      allow(klass).to(receive_messages(compute_table_name: 'mysql_requalifies', table_name: 'old_db.jobs'))
+
+      expect(klass).to(receive(:table_name=).with('myapp.jobs'))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+  end
+
   describe '#create (via create_tenant)' do
     let(:connection) { double('Connection') }
 

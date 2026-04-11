@@ -45,7 +45,18 @@ module Apartment
         WARNING
       end
 
-      app.middleware.use(elevator_class, **opts)
+      Apartment::Railtie.insert_elevator_middleware(app.middleware, elevator_class, **opts)
+    end
+
+    # In test environments, clean up apartment's tenant pools before Rails'
+    # fixture setup iterates shards. See docs/designs/v4-test-fixtures-compatibility.md.
+    if Rails.env.test?
+      ActiveSupport.on_load(:active_record_fixtures) do
+        if Apartment.config&.test_fixture_cleanup
+          require 'apartment/test_fixtures'
+          prepend Apartment::TestFixtures
+        end
+      end
     end
 
     rake_tasks do
@@ -64,6 +75,14 @@ module Apartment
           Rake::Task['apartment:migrate'].invoke if Rake::Task.task_defined?('apartment:migrate')
         end
       end
+    end
+
+    # Insert elevator middleware after ActionDispatch::Callbacks.
+    # In the full stack this places it just before Cookies/Session/Auth.
+    # In API mode (where Cookies is absent), Callbacks is still present.
+    # Class method for testability.
+    def self.insert_elevator_middleware(middleware_stack, elevator_class, **)
+      middleware_stack.insert_after(ActionDispatch::Callbacks, elevator_class, **)
     end
 
     # Whether the Header elevator trust warning should fire. Class method for testability.

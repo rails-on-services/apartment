@@ -16,7 +16,7 @@ v4 replaces the thread-local tenant switching model with pool-per-tenant archite
 
 ### Configuration
 
-`config.tenant_names` has been removed. Use `config.tenants_provider` instead; it must be a callable (proc or lambda).
+`config.tenant_names` has been removed. Use `config.tenants_provider` instead; it must be a callable (proc or lambda). The convenience method `Apartment.tenant_names` still works — it delegates to `config.tenants_provider.call`.
 
 `config.tenant_strategy` is now required. Supported values: `:schema` (PostgreSQL schema-per-tenant) and `:database_name` (separate database per tenant). Additional strategies (`:shard`, `:database_config`) are reserved for future use and will raise `AdapterNotFound` if configured today.
 
@@ -38,9 +38,10 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
 end
 ```
+
+`default_tenant` auto-defaults to `'public'` for `:schema` strategy, matching v3 behavior. If you previously set it explicitly, you can remove the line. If your primary schema is something other than `public` (e.g., `shared`), set `config.default_tenant` to match. For `:database_name` strategy, you still need to set it.
 
 ### Tenant API
 
@@ -91,7 +92,7 @@ end
 
 ### Middleware
 
-The v4 Railtie auto-inserts elevator middleware when `config.elevator` is set. Remove any manual `config.middleware.use` or `config.middleware.insert_before` lines from your application config.
+The v4 Railtie auto-inserts elevator middleware after `ActionDispatch::Callbacks` when `config.elevator` is set. Remove any manual `config.middleware.use` or `config.middleware.insert_before` lines from your application config. If you need custom middleware positioning, skip `config.elevator` and use the standard Rails `config.middleware.insert_before` API directly.
 
 Configure via symbol:
 
@@ -116,6 +117,38 @@ config.active_support.isolation_level = :fiber
 ```
 
 The Railtie emits a boot-time warning if `isolation_level` is `:thread`.
+
+### Pinned Model Connections
+
+In v3, pinned (excluded) models always received their own connection pool via `establish_connection`. This meant they never participated in the same database transaction as tenant-scoped models.
+
+v4 fixes this for strategies where the database engine supports cross-schema/database queries on a single connection:
+
+| Strategy | Pinned model connection in v4 |
+|---|---|
+| PostgreSQL schema | Shares tenant connection (qualified table name) |
+| MySQL / Trilogy | Shares tenant connection (qualified table name) |
+| PostgreSQL database-per-tenant | Separate pool (unchanged from v3) |
+| SQLite | Separate pool (unchanged from v3) |
+
+For PG schema and MySQL/Trilogy, pinned models now use the tenant's connection pool with a fully qualified table name (e.g. `public.delayed_jobs`). This means pinned model writes participate in the same transaction as tenant DML.
+
+**Action required if you relied on the old behavior:**
+
+If your code assumes that pinned model writes survive a tenant transaction rollback (e.g., enqueuing a job and deliberately rolling back tenant data), set `force_separate_pinned_pool: true` in your Apartment config:
+
+```ruby
+Apartment.configure do |config|
+  config.force_separate_pinned_pool = true
+  # ...
+end
+```
+
+`after_commit` callbacks still fire as before. The difference is that pinned model writes are now inside the tenant transaction, so an `ActiveRecord::Rollback` that aborts the transaction will also roll back pinned model writes. Apps using `after_commit` for job enqueueing are unaffected.
+
+For PG database-per-tenant and SQLite, pinned model behavior is unchanged from v3. For MySQL multi-server setups where tenant databases are on different hosts, set `force_separate_pinned_pool: true`.
+
+`pin_tenant` defers processing until the class body closes (when called after `Apartment.activate!`), so `self.table_name`, `table_name_prefix`, and `table_name_suffix` can appear anywhere in the class body. No ordering requirement between `pin_tenant` and table name configuration. For readability, declare table name configuration first thing in the class body, even before `include`/`prepend` statements. This works for standard `class MyModel < ApplicationRecord` definitions (source-parsed files loaded by Zeitwerk). For `MyModel = Class.new(ApplicationRecord) { ... }` style, the deferral cannot fire; call `Apartment.process_pinned_model(MyModel)` explicitly after assigning the constant.
 
 Key config options for pool tuning:
 
@@ -143,7 +176,6 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
 
   # Optional: auto-load schema into new tenants
   # config.schema_load_strategy = :schema_rb
@@ -272,7 +304,7 @@ end
 1. Run your full test suite
 2. Check connection pool behavior under load in staging: `Apartment::Tenant.pool_stats` returns per-tenant pool metrics
 3. Monitor for `FrozenError` exceptions, which indicate code attempting to mutate config after boot
-4. Verify elevator middleware position with `Rails.application.middleware` (should appear before session middleware)
+4. Verify elevator middleware position with `Rails.application.middleware` (should appear after `ActionDispatch::Callbacks`)
 
 ## connects_to Compatibility
 

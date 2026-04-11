@@ -64,12 +64,34 @@ module Apartment
         adapter.seed(tenant)
       end
 
+      # Iterate over all tenants, switching into each for the duration of the block.
+      # Accepts an optional tenant list; defaults to tenants_provider.
+      # Fail-fast: raises immediately if a block raises for any tenant;
+      # tenants after the failing one are not visited.
+      def each(tenants = nil)
+        raise(ArgumentError, 'Apartment::Tenant.each requires a block') unless block_given?
+
+        tenants ||= fetch_tenant_list
+        tenants.each { |tenant| switch(tenant) { yield(tenant) } }
+      end
+
       # Pool stats delegated to pool_manager.
       def pool_stats
         Apartment.pool_manager&.stats || {}
       end
 
       private
+
+      def fetch_tenant_list
+        config = Apartment.config or
+          raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.')
+        result = config.tenants_provider.call
+        unless result.respond_to?(:each)
+          raise(ConfigurationError,
+                "tenants_provider must return an Enumerable, got #{result.class}")
+        end
+        result
+      end
 
       def adapter
         Apartment.adapter or
