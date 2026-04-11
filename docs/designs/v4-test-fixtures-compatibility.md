@@ -168,6 +168,77 @@ Exercises the scenario directly:
 
 The gem's own integration tests use RSpec with a ConnectionHandler swap per example; fixture support is not loaded, so `setup_shared_connection_pool` doesn't fire in the gem's test suite. However, both Minitest and RSpec exercise the same `ActiveRecord::TestFixtures` code path in downstream apps. The real proof is in apps that use transactional fixtures with `before(:all)` request blocks. A targeted unit test that exercises the Rails method directly is sufficient for the gem.
 
+## Cross-Tenant Transactional Fixture Limitation
+
+### The constraint
+
+v4 uses a separate connection pool (and physical connection) per tenant. Rails' transactional fixtures wrap each test in an uncommitted transaction on one connection. Records inserted via one pool's connection are invisible to another pool's connection within those uncommitted transactions.
+
+This is architectural: pool-per-tenant and single-connection transactional fixtures are fundamentally incompatible for cross-tenant operations. v3 avoided this by using `SET search_path` on a single shared connection; v4 intentionally eliminated runtime search_path mutation in favor of immutable per-pool config.
+
+### What works
+
+**Single-tenant specs**: Tests that operate entirely within one tenant context use one pool, one connection, one transaction. Transactional fixtures work normally.
+
+**Default-tenant specs**: Tests that never switch tenants use the default pool. Transactional fixtures work normally.
+
+### What breaks
+
+**Cross-tenant specs**: Any test where records are written on one pool and read on another. The common pattern:
+
+1. Spec's `around` block switches to tenant 'parents' → creates/uses the tenant pool (connection A)
+2. Record created inside the test → inserted on connection A, inside an uncommitted transaction
+3. Controller calls `switch_to_public_tenant { Model.find(id) }` → `Current.tenant = 'public'` → `ConnectionHandling` returns the default pool (connection B)
+4. Connection B can't see connection A's uncommitted transaction → `RecordNotFound`
+
+This affects ALL cross-tenant operations in tests, including pinned models. Qualified table names (`public.global_cohorts`) fix schema name resolution (which `schema.table` to query), not transaction visibility across connections. A pinned model INSERT on connection A is invisible to connection B regardless of table name qualification.
+
+**Why pinned models don't help here**: PR #374 made pinned models share the tenant pool (not the default pool) so that pinned writes participate in the same transaction as tenant writes. This is correct for production. But when `switch_to_public_tenant` changes `Current.tenant` to the default, `ConnectionHandling` returns the default pool (line 17: `return super if tenant.to_s == cfg.default_tenant.to_s`). The pinned model read goes through a different connection than the pinned model write.
+
+### Recommended testing strategy
+
+Disable transactional tests for cross-tenant spec groups and use explicit cleanup:
+
+**RSpec:**
+
+```ruby
+# spec/requests/platform_controller_spec.rb
+RSpec.describe PlatformController, type: :request do
+  # Cross-tenant: controller uses switch_to_public_tenant internally
+  self.use_transactional_tests = false
+
+  after { DatabaseCleaner.clean_with(:truncation) }
+
+  # ... specs that create records in one tenant and query in another
+end
+```
+
+**Minitest:**
+
+```ruby
+class PlatformControllerTest < ActionDispatch::IntegrationTest
+  self.use_transactional_tests = false
+
+  teardown { DatabaseCleaner.clean_with(:truncation) }
+end
+```
+
+**What to pair with `use_transactional_tests = false`:**
+
+- **Cleanup**: Truncation via DatabaseCleaner, or manual `after` hooks. Without transactional rollback, records persist across examples.
+- **Order independence**: Non-transactional examples are flakier under random order unless cleanup is explicit.
+- **Speed**: Truncation is slower than transactional rollback. Scope the override to the specific context that needs it, not the entire suite.
+
+### Scope
+
+This limitation applies only to PostgreSQL schema strategy. Database-per-tenant strategies (PG database, MySQL, SQLite) use physically separate databases; cross-tenant transactional isolation is architecturally impossible there regardless, and those apps already use truncation or per-tenant test databases.
+
+### Alternatives considered for this limitation
+
+**Test-mode `SET search_path` switching**: In test environment, `ConnectionHandling#connection_pool` returns the default pool for all tenants and switches via `SET search_path TO ...` on the shared connection. Rejected: re-introduces the runtime search_path mutation that v4 intentionally eliminated. The pool-per-tenant architecture is v4's core design decision; undermining it for tests means the test environment no longer validates the production code path.
+
+**Always route pinned models through default pool**: Change `ConnectionHandling` so pinned models use `super` (default pool) regardless of `shared_pinned_connection?`. Rejected: breaks the transactional integrity that PR #374 established — pinned writes would no longer participate in the same transaction as tenant writes. The correct fix is at the test strategy level, not the connection routing level.
+
 ## Alternatives considered
 
 ### A. Register shards for ALL roles when creating for one role
