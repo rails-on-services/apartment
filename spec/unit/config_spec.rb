@@ -25,6 +25,7 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.mysql_config).to(be_nil) }
     it { expect(config.shard_key_prefix).to(eq('apartment')) }
     it { expect(config.force_separate_pinned_pool).to(be(false)) }
+    it { expect(config.test_fixture_cleanup).to(be(true)) }
   end
 
   describe '#tenant_strategy=' do

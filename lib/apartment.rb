@@ -180,6 +180,22 @@ module Apartment
       warn "[Apartment] Failed to deregister AR pool for #{pool_key}: #{e.class}: #{e.message}"
     end
 
+    # Deregister all tenant pools from AR's ConnectionHandler and clear the
+    # pool manager cache. Tenant context is also reset. Pools rebuild lazily
+    # on the next +connection_pool+ call.
+    #
+    # Called automatically by +Apartment::TestFixtures+ before Rails' fixture
+    # setup iterates shards. Can also be called manually in custom test harnesses
+    # that need to clear tenant state between examples.
+    #
+    # @return [void]
+    # @see Apartment::TestFixtures
+    def reset_tenant_pools!
+      deregister_all_tenant_pools
+      @pool_manager&.clear
+      Apartment::Current.reset
+    end
+
     private
 
     # Safely tear down old state. Stops the reaper first (so it doesn't
