@@ -157,28 +157,39 @@ RSpec.describe(Apartment::TestFixtures) do
       expect(Apartment.pool_manager.stats[:total_pools]).to(eq(0))
     end
 
-    # This test approximates the !connection.active_record subscriber re-entry
-    # at the unit level. In production, establish_connection fires the notification,
-    # which calls setup_shared_connection_pool again. We simulate this by manually
-    # adding a pool after the first cleanup and verifying the guard prevents a
-    # second cleanup. A full integration test would require a running Rails app
-    # with transactional fixtures enabled.
-    it 'guard prevents cleanup on re-entrant calls' do
-      register_tenant_pool('acme', :reading)
+    # Simulates Trigger B: the !connection.active_record subscriber re-entry.
+    #
+    # In production, the sequence is:
+    # 1. First setup_shared_connection_pool call cleans up + runs super (OK)
+    # 2. setup_transactional_fixtures subscribes to !connection.active_record
+    # 3. Test runs, elevator creates tenant pool via establish_connection
+    # 4. Subscriber fires synchronously (pool_config already in Rails' PoolManager)
+    # 5. Subscriber calls setup_shared_connection_pool again
+    # 6. Guard must skip both cleanup AND super — super would crash on the
+    #    apartment shard that has no :writing pool_config
+    #
+    # We approximate step 3-6 by registering a pool in both the ConnectionHandler
+    # and apartment's pool_manager after the first call, then verifying the second
+    # call returns early without raising.
+    it 'guard skips both cleanup and super on re-entrant calls (Trigger B)' do
       host = FixtureHost.new
 
-      # First call: guard trips, clears apartment pools, pool manager is empty
+      # First call: no apartment pools, clean pass-through
       host.call_setup
       expect(Apartment.pool_manager.stats[:total_pools]).to(eq(0))
 
-      # Add a pool directly to pool_manager (bypassing AR handler) to verify
-      # the second call does NOT clear it again.
-      pool_key = 'acme:writing'
-      Apartment.pool_manager.fetch_or_create(pool_key) { Object.new }
+      # Simulate elevator creating a tenant pool mid-test (registered in both
+      # the AR ConnectionHandler and apartment's pool_manager, just like
+      # ConnectionHandling#connection_pool does).
+      register_tenant_pool('acme', :reading)
 
-      # Second call: guard is set, cleanup block is skipped entirely
-      host.call_setup
+      # Second call: guard is set, returns early without calling super.
+      # Without the fix, super would iterate shard_names, find
+      # :apartment_acme:reading with no :writing pool_config, and raise
+      # ArgumentError from PoolManager#set_pool_config.
+      expect { host.call_setup }.not_to(raise_error)
 
+      # Pool survives — guard prevented both cleanup and super
       expect(Apartment.pool_manager.stats[:total_pools]).to(eq(1))
     end
 

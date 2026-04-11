@@ -10,18 +10,19 @@ module Apartment
   # ArgumentError. This module deregisters apartment pools before the fixture
   # machinery iterates them. Pools rebuild lazily on next connection_pool call.
   #
-  # A guard ivar (@apartment_fixtures_cleaned) prevents re-entry: the
-  # !connection.active_record notification subscriber in
-  # setup_transactional_fixtures calls setup_shared_connection_pool again
-  # when new pools appear mid-example.
+  # A guard ivar (@apartment_fixtures_cleaned) controls the two call paths:
+  # first call runs cleanup + super; re-entrant calls (from the
+  # !connection.active_record subscriber in setup_transactional_fixtures)
+  # return immediately — apartment pools must not pass through super's
+  # shard/role iteration.
   module TestFixtures
     private
 
     def setup_shared_connection_pool
-      unless @apartment_fixtures_cleaned
-        @apartment_fixtures_cleaned = true
-        Apartment.reset_tenant_pools! if Apartment.pool_manager
-      end
+      return if @apartment_fixtures_cleaned
+
+      @apartment_fixtures_cleaned = true
+      Apartment.reset_tenant_pools! if Apartment.pool_manager
       super
     end
 
