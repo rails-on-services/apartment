@@ -157,6 +157,12 @@ RSpec.describe(Apartment::TestFixtures) do
       expect(Apartment.pool_manager.stats[:total_pools]).to(eq(0))
     end
 
+    # This test approximates the !connection.active_record subscriber re-entry
+    # at the unit level. In production, establish_connection fires the notification,
+    # which calls setup_shared_connection_pool again. We simulate this by manually
+    # adding a pool after the first cleanup and verifying the guard prevents a
+    # second cleanup. A full integration test would require a running Rails app
+    # with transactional fixtures enabled.
     it 'guard prevents cleanup on re-entrant calls' do
       register_tenant_pool('acme', :reading)
       host = FixtureHost.new
@@ -165,8 +171,8 @@ RSpec.describe(Apartment::TestFixtures) do
       host.call_setup
       expect(Apartment.pool_manager.stats[:total_pools]).to(eq(0))
 
-      # Manually add a pool directly to pool_manager (bypassing AR handler)
-      # to verify the second call does NOT clear it again.
+      # Add a pool directly to pool_manager (bypassing AR handler) to verify
+      # the second call does NOT clear it again.
       pool_key = 'acme:writing'
       Apartment.pool_manager.fetch_or_create(pool_key) { Object.new }
 

@@ -182,11 +182,14 @@ module Apartment
 
     # Deregister all tenant pools from AR's ConnectionHandler and clear the
     # pool manager cache. Tenant context is also reset. Pools rebuild lazily
-    # on next connection_pool call.
+    # on the next +connection_pool+ call.
     #
-    # Used by Apartment::TestFixtures to clean up before Rails' fixture setup
-    # iterates shards (setup_shared_connection_pool assumes every shard has a
-    # :writing pool_config; apartment's role-specific shards violate this).
+    # Called automatically by +Apartment::TestFixtures+ before Rails' fixture
+    # setup iterates shards. Can also be called manually in custom test harnesses
+    # that need to clear tenant state between examples.
+    #
+    # @return [void]
+    # @see Apartment::TestFixtures
     def reset_tenant_pools!
       deregister_all_tenant_pools
       @pool_manager&.clear
