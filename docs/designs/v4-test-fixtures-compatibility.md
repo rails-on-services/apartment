@@ -41,13 +41,13 @@ Two distinct triggers produce the same `ArgumentError`:
 2. A subsequent test example's fixture setup (Minitest's `before_setup`, or the equivalent RSpec fixture lifecycle via `RSpec::Rails::FixtureSupport`) calls `setup_transactional_fixtures` → `setup_shared_connection_pool`
 3. The fixture machinery discovers the apartment shard, tries to map it across roles, raises `ArgumentError`
 
-**Trigger B — subscriber re-entry with live pools (discovered post-merge)**
+**Trigger B — subscriber re-entry with live pools (discovered post-merge, fixed in #380)**
 
 1. Initial `setup_shared_connection_pool` call runs cleanup, calls `super` — clean, no apartment pools
 2. `setup_transactional_fixtures` subscribes to `!connection.active_record`
 3. During the test, the elevator switches tenants → `ConnectionHandling#connection_pool` → `establish_connection` fires `!connection.active_record` **synchronously** while the pool_config is already stored in Rails' PoolManager
 4. Subscriber fires → calls `setup_shared_connection_pool` again
-5. Guard is set → cleanup skipped → `super` runs → finds the apartment shard that was just registered → `writing_pool_config` is nil → `ArgumentError`
+5. Guard is set → early return skips both cleanup and `super`, preventing the crash. (Before #380, the guard skipped cleanup but still called `super`, which found the apartment shard and raised `ArgumentError`.)
 
 The key insight: `establish_connection` stores the pool_config in Rails' PoolManager via `set_pool_config` **before** firing the notification (the notification wraps `pool_config.pool` inside the `instrument` block). By the time the subscriber calls `setup_shared_connection_pool`, the apartment shard is visible to `shard_names` but has no `:writing` counterpart.
 
@@ -193,7 +193,7 @@ This is architectural: pool-per-tenant and single-connection transactional fixtu
 
 This affects ALL cross-tenant operations in tests, including pinned models. Qualified table names (`public.global_cohorts`) fix schema name resolution (which `schema.table` to query), not transaction visibility across connections. A pinned model INSERT on connection A is invisible to connection B regardless of table name qualification.
 
-**Why pinned models don't help here**: PR #374 made pinned models share the tenant pool (not the default pool) so that pinned writes participate in the same transaction as tenant writes. This is correct for production. But when `switch_to_public_tenant` changes `Current.tenant` to the default, `ConnectionHandling` returns the default pool (line 17: `return super if tenant.to_s == cfg.default_tenant.to_s`). The pinned model read goes through a different connection than the pinned model write.
+**Why pinned models don't help here**: PR #374 made pinned models share the tenant pool (not the default pool) so that pinned writes participate in the same transaction as tenant writes. This is correct for production. But when `switch_to_public_tenant` changes `Current.tenant` to the default, `ConnectionHandling`'s default-tenant early return (`return super if tenant.to_s == cfg.default_tenant.to_s`) fires before the pinned model check. The pinned model read goes through the default pool — a different connection than the tenant pool where the write happened.
 
 ### Recommended testing strategy
 
@@ -225,13 +225,13 @@ end
 
 **What to pair with `use_transactional_tests = false`:**
 
-- **Cleanup**: Truncation via DatabaseCleaner, or manual `after` hooks. Without transactional rollback, records persist across examples.
+- **Cleanup**: Truncation via DatabaseCleaner (or equivalent gem), or manual `after` hooks. Without transactional rollback, records persist across examples.
 - **Order independence**: Non-transactional examples are flakier under random order unless cleanup is explicit.
 - **Speed**: Truncation is slower than transactional rollback. Scope the override to the specific context that needs it, not the entire suite.
 
 ### Scope
 
-This limitation applies only to PostgreSQL schema strategy. Database-per-tenant strategies (PG database, MySQL, SQLite) use physically separate databases; cross-tenant transactional isolation is architecturally impossible there regardless, and those apps already use truncation or per-tenant test databases.
+This guide focuses on the PG schema strategy with `switch_to_public_tenant`, which is the most common case where cross-tenant transactional fixture breakage surprises users. Database-per-tenant strategies (PG database, MySQL, SQLite) have separate connections by design and typically already use truncation or per-tenant test databases — the same cross-connection visibility constraint applies, but those apps rarely expect a single transactional connection across tenants.
 
 ### Alternatives considered for this limitation
 
