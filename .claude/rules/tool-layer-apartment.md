@@ -38,6 +38,6 @@ For a gem-development week:
 - **~25% code-graph-mcp** — impact analysis when changing public APIs
 - **~15% Repomix** — invariants review, doc generation, upstream-PR-prep packaging
 - **~5% rspec / minitest output** — iterative test-driven changes (not an MCP tool, but it dominates the loop)
-- **~5% GitHub MCP plugin** — upstream PR archaeology, fork-vs-upstream diff investigations
+- **~5% GitHub MCP plugin** — git history archaeology when "why did this evolve?" matters
 
-This is a fork of `rails-on-services/apartment`; when investigating "why did we diverge from upstream here?", reach for the GitHub MCP plugin to inspect upstream PRs and our fork's history side by side.
+When investigating how a method or class evolved (regression, design choice, deprecation), reach for the GitHub MCP plugin to inspect this repo's PRs and merge history.

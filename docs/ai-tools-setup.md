@@ -1,8 +1,6 @@
 # AI Tools Setup Guide
 
-Plugins, skills, and MCP servers for AI-assisted development with the CampusESP fork of the Apartment Ruby gem.
-
-For the full canonical setup (used by the main www Rails app), see [`www/docs/ai-tools-setup.md`](https://github.com/CampusESP/www/blob/develop/docs/ai-tools-setup.md). This file mirrors that structure with apartment-specific notes.
+Plugins, skills, and MCP servers for AI-assisted development with the Apartment Ruby gem.
 
 ## Plugin > Skill > MCP
 
@@ -34,7 +32,7 @@ For Cursor: `.cursor/mcp.json` mirrors `.mcp.json` for team-shared servers.
 
 ## Code Intelligence (Cross-Project)
 
-Three personal dev tools that work across all CampusESP repos. Configure at user scope (Claude Code plugins, global `~/.cursor/mcp.json`) — not in this project's MCP configs.
+Three personal dev tools that work across multiple projects. Configure at user scope (Claude Code plugins, global `~/.cursor/mcp.json`) — not in this project's MCP configs.
 
 ### Serena (semantic code search & symbolic edits)
 
@@ -43,8 +41,8 @@ LSP-backed symbolic tools for the AI: `find_symbol`, `replace_symbol_body`, `fin
 **Install:**
 
 ```bash
-uvx --from git+https://github.com/oraios/serena serena --help  # smoke test
-serena setup claude-code                                       # registers MCP server
+uv tool install -p 3.13 serena-agent@latest --prerelease=allow
+serena setup claude-code  # registers Serena as an MCP server with Claude Code
 ```
 
 **Cursor** (`~/.cursor/mcp.json`):
@@ -130,7 +128,6 @@ Personal dev tools at `~/.cursor/mcp.json`:
 - **`serena`** — `serena start-mcp-server --context=ide --project-from-cwd`
 - **`repomix`** — `npx -y repomix@latest --mcp`
 - **`code-graph`** — `npx -y @sdsrs/code-graph`
-- Database servers as configured for `www`
 
 ## Verification
 
