@@ -58,6 +58,14 @@ serena setup claude-code  # registers Serena as an MCP server with Claude Code
 
 **Project files (`.serena/`)** — when populated, commit `.serena/.gitignore`, `.serena/project.yml`, and `.serena/memories/` (verify `project.yml` has no absolute paths). Serena's bundled `.serena/.gitignore` keeps `cache/` and `project.local.yml` out of git.
 
+#### Cross-project queries
+
+Single-project contexts (`claude-code`, `ide`) lock the active project. To query *other* registered Serena projects from within this one (e.g., a downstream Rails app that consumes this gem, or a sibling library):
+
+1. The `query-projects` mode is set as a `base_mode` in `~/.serena/serena_config.yml` (one-time, machine-wide). It exposes `query_project` and `list_queryable_projects`.
+2. The Serena project-server daemon spawns LSPs for queried projects on demand. Run it as a launchd agent on macOS — see `~/Library/LaunchAgents/com.oraios.serena-project-server.plist`. For Ruby projects to install ruby-lsp into a writable gem dir, the plist's `PATH` must include `~/.rbenv/shims` (or your equivalent Ruby version manager's shims), plus `RBENV_ROOT` and `HOME`.
+3. Symbolic queries via `query_project` work against any registered project. Text-class tools (`find_file`, `search_for_pattern`, etc.) stay excluded by the active context — for cross-project text search, shell out: `grep -rn 'pattern' /absolute/path/to/other/repo/`.
+
 ### code-graph-mcp (call graph, impact analysis)
 
 Tracks the codebase as a graph; supports `impact_analysis` before signature changes, `get_call_graph`, `find_dead_code`, `find_similar_code`, `dependency_graph`, `semantic_code_search`.
