@@ -82,19 +82,26 @@ SERENA_PROJECT_NAME="${REPO_BASENAME}-${WORKTREE_NAME}"
 if [ -f "$SERENA_CONFIG" ]; then
     # Prune entries whose paths no longer exist (defense in depth — handles
     # worktrees removed via `git worktree remove` instead of bin/dev/remove-worktree).
-    # `projects:` is the final top-level block; everything after it is `- /path`.
+    # We enter "projects" mode on the `projects:` key and exit on the next
+    # top-level YAML key, so we never path-test `- ` items belonging to a
+    # sibling list Serena might add in a future config layout.
     PRUNED=0
     TMP_CFG="${SERENA_CONFIG}.tmp.$$"
+    trap 'rm -f "$TMP_CFG"' EXIT INT TERM
     in_projects=0
     while IFS= read -r line; do
         if [[ "$line" == "projects:" ]]; then
             in_projects=1
+            printf '%s\n' "$line" >> "$TMP_CFG"
+        elif [[ $in_projects -eq 1 && "$line" =~ ^[A-Za-z] ]]; then
+            in_projects=0
             printf '%s\n' "$line" >> "$TMP_CFG"
         elif [[ $in_projects -eq 1 && "$line" =~ ^-\ (.+)$ ]]; then
             stale_path="${BASH_REMATCH[1]}"
             if [ -d "$stale_path" ]; then
                 printf '%s\n' "$line" >> "$TMP_CFG"
             else
+                log_info "Serena: pruning stale registration $stale_path"
                 PRUNED=$((PRUNED + 1))
             fi
         else
@@ -102,9 +109,12 @@ if [ -f "$SERENA_CONFIG" ]; then
         fi
     done < "$SERENA_CONFIG"
     mv "$TMP_CFG" "$SERENA_CONFIG"
-    [ $PRUNED -gt 0 ] && log_info "Serena: pruned $PRUNED stale path(s) from $SERENA_CONFIG"
+    trap - EXIT INT TERM
+    if [ $PRUNED -gt 0 ]; then
+        log_info "Serena: pruned $PRUNED stale path(s) from $SERENA_CONFIG"
+    fi
 
-    # Idempotent append (whole-line match avoids substring collisions).
+    # Idempotent append.
     if grep -qxF -- "- $ABS_WORKTREE_PATH" "$SERENA_CONFIG"; then
         log_info "Serena: already registered ($ABS_WORKTREE_PATH)"
     else
