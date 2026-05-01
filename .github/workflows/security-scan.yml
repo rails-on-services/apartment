@@ -21,12 +21,14 @@ on:
     paths:
       - "Gemfile"
       - "Gemfile.lock"
+      - "gemfiles/**"
       - "*.gemspec"
       - ".github/workflows/**"
       - ".github/dependabot.yml"
   push:
     branches: [main]
   schedule:
+    # Mondays 09:30 UTC.
     - cron: "30 9 * * 1"
   workflow_dispatch:
 
