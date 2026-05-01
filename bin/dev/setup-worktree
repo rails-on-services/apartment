@@ -47,6 +47,8 @@ fi
 
 # Resolve main repo from git worktree list (works even when invoked from a worktree)
 MAIN_REPO_PATH=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+REPO_BASENAME=$(basename "$MAIN_REPO_PATH")
+WORKTREE_NAME=$(basename "$WORKTREE_PATH")
 
 if [ ! -d "$WORKTREE_PATH" ]; then
     log_error "Worktree path '$WORKTREE_PATH' does not exist"
@@ -59,6 +61,83 @@ log_info "Worktree: $WORKTREE_PATH"
 log_info "Main repo: $MAIN_REPO_PATH"
 
 cd "$WORKTREE_PATH" || { log_error "Failed to cd into $WORKTREE_PATH"; exit 1; }
+ABS_WORKTREE_PATH=$(pwd)
+
+# ---------------------------------------------------------------------------
+# Serena registration
+# ---------------------------------------------------------------------------
+# Two failure modes this prevents:
+#   1. Stale entries in ~/.serena/serena_config.yml that point at deleted
+#      worktrees crash the project-server daemon during samefile checks.
+#   2. Multiple worktrees sharing the same `project_name` (because
+#      .serena/project.yml is tracked) cause `query_project` to raise
+#      ValueError: Multiple projects found with name 'X'.
+# Fix: append this worktree's absolute path (idempotent), prune stale paths,
+# and override project_name locally via the gitignored project.local.yml.
+section "Registering with Serena"
+
+SERENA_CONFIG="$HOME/.serena/serena_config.yml"
+SERENA_PROJECT_NAME="${REPO_BASENAME}-${WORKTREE_NAME}"
+
+if [ -f "$SERENA_CONFIG" ]; then
+    # Prune entries whose paths no longer exist (defense in depth — handles
+    # worktrees removed via `git worktree remove` instead of bin/dev/remove-worktree).
+    # We enter "projects" mode on the `projects:` key and exit on the next
+    # top-level YAML key, so we never path-test `- ` items belonging to a
+    # sibling list Serena might add in a future config layout.
+    PRUNED=0
+    TMP_CFG="${SERENA_CONFIG}.tmp.$$"
+    trap 'rm -f "$TMP_CFG"' EXIT INT TERM
+    in_projects=0
+    while IFS= read -r line; do
+        if [[ "$line" == "projects:" ]]; then
+            in_projects=1
+            printf '%s\n' "$line" >> "$TMP_CFG"
+        elif [[ $in_projects -eq 1 && "$line" =~ ^[A-Za-z] ]]; then
+            in_projects=0
+            printf '%s\n' "$line" >> "$TMP_CFG"
+        elif [[ $in_projects -eq 1 && "$line" =~ ^-\ (.+)$ ]]; then
+            stale_path="${BASH_REMATCH[1]}"
+            if [ -d "$stale_path" ]; then
+                printf '%s\n' "$line" >> "$TMP_CFG"
+            else
+                log_info "Serena: pruning stale registration $stale_path"
+                PRUNED=$((PRUNED + 1))
+            fi
+        else
+            printf '%s\n' "$line" >> "$TMP_CFG"
+        fi
+    done < "$SERENA_CONFIG"
+    mv "$TMP_CFG" "$SERENA_CONFIG"
+    trap - EXIT INT TERM
+    if [ $PRUNED -gt 0 ]; then
+        log_info "Serena: pruned $PRUNED stale path(s) from $SERENA_CONFIG"
+    fi
+
+    # Idempotent append.
+    if grep -qxF -- "- $ABS_WORKTREE_PATH" "$SERENA_CONFIG"; then
+        log_info "Serena: already registered ($ABS_WORKTREE_PATH)"
+    else
+        printf -- '- %s\n' "$ABS_WORKTREE_PATH" >> "$SERENA_CONFIG"
+        log_info "Serena: registered $ABS_WORKTREE_PATH"
+    fi
+else
+    log_warn "Serena config not found ($SERENA_CONFIG); skipping registration"
+fi
+
+# Override project_name in the gitignored project.local.yml so this worktree
+# carries a unique identity (e.g. apartment-v4-foundation) without dirtying
+# the tracked project.yml. Serena merges *.local.yml over project.yml.
+# Create .serena/ if absent — the daemon will auto-create project.yml on first
+# activation, but we want the project_name override in place beforehand.
+mkdir -p .serena
+LOCAL_YML=".serena/project.local.yml"
+if [ -f "$LOCAL_YML" ] && grep -q '^project_name:' "$LOCAL_YML"; then
+    sed -i '' "s|^project_name:.*|project_name: \"$SERENA_PROJECT_NAME\"|" "$LOCAL_YML"
+else
+    printf 'project_name: "%s"\n' "$SERENA_PROJECT_NAME" >> "$LOCAL_YML"
+fi
+log_info "Serena: project_name = $SERENA_PROJECT_NAME (in $LOCAL_YML)"
 
 # Copy files/directories using ditto (macOS-native, APFS copy-on-write)
 copy_if_exists() {
@@ -87,8 +166,6 @@ PEACOCK_COLOR=""
 REGISTRY="${WORKTREE_COLOR_REGISTRY:-$HOME/.config/campusesp/color-registry.json}"
 
 if [ "$SKIP_PEACOCK" = false ]; then
-    WORKTREE_NAME=$(basename "$WORKTREE_PATH")
-
     # Gracefully degrade if jq or registry are missing
     if ! command -v jq &>/dev/null; then
         log_warn "jq not found — skipping Peacock color assignment (brew install jq)"
