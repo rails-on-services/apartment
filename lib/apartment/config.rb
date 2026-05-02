@@ -108,13 +108,17 @@ module Apartment
       freeze
     end
 
+    # Apply derived defaults that depend on user-set values. Runs after the
+    # configure block yields and before validate!, so validate! stays read-only.
+    def apply_defaults!
+      # PostgreSQL's default schema is 'public'; avoid forcing every user to set it.
+      @default_tenant ||= 'public' if @tenant_strategy == :schema
+    end
+
     # Validate configuration completeness and consistency.
     # Raises ConfigurationError on invalid state.
     def validate! # rubocop:disable Metrics/AbcSize
       raise(ConfigurationError, 'tenant_strategy is required') unless @tenant_strategy
-
-      # PostgreSQL's default schema is 'public'; avoid forcing every user to set it.
-      @default_tenant ||= 'public' if @tenant_strategy == :schema
 
       if @default_tenant.is_a?(String) && @default_tenant.strip.empty?
         raise(ConfigurationError, 'default_tenant cannot be an empty string')

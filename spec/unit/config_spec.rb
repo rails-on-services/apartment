@@ -146,19 +146,25 @@ RSpec.describe(Apartment::Config) do
 
       it 'defaults to public for schema strategy when not set' do
         config.tenant_strategy = :schema
-        config.validate!
+        config.apply_defaults!
         expect(config.default_tenant).to(eq('public'))
       end
 
       it 'preserves explicit default_tenant for schema strategy' do
         config.tenant_strategy = :schema
         config.default_tenant = 'custom'
-        config.validate!
+        config.apply_defaults!
         expect(config.default_tenant).to(eq('custom'))
       end
 
       it 'does not default for database_name strategy' do
         config.tenant_strategy = :database_name
+        config.apply_defaults!
+        expect(config.default_tenant).to(be_nil)
+      end
+
+      it 'is not applied by validate!; validate! stays read-only' do
+        config.tenant_strategy = :schema
         config.validate!
         expect(config.default_tenant).to(be_nil)
       end
