@@ -34,7 +34,7 @@ loader.setup
 
 require_relative 'apartment/errors'
 
-module Apartment
+module Apartment # rubocop:disable Metrics/ModuleLength
   class << self
     attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
@@ -109,6 +109,7 @@ module Apartment
 
       new_config = Config.new
       yield(new_config)
+      new_config.apply_defaults!
       new_config.validate!
       new_config.freeze!
 
