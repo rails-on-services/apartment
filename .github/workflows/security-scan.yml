@@ -1,0 +1,58 @@
+name: Security Scan
+
+# Two-layer dependency vulnerability scanning:
+#
+# 1. PR-time scan via OSV-Scanner reusable workflow: diffs base vs head, fails
+#    the workflow on newly introduced vulns. OSV cross-references GHSA, NVD,
+#    GSD, RustSec, and ecosystem-specific advisory DBs (RubyGems included).
+#
+# 2. Weekly scheduled scan via OSV-Scanner: catches existing-but-newly-disclosed
+#    vulns without waiting for a PR. Failed runs are visible in the Actions
+#    tab; findings are in the run log; admins receive email on failure.
+#
+# Pairs with .github/dependabot.yml (security-only Dependabot PRs) for the
+# CVE fast-path.
+#
+# Security note: this workflow does NOT execute any user-controlled input
+# in run: blocks. All steps use reusable workflows with typed inputs.
+
+on:
+  pull_request:
+    paths:
+      - "Gemfile"
+      - "Gemfile.lock"
+      - "gemfiles/**"
+      - "*.gemspec"
+      - ".github/workflows/**"
+      - ".github/dependabot.yml"
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 09:30 UTC.
+    - cron: "30 9 * * 1"
+  workflow_dispatch:
+
+# Top-level permissions. The reusable OSV-Scanner workflows declare
+# `security-events: write` in their own permissions block; GitHub validates
+# the caller against that declaration at workflow-parse time, BEFORE
+# checking whether the workflow actually needs the permission. So even
+# though we set `upload-sarif: false` (because Code Scanning needs GHAS
+# and we're not on it), the caller must still grant `security-events: write`
+# or the workflow won't validate.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  osv-scan-pr:
+    if: github.event_name == 'pull_request'
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.3.5
+    with:
+      upload-sarif: false
+
+  osv-scan-scheduled:
+    if: github.event_name != 'pull_request'
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.5
+    with:
+      upload-sarif: false
