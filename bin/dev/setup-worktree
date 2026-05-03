@@ -99,11 +99,15 @@ if [ -f "$SERENA_CONFIG" ]; then
         log_error "yq not installed (brew install yq); cannot reconcile $SERENA_CONFIG"
         exit 1
     fi
+    if ! command -v jq >/dev/null 2>&1; then
+        log_error "jq not installed (brew install jq); needed to encode paths safely"
+        exit 1
+    fi
 
     REGISTERED=()
     while IFS= read -r line; do
         [ -n "$line" ] && REGISTERED+=("$line")
-    done < <(yq e '.projects[]' "$SERENA_CONFIG")
+    done < <(yq e '.projects // [] | .[]' "$SERENA_CONFIG")
     PRUNED=0
     ALIVE=()
     for p in "${REGISTERED[@]}"; do
@@ -123,11 +127,18 @@ if [ -f "$SERENA_CONFIG" ]; then
     done
     [ "$ALREADY" -eq 0 ] && ALIVE+=("$ABS_WORKTREE_PATH")
 
-    # Rewrite the projects list. yq -i preserves comments outside the list.
-    yq e -i '.projects = []' "$SERENA_CONFIG"
-    for p in "${ALIVE[@]}"; do
-        yq e -i ".projects += [\"$p\"]" "$SERENA_CONFIG"
-    done
+    # Atomic single-write rewrite. jq encodes the array (handles arbitrary
+    # chars in paths — no string interpolation into the yq expression);
+    # tempfile + mv makes the swap atomic, eliminating the partial-state
+    # window where the previous reset+loop pattern could leave the file
+    # empty or truncated on interrupt or mid-loop yq failure.
+    PROJECTS_JSON=$(jq -nc '$ARGS.positional' --args -- "${ALIVE[@]}")
+    TMP_CFG="${SERENA_CONFIG}.tmp.$$"
+    trap 'rm -f "$TMP_CFG"' EXIT INT TERM
+    cp "$SERENA_CONFIG" "$TMP_CFG"
+    yq e -i ".projects = $PROJECTS_JSON" "$TMP_CFG"
+    mv "$TMP_CFG" "$SERENA_CONFIG"
+    trap - EXIT INT TERM
 
     [ "$PRUNED" -gt 0 ] && log_info "Serena: pruned $PRUNED stale path(s)"
     if [ "$ALREADY" -eq 1 ]; then
