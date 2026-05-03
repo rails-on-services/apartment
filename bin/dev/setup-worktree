@@ -104,10 +104,20 @@ if [ -f "$SERENA_CONFIG" ]; then
         exit 1
     fi
 
+    # Capture yq output via $() so a non-zero exit propagates under `set -e`.
+    # Process substitution (`done < <(yq …)`) would swallow the failure and
+    # leave REGISTERED empty, causing the rewrite below to drop every other
+    # path from the registry.
+    SERENA_PROJECTS_RAW=$(yq e '.projects // [] | .[]' "$SERENA_CONFIG") || {
+        log_error "Serena: failed to read .projects from $SERENA_CONFIG"
+        exit 1
+    }
     REGISTERED=()
-    while IFS= read -r line; do
-        [ -n "$line" ] && REGISTERED+=("$line")
-    done < <(yq e '.projects // [] | .[]' "$SERENA_CONFIG")
+    if [ -n "$SERENA_PROJECTS_RAW" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && REGISTERED+=("$line")
+        done <<< "$SERENA_PROJECTS_RAW"
+    fi
     PRUNED=0
     ALIVE=()
     for p in "${REGISTERED[@]}"; do
