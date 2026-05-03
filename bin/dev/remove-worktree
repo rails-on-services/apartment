@@ -78,7 +78,15 @@ if [ ! -d "$WORKTREE_PATH" ]; then
     fi
 fi
 
-ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd || echo "$WORKTREE_PATH")
+# Resolve to an absolute path. The cd-and-pwd dance fails silently if the
+# directory is missing or unreadable, leaving $ABS_PATH set to the (possibly
+# relative) input. Downstream cleanup blocks compare $ABS_PATH against entries
+# in the Serena registry (absolute paths only); a relative fallback misses the
+# match and leaves the entry stale. Hard-error instead.
+if ! ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd); then
+    log_error "Could not resolve $WORKTREE_PATH to an absolute path"
+    exit 1
+fi
 WORKTREE_NAME=$(basename "$ABS_PATH")
 
 header "Remove worktree: $WORKTREE_NAME"
@@ -86,6 +94,10 @@ header "Remove worktree: $WORKTREE_NAME"
 # ---------------------------------------------------------------------------
 # Detect branch (using line-based parsing to handle paths with spaces)
 # ---------------------------------------------------------------------------
+# Try the porcelain parser first (also tells us this is a real registered
+# worktree), then fall back to symbolic-ref directly. The fallback handles
+# worktrees whose porcelain entry is malformed or already detached — without
+# it the script silently skipped --delete-branch and looked like a no-op.
 BRANCH=""
 IS_GIT_WORKTREE=false
 if git worktree list --porcelain | grep -q "^worktree ${ABS_PATH}$"; then
@@ -95,8 +107,11 @@ if git worktree list --porcelain | grep -q "^worktree ${ABS_PATH}$"; then
         found && /^branch / { sub("^branch refs/heads/", ""); print; exit }
         found && /^worktree / { exit }
     ')
-    [ -n "$BRANCH" ] && log_info "Branch: $BRANCH"
 fi
+if [ -z "$BRANCH" ]; then
+    BRANCH=$(git -C "$ABS_PATH" symbolic-ref --short -q HEAD 2>/dev/null || true)
+fi
+[ -n "$BRANCH" ] && log_info "Branch: $BRANCH"
 
 # ---------------------------------------------------------------------------
 # Check for uncommitted changes
