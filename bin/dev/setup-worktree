@@ -2,6 +2,18 @@
 # Setup script for new Git worktrees (apartment gem)
 # Copies essential untracked files and configures Peacock colors.
 # macOS-only (uses ditto for APFS copy-on-write).
+#
+# Color registry: ~/.config/campusesp/color-registry.json
+#   - palette: 50 OKLCH-derived hex colors anchored to CampusESP brand hues
+#     (Gold→Cyan→Purple→Pink→Cream→Red→Grey) with golden ratio sub-stepping, 3 lightness bands
+#   - worktree_colors: name -> hex assignments for active worktrees
+#   - Stale worktree_colors entries are auto-pruned on each run (reconciliation)
+#   - When palette is exhausted, generates overflow colors via golden ratio hue walk
+#     across 8 lightness/chroma orbits with perceptual distance checks; overflow
+#     colors are appended to the palette for future reuse
+#   - WezTerm tab colors read from the same registry (see ~/.wezterm.lua)
+#
+# See also: bin/dev/remove-worktree (frees color on worktree deletion)
 
 set -e
 
@@ -80,45 +92,68 @@ SERENA_CONFIG="$HOME/.serena/serena_config.yml"
 SERENA_PROJECT_NAME="${REPO_BASENAME}-${WORKTREE_NAME}"
 
 if [ -f "$SERENA_CONFIG" ]; then
-    # Prune entries whose paths no longer exist (defense in depth — handles
-    # worktrees removed via `git worktree remove` instead of bin/dev/remove-worktree).
-    # We enter "projects" mode on the `projects:` key and exit on the next
-    # top-level YAML key, so we never path-test `- ` items belonging to a
-    # sibling list Serena might add in a future config layout.
-    PRUNED=0
-    TMP_CFG="${SERENA_CONFIG}.tmp.$$"
-    trap 'rm -f "$TMP_CFG"' EXIT INT TERM
-    in_projects=0
-    while IFS= read -r line; do
-        if [[ "$line" == "projects:" ]]; then
-            in_projects=1
-            printf '%s\n' "$line" >> "$TMP_CFG"
-        elif [[ $in_projects -eq 1 && "$line" =~ ^[A-Za-z] ]]; then
-            in_projects=0
-            printf '%s\n' "$line" >> "$TMP_CFG"
-        elif [[ $in_projects -eq 1 && "$line" =~ ^-\ (.+)$ ]]; then
-            stale_path="${BASH_REMATCH[1]}"
-            if [ -d "$stale_path" ]; then
-                printf '%s\n' "$line" >> "$TMP_CFG"
-            else
-                log_info "Serena: pruning stale registration $stale_path"
-                PRUNED=$((PRUNED + 1))
-            fi
-        else
-            printf '%s\n' "$line" >> "$TMP_CFG"
-        fi
-    done < "$SERENA_CONFIG"
-    mv "$TMP_CFG" "$SERENA_CONFIG"
-    trap - EXIT INT TERM
-    if [ $PRUNED -gt 0 ]; then
-        log_info "Serena: pruned $PRUNED stale path(s) from $SERENA_CONFIG"
+    # Reconcile the registry via yq. A real YAML parser eliminates the
+    # corruption class where hand-rolled rewrites mis-indent list entries
+    # or misclassify lines after `projects:` as registry items.
+    if ! command -v yq >/dev/null 2>&1; then
+        log_error "yq not installed (brew install yq); cannot reconcile $SERENA_CONFIG"
+        exit 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        log_error "jq not installed (brew install jq); needed to encode paths safely"
+        exit 1
     fi
 
-    # Idempotent append.
-    if grep -qxF -- "- $ABS_WORKTREE_PATH" "$SERENA_CONFIG"; then
+    # Capture yq output via $() so a non-zero exit propagates under `set -e`.
+    # Process substitution (`done < <(yq …)`) would swallow the failure and
+    # leave REGISTERED empty, causing the rewrite below to drop every other
+    # path from the registry.
+    SERENA_PROJECTS_RAW=$(yq e '.projects // [] | .[]' "$SERENA_CONFIG") || {
+        log_error "Serena: failed to read .projects from $SERENA_CONFIG"
+        exit 1
+    }
+    REGISTERED=()
+    if [ -n "$SERENA_PROJECTS_RAW" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && REGISTERED+=("$line")
+        done <<< "$SERENA_PROJECTS_RAW"
+    fi
+    PRUNED=0
+    ALIVE=()
+    for p in "${REGISTERED[@]}"; do
+        if [ -d "$p" ]; then
+            ALIVE+=("$p")
+        else
+            PRUNED=$((PRUNED + 1))
+        fi
+    done
+
+    ALREADY=0
+    for p in "${ALIVE[@]}"; do
+        if [ "$p" = "$ABS_WORKTREE_PATH" ]; then
+            ALREADY=1
+            break
+        fi
+    done
+    [ "$ALREADY" -eq 0 ] && ALIVE+=("$ABS_WORKTREE_PATH")
+
+    # Atomic single-write rewrite. jq encodes the array (handles arbitrary
+    # chars in paths — no string interpolation into the yq expression);
+    # tempfile + mv makes the swap atomic, eliminating the partial-state
+    # window where the previous reset+loop pattern could leave the file
+    # empty or truncated on interrupt or mid-loop yq failure.
+    PROJECTS_JSON=$(jq -nc '$ARGS.positional' --args -- "${ALIVE[@]}")
+    TMP_CFG="${SERENA_CONFIG}.tmp.$$"
+    trap 'rm -f "$TMP_CFG"' EXIT INT TERM
+    cp "$SERENA_CONFIG" "$TMP_CFG"
+    yq e -i ".projects = $PROJECTS_JSON" "$TMP_CFG"
+    mv "$TMP_CFG" "$SERENA_CONFIG"
+    trap - EXIT INT TERM
+
+    [ "$PRUNED" -gt 0 ] && log_info "Serena: pruned $PRUNED stale path(s)"
+    if [ "$ALREADY" -eq 1 ]; then
         log_info "Serena: already registered ($ABS_WORKTREE_PATH)"
     else
-        printf -- '- %s\n' "$ABS_WORKTREE_PATH" >> "$SERENA_CONFIG"
         log_info "Serena: registered $ABS_WORKTREE_PATH"
     fi
 else
@@ -171,7 +206,8 @@ if [ "$SKIP_PEACOCK" = false ]; then
         log_warn "jq not found — skipping Peacock color assignment (brew install jq)"
         SKIP_PEACOCK=true
     elif [ ! -f "$REGISTRY" ]; then
-        log_warn "Color registry not found at $REGISTRY — skipping Peacock color assignment"
+        log_warn "Color registry not found at $REGISTRY"
+        log_info "Run 'bin/dev/init-color-registry' from www to create it"
         SKIP_PEACOCK=true
     fi
 fi
@@ -182,6 +218,18 @@ if [ "$SKIP_PEACOCK" = false ]; then
     _SETTINGS_TMP=""
     cleanup_tmp_files() { rm -f "$_REGISTRY_TMP" "$_SETTINGS_TMP" 2>/dev/null; }
     trap cleanup_tmp_files EXIT INT TERM
+
+    # Source the shared registry-reconcile library if installed (provides
+    # reconcile_color_registry, clean_orphan_worktree_dirs, generate_overflow_color).
+    # Falls back to a no-op when missing — devs without it just skip reconcile
+    # and overflow generation; assignment from the existing palette still works.
+    SHARED_LIB="$HOME/.config/campusesp/bin/registry-reconcile.sh"
+    if [ -f "$SHARED_LIB" ]; then
+        # shellcheck disable=SC1090
+        source "$SHARED_LIB"
+        reconcile_color_registry "$REGISTRY"
+        clean_orphan_worktree_dirs "$(dirname "$MAIN_REPO_PATH")/$(basename "$MAIN_REPO_PATH")-worktrees"
+    fi
 
     EXISTING=$(jq -r --arg name "$WORKTREE_NAME" '.worktree_colors[$name] // empty' "$REGISTRY")
     if [ -n "$EXISTING" ]; then
@@ -205,8 +253,18 @@ if [ "$SKIP_PEACOCK" = false ]; then
         fi
 
         if [ "$SKIP_PEACOCK" = false ] && [ -z "$ASSIGNED_COLOR" ]; then
-            log_warn "Color registry: palette exhausted (all colors in use) — skipping"
-            SKIP_PEACOCK=true
+            # Palette exhausted. With the shared library installed, synthesize a
+            # new color via OKLCH golden-ratio walk and continue. Without it,
+            # warn and skip Peacock — dev isn't blocked, just doesn't get a
+            # unique color until the library lands or the palette is expanded.
+            if declare -f generate_overflow_color >/dev/null 2>&1; then
+                log_warn "Palette exhausted — generating overflow color via golden ratio"
+                ASSIGNED_COLOR=$(generate_overflow_color "$REGISTRY") || ASSIGNED_COLOR=""
+            fi
+            if [ -z "$ASSIGNED_COLOR" ]; then
+                log_warn "Color registry: palette exhausted and overflow unavailable — skipping"
+                SKIP_PEACOCK=true
+            fi
         fi
 
         if [ "$SKIP_PEACOCK" = false ]; then

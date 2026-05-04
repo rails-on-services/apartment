@@ -194,9 +194,20 @@ fi
 # also prunes stale entries on the next run as a safety net, but doing it here
 # keeps the daemon healthy until then (stale entries crash samefile checks).
 SERENA_CONFIG="$HOME/.serena/serena_config.yml"
-if [ -f "$SERENA_CONFIG" ] && grep -qxF -- "- $ABS_PATH" "$SERENA_CONFIG"; then
-    grep -vxF -- "- $ABS_PATH" "$SERENA_CONFIG" > "${SERENA_CONFIG}.tmp" \
-        && mv "${SERENA_CONFIG}.tmp" "$SERENA_CONFIG"
+# strenv() reads the path from an env var instead of interpolating it into
+# the yq expression — avoids quote/escape injection if the path ever
+# contained `"` or `\`. Tempfile + mv keeps the rewrite atomic.
+if [ -f "$SERENA_CONFIG" ] && command -v yq >/dev/null 2>&1 \
+   && SERENA_REMOVE_PATH="$ABS_PATH" \
+      yq e -e '.projects // [] | .[] | select(. == strenv(SERENA_REMOVE_PATH))' \
+      "$SERENA_CONFIG" >/dev/null 2>&1; then
+    TMP_CFG="${SERENA_CONFIG}.tmp.$$"
+    trap 'rm -f "$TMP_CFG"' EXIT INT TERM
+    cp "$SERENA_CONFIG" "$TMP_CFG"
+    SERENA_REMOVE_PATH="$ABS_PATH" \
+        yq e -i 'del(.projects[] | select(. == strenv(SERENA_REMOVE_PATH)))' "$TMP_CFG"
+    mv "$TMP_CFG" "$SERENA_CONFIG"
+    trap - EXIT INT TERM
     log_info "Serena: deregistered $ABS_PATH"
 fi
 
