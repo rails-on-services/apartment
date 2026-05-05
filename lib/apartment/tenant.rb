@@ -41,6 +41,27 @@ module Apartment
         switch!(Apartment.config&.default_tenant)
       end
 
+      # Predicate: was a tenant explicitly entered?
+      # Reads Current.tenant directly (not Tenant.current) so it does NOT
+      # consider the default_tenant fallback. Use this when "is there an
+      # explicit tenant context right now?" matters more than "what tenant
+      # is effectively active?" — typically test setup and assertion code.
+      def switched?
+        !Current.tenant.nil?
+      end
+
+      # Raise if no tenant has been explicitly entered. Test-time guard for
+      # suites that want to fail loudly when ambient writes would land in
+      # the default tenant. No-op when a tenant is active.
+      def assert_inside_tenant!
+        return if switched?
+
+        raise(Apartment::ApartmentError,
+              'Expected an explicit tenant context, but Apartment::Current.tenant is nil. ' \
+              'Wrap the call in Apartment::Tenant.switch(tenant) { ... } or call ' \
+              'Apartment::Tenant.switch!(tenant).')
+      end
+
       # Initialize: resolve excluded_models shim, then process pinned models.
       def init
         resolve_excluded_models_shim

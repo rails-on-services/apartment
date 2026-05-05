@@ -110,6 +110,67 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
+  describe '.switched?' do
+    it 'returns false when Current.tenant is nil' do
+      Apartment::Current.tenant = nil
+      expect(described_class.switched?).to(be(false))
+    end
+
+    it 'returns true after switch!' do
+      described_class.switch!('tenant1')
+      expect(described_class.switched?).to(be(true))
+    end
+
+    it 'returns true after reset (reset is an explicit entry into default_tenant)' do
+      described_class.switch!('tenant1')
+      described_class.reset
+      # reset switches to default_tenant ('public') via switch!, which sets
+      # Current.tenant. switched? reports true — reset is an explicit entry
+      # into the default tenant, distinct from "no tenant ever entered".
+      expect(described_class.switched?).to(be(true))
+    end
+
+    it 'returns false outside a switch block, true inside' do
+      Apartment::Current.tenant = nil
+      expect(described_class.switched?).to(be(false))
+      described_class.switch('tenant1') do
+        expect(described_class.switched?).to(be(true))
+      end
+      expect(described_class.switched?).to(be(false))
+    end
+
+    it 'distinguishes from .current when nothing has been entered' do
+      Apartment::Current.tenant = nil
+      expect(described_class.current).to(eq('public'))
+      expect(described_class.switched?).to(be(false))
+    end
+  end
+
+  describe '.assert_inside_tenant!' do
+    it 'raises when Current.tenant is nil' do
+      Apartment::Current.tenant = nil
+      expect { described_class.assert_inside_tenant! }
+        .to(raise_error(Apartment::ApartmentError, /no explicit tenant context|Current.tenant is nil/))
+    end
+
+    it 'no-ops when a tenant has been entered' do
+      described_class.switch!('tenant1')
+      expect { described_class.assert_inside_tenant! }.not_to(raise_error)
+    end
+
+    it 'no-ops inside a switch block' do
+      described_class.switch('tenant1') do
+        expect { described_class.assert_inside_tenant! }.not_to(raise_error)
+      end
+    end
+
+    it 'message points the caller at switch / switch!' do
+      Apartment::Current.tenant = nil
+      expect { described_class.assert_inside_tenant! }
+        .to(raise_error(/Apartment::Tenant\.switch/))
+    end
+  end
+
   describe '.init' do
     it 'delegates to adapter.process_pinned_models' do
       expect(mock_adapter).to(receive(:process_pinned_models))
