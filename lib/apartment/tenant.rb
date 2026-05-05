@@ -75,6 +75,52 @@ module Apartment
         tenants.each { |tenant| switch(tenant) { yield(tenant) } }
       end
 
+
+      # Block-scoped override of the tenant resolver. For the duration of the
+      # block, every "what tenants do we have?" call site (Apartment.tenant_names,
+      # Tenant.each, Migrator, SchemaCache, CLI commands) reads from +source+
+      # instead of config.tenants_provider.
+      #
+      # +source+ may be a callable (re-evaluated on each access) or anything
+      # coercible to an Array of strings via Array(source).map(&:to_s). Empty
+      # arrays are honored — Tenant.each yields zero times. Nesting fully
+      # replaces the outer override; the previous value is restored on block
+      # exit (including via raise).
+      #
+      #   Apartment::Tenant.with_tenants_provider(['acme', 'widgets']) do
+      #     Apartment::Tenant.each { |t| ... }       # yields acme, widgets only
+      #   end
+      #
+      #   Apartment::Tenant.with_tenants_provider(-> { Account.recent.pluck(:id) }) do
+      #     Apartment::Tenant.each { |t| ... }
+      #   end
+      def with_tenants_provider(source)
+        raise(ArgumentError, 'Apartment::Tenant.with_tenants_provider requires a block') unless block_given?
+
+        override =
+          if source.respond_to?(:call)
+            source
+          else
+            Array(source).map(&:to_s).freeze
+          end
+
+        previous = Current.tenant_override
+        Current.tenant_override = override
+        yield
+      ensure
+        Current.tenant_override = previous
+      end
+
+      # Convenience splat over with_tenants_provider for the common case of an
+      # enumerated list of names.
+      #
+      #   Apartment::Tenant.with_tenants('acme', 'widgets') do
+      #     Apartment::Tenant.each { |t| ... }
+      #   end
+      def with_tenants(*names, &block)
+        with_tenants_provider(names, &block)
+      end
+
       # Pool stats delegated to pool_manager.
       def pool_stats
         Apartment.pool_manager&.stats || {}
