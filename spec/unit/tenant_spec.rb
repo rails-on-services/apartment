@@ -110,39 +110,39 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
-  describe '.switched?' do
+  describe '.inside_tenant?' do
     it 'returns false when Current.tenant is nil' do
       Apartment::Current.tenant = nil
-      expect(described_class.switched?).to(be(false))
+      expect(described_class.inside_tenant?).to(be(false))
     end
 
     it 'returns true after switch!' do
       described_class.switch!('tenant1')
-      expect(described_class.switched?).to(be(true))
+      expect(described_class.inside_tenant?).to(be(true))
     end
 
     it 'returns true after reset (reset is an explicit entry into default_tenant)' do
       described_class.switch!('tenant1')
       described_class.reset
       # reset switches to default_tenant ('public') via switch!, which sets
-      # Current.tenant. switched? reports true — reset is an explicit entry
+      # Current.tenant. inside_tenant? reports true — reset is an explicit entry
       # into the default tenant, distinct from "no tenant ever entered".
-      expect(described_class.switched?).to(be(true))
+      expect(described_class.inside_tenant?).to(be(true))
     end
 
     it 'returns false outside a switch block, true inside' do
       Apartment::Current.tenant = nil
-      expect(described_class.switched?).to(be(false))
+      expect(described_class.inside_tenant?).to(be(false))
       described_class.switch('tenant1') do
-        expect(described_class.switched?).to(be(true))
+        expect(described_class.inside_tenant?).to(be(true))
       end
-      expect(described_class.switched?).to(be(false))
+      expect(described_class.inside_tenant?).to(be(false))
     end
 
     it 'distinguishes from .current when nothing has been entered' do
       Apartment::Current.tenant = nil
       expect(described_class.current).to(eq('public'))
-      expect(described_class.switched?).to(be(false))
+      expect(described_class.inside_tenant?).to(be(false))
     end
   end
 

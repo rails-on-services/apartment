@@ -49,10 +49,10 @@ module Apartment
       # explicit tenant context right now?" matters more than "what tenant
       # is effectively active?" — typically test setup and assertion code.
       #
-      # Note: after Tenant.reset, switched? returns true. reset enters the
+      # Note: after Tenant.reset, inside_tenant? returns true. reset enters the
       # default tenant via switch!, which is an explicit entry. To check
       # "no tenant ever entered," combine with Current.previous_tenant.nil?.
-      def switched?
+      def inside_tenant?
         !Current.tenant.nil?
       end
 
@@ -60,7 +60,7 @@ module Apartment
       # suites that want to fail loudly when ambient writes would land in
       # the default tenant. No-op when a tenant is active.
       def assert_inside_tenant!(message: nil)
-        return if switched?
+        return if inside_tenant?
 
         raise(Apartment::ApartmentError,
               message ||

@@ -30,7 +30,7 @@ end
 
 Raises `Apartment::ApartmentError` when no tenant has been explicitly entered (i.e. `Apartment::Current.tenant` is `nil`).
 
-The simplest way to keep `switched?` true across every example is **suite-level**: call `Tenant.switch!` once after suite bootstrap (see [Recommended baseline](#recommended-baseline-for-new-v4-apps)). Per-example `around { switch(name) { example.run } }` works too, but is only necessary when specs need different tenants via metadata; otherwise prefer the suite-level form to avoid lifecycle interactions with frameworks like test-prof's `let_it_be` / `before_all` (see footnote in the baseline section).
+The simplest way to keep `inside_tenant?` true across every example is **suite-level**: call `Tenant.switch!` once after suite bootstrap (see [Recommended baseline](#recommended-baseline-for-new-v4-apps)). Per-example `around { switch(name) { example.run } }` works too, but is only necessary when specs need different tenants via metadata; otherwise prefer the suite-level form to avoid lifecycle interactions with frameworks like test-prof's `let_it_be` / `before_all` (see footnote in the baseline section).
 
 For richer failure messages, pass `message:`:
 

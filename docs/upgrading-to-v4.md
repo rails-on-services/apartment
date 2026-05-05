@@ -72,7 +72,7 @@ Two new predicates and a config flag landed in 4.0.0.alpha3 to support strict te
 
 ```ruby
 # Predicate: was a tenant explicitly entered?
-Apartment::Tenant.switched?            # reads Current.tenant directly, ignores default fallback
+Apartment::Tenant.inside_tenant?            # reads Current.tenant directly, ignores default fallback
 
 # Test-time assertion: raise when no explicit tenant is active
 Apartment::Tenant.assert_inside_tenant!

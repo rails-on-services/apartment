@@ -21,7 +21,7 @@ A v4 alpha consumer surfaced six asks. Panel review (Codex + Cursor) narrowed th
 
 | Ask | Verdict | Where |
 |---|---|---|
-| `Tenant.switched?` | In | Commit 1 |
+| `Tenant.inside_tenant?` | In | Commit 1 |
 | `Tenant.assert_inside_tenant!` | In | Commit 1 |
 | `assert_inside_tenant!(message:)` kwarg | In | Commit 2 |
 | `default_tenant_switch_allowed` flag | In, **default true everywhere** | Commit 2 |
@@ -40,7 +40,7 @@ The strict-mode default flip was the biggest change. The consumer's actual flake
 # Predicate: was a tenant explicitly entered?
 # Reads Current.tenant directly (NOT Tenant.current); ignores the
 # default_tenant fallback.
-Apartment::Tenant.switched?            # => true | false
+Apartment::Tenant.inside_tenant?            # => true | false
 
 # Test-time assertion: raise when no explicit tenant is active.
 # Optional message: kwarg for richer failure context.
@@ -85,7 +85,7 @@ end
 
 ### `lib/apartment/tenant.rb`
 
-Two changes (commit 1 already added `switched?` and `assert_inside_tenant!`):
+Two changes (commit 1 already added `inside_tenant?` and `assert_inside_tenant!`):
 
 ```ruby
 # Guard inside switch (block form only — switch! and reset stay unguarded)
@@ -106,7 +106,7 @@ end
 
 # Update assert_inside_tenant! to accept an optional message
 def assert_inside_tenant!(message: nil)
-  return if switched?
+  return if inside_tenant?
 
   raise(Apartment::ApartmentError,
         message ||
@@ -140,7 +140,7 @@ One PR, three commits, in this order:
 
 ### Commit 1 — Predicates and assertion *(done — 3cfcd0d)*
 
-- `lib/apartment/tenant.rb` — `switched?` and `assert_inside_tenant!` added.
+- `lib/apartment/tenant.rb` — `inside_tenant?` and `assert_inside_tenant!` added.
 - `spec/unit/tenant_spec.rb` — 9 specs covering both predicates.
 
 ### Commit 2 — Config flag + switch guard + message kwarg
@@ -167,7 +167,7 @@ One PR, three commits, in this order:
 
 ### Unit
 
-- `Tenant.switched?` (commit 1, done): false when nil; true after `switch!`; true after `reset` (reset is explicit entry); true inside `switch(...) { }`; false outside.
+- `Tenant.inside_tenant?` (commit 1, done): false when nil; true after `switch!`; true after `reset` (reset is explicit entry); true inside `switch(...) { }`; false outside.
 - `Tenant.assert_inside_tenant!`: raises when nil with default message; no-ops when switched; honors `message:` kwarg.
 - `Config.default_tenant_switch_allowed`: defaults to `true` for all strategies; honors explicit override (true/false); validation rejects non-boolean.
 - Guard:
@@ -207,7 +207,7 @@ end
 | Risk | Mitigation |
 |---|---|
 | Strict-mode error message confuses callers | Message points at `reset` and `switch!` as the alternatives. |
-| `Current.tenant` vs `Tenant.current` keeps confusing readers | `docs/architecture.md` documents the distinction; `switched?` body is one line so semantics stay legible. |
+| `Current.tenant` vs `Tenant.current` keeps confusing readers | `docs/architecture.md` documents the distinction; `inside_tenant?` body is one line so semantics stay legible. |
 | Apps adopt strict mode and discover `before(:context)` doesn't fit a block | `docs/testing.md` documents `switch!` as the recommended pattern for non-block scopes. |
 | Cross-pool tx visibility footgun keeps surfacing | `docs/testing.md` documents the constraint plainly; no API change. |
 
