@@ -15,6 +15,7 @@ module Apartment
                 :environmentify_strategy, :excluded_models
 
     attr_accessor :tenants_provider, :default_tenant,
+                  :default_tenant_switch_allowed,
                   :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
                   :seed_after_create, :seed_data_file,
                   :schema_load_strategy, :schema_file,
@@ -29,6 +30,7 @@ module Apartment
       @tenant_strategy = nil
       @tenants_provider = nil
       @default_tenant = nil
+      @default_tenant_switch_allowed = true
       @excluded_models = []
       @tenant_pool_size = 5
       @pool_idle_timeout = 300
@@ -122,6 +124,12 @@ module Apartment
 
       if @default_tenant.is_a?(String) && @default_tenant.strip.empty?
         raise(ConfigurationError, 'default_tenant cannot be an empty string')
+      end
+
+      unless [true, false].include?(@default_tenant_switch_allowed)
+        raise(ConfigurationError,
+              'default_tenant_switch_allowed must be true or false, got: ' \
+              "#{@default_tenant_switch_allowed.inspect}")
       end
 
       unless @tenants_provider.respond_to?(:call)

@@ -12,6 +12,8 @@ module Apartment
       def switch(tenant, &block)
         raise(ArgumentError, 'Apartment::Tenant.switch requires a block') unless block
 
+        guard_default_tenant_switch!(tenant)
+
         previous = Current.tenant
         Current.tenant = tenant
         Current.previous_tenant = previous
@@ -53,10 +55,11 @@ module Apartment
       # Raise if no tenant has been explicitly entered. Test-time guard for
       # suites that want to fail loudly when ambient writes would land in
       # the default tenant. No-op when a tenant is active.
-      def assert_inside_tenant!
+      def assert_inside_tenant!(message: nil)
         return if switched?
 
         raise(Apartment::ApartmentError,
+              message ||
               'Expected an explicit tenant context, but Apartment::Current.tenant is nil. ' \
               'Wrap the call in Apartment::Tenant.switch(tenant) { ... } or call ' \
               'Apartment::Tenant.switch!(tenant).')
@@ -170,6 +173,23 @@ module Apartment
       # become a frozen Array<String>. Everything else raises ArgumentError —
       # silently coercing nil/Hash/random objects produces tenant names like
       # "" or "[:k, v]" that fail far from the call site.
+      # Raise when default_tenant_switch_allowed is false and the caller is
+      # block-switching into the default tenant. switch! and reset are exempt:
+      # neither enters this guard, so they remain the legitimate paths into
+      # the default tenant under strict mode.
+      def guard_default_tenant_switch!(tenant)
+        cfg = Apartment.config
+        return if cfg.nil? || cfg.default_tenant_switch_allowed
+        return if cfg.default_tenant.nil?
+        return unless tenant.to_s == cfg.default_tenant.to_s
+
+        raise(Apartment::ApartmentError,
+              "switch(#{cfg.default_tenant.inspect}) is disabled by " \
+              'default_tenant_switch_allowed = false. Use Apartment::Tenant.reset for ' \
+              'explicit re-entry into the default tenant, or Apartment::Tenant.switch!(name) ' \
+              'for non-block scopes.')
+      end
+
       def coerce_tenant_override(source)
         return source if source.respond_to?(:call)
 

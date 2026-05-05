@@ -169,6 +169,64 @@ RSpec.describe(Apartment::Tenant) do
       expect { described_class.assert_inside_tenant! }
         .to(raise_error(/Apartment::Tenant\.switch/))
     end
+
+    it 'honors a custom message: kwarg' do
+      Apartment::Current.tenant = nil
+      expect { described_class.assert_inside_tenant!(message: 'cross_tenant: true required') }
+        .to(raise_error(Apartment::ApartmentError, 'cross_tenant: true required'))
+    end
+  end
+
+  describe '.switch default_tenant guard' do
+    context 'when default_tenant_switch_allowed is true (default)' do
+      it 'permits switch into the default tenant' do
+        expect { described_class.switch('public') { :ok } }.not_to(raise_error)
+      end
+    end
+
+    context 'when default_tenant_switch_allowed is false' do
+      before do
+        Apartment.configure do |c|
+          c.tenant_strategy = :schema
+          c.tenants_provider = -> { %w[tenant1 tenant2] }
+          c.default_tenant = 'public'
+          c.default_tenant_switch_allowed = false
+        end
+      end
+
+      it 'raises on switch(default_tenant) block form' do
+        expect { described_class.switch('public') { :ok } }
+          .to(raise_error(Apartment::ApartmentError,
+                          /switch\("public"\) is disabled.*default_tenant_switch_allowed/m))
+      end
+
+      it 'error message points at reset and switch!' do
+        expect { described_class.switch('public') { :ok } }
+          .to(raise_error(/Apartment::Tenant\.reset.*Apartment::Tenant\.switch!/m))
+      end
+
+      it 'permits switch into a non-default tenant' do
+        expect { described_class.switch('tenant1') { :ok } }.not_to(raise_error)
+      end
+
+      it 'permits switch!(default_tenant) (non-block bypass)' do
+        expect { described_class.switch!('public') }.not_to(raise_error)
+      end
+
+      it 'permits Tenant.reset' do
+        expect { described_class.reset }.not_to(raise_error)
+      end
+
+      it 'is inert when default_tenant is nil' do
+        Apartment.configure do |c|
+          c.tenant_strategy = :database_name
+          c.tenants_provider = -> { %w[t1] }
+          c.default_tenant_switch_allowed = false
+        end
+        # default_tenant is nil; no tenant name can match, so guard never fires.
+        expect { described_class.switch('t1') { :ok } }.not_to(raise_error)
+      end
+    end
   end
 
   describe '.init' do
