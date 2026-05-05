@@ -28,16 +28,9 @@ RSpec.configure do |config|
 end
 ```
 
-Raises `Apartment::ApartmentError` when no tenant has been explicitly entered (i.e. `Apartment::Current.tenant` is `nil`). Pair with an `around` hook that wraps each example in a `switch`:
+Raises `Apartment::ApartmentError` when no tenant has been explicitly entered (i.e. `Apartment::Current.tenant` is `nil`).
 
-```ruby
-RSpec.configure do |config|
-  config.around do |example|
-    tenant = example.metadata.fetch(:tenant, 'test_tenant')
-    Apartment::Tenant.switch(tenant) { example.run }
-  end
-end
-```
+The simplest way to keep `switched?` true across every example is **suite-level**: call `Tenant.switch!` once after suite bootstrap (see [Recommended baseline](#recommended-baseline-for-new-v4-apps)). Per-example `around { switch(name) { example.run } }` works too, but is only necessary when specs need different tenants via metadata; otherwise prefer the suite-level form to avoid lifecycle interactions with frameworks like test-prof's `let_it_be` / `before_all` (see footnote in the baseline section).
 
 For richer failure messages, pass `message:`:
 
@@ -142,14 +135,32 @@ Apartment.configure do |config|
   config.default_tenant_switch_allowed = false
 end
 
-# spec/rails_helper.rb
-RSpec.configure do |c|
-  c.around do |example|
-    Apartment::Tenant.switch('test_tenant') { example.run }
-  end
+# spec/rails_helper.rb (after the suite bootstraps tenants)
+Apartment::Tenant.switch!('test_tenant')
 
+RSpec.configure do |c|
   c.before(:each) { Apartment::Tenant.assert_inside_tenant! }
 end
 ```
 
-This keeps the default schema for shared/pinned data (`Apartment::Model` + `pin_tenant`), forces every spec into an explicit tenant, and makes the "I forgot to switch" bug fail loudly at the first read of pinned data.
+This keeps the default schema for shared/pinned data (`Apartment::Model` + `pin_tenant`), enters an explicit tenant once at suite bootstrap so every example inherits it, and makes the "I forgot to switch" bug fail loudly at the first read of pinned data.
+
+For suites that need **different tenants per example**, layer an `around` hook on top — driven by metadata so the default stays suite-level:
+
+```ruby
+RSpec.configure do |c|
+  c.around do |example|
+    tenants = Array(example.metadata[:tenants])
+    next example.run if tenants.empty?
+
+    Apartment::Tenant.with_tenants(*tenants) { example.run }
+  end
+end
+
+# Per-spec opt-in:
+RSpec.describe MyJob, tenants: %w[acme widgets] do
+  # ...
+end
+```
+
+> **Footnote on test-prof.** If your suite uses test-prof's `let_it_be` / `before_all`, prefer the suite-level `switch!` shown above over per-example `around { switch(...) { example.run } }`. `let_it_be` commits its setup data inside its own transaction; wrapping examples in an `around switch` can interact with the savepoint hierarchy in a way that DatabaseCleaner's rollback can't unwind cleanly when an example raises — producing a transaction-poisoning cascade where every subsequent example fails with `PG::InFailedSqlTransaction`. Suite-level `switch!` avoids this because there's no per-example switching wrapping `let_it_be` setup.
