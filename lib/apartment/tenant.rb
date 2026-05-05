@@ -71,8 +71,62 @@ module Apartment
       def each(tenants = nil)
         raise(ArgumentError, 'Apartment::Tenant.each requires a block') unless block_given?
 
-        tenants ||= fetch_tenant_list
+        tenants ||= Apartment.tenant_names
         tenants.each { |tenant| switch(tenant) { yield(tenant) } }
+      end
+
+      # Block-scoped override of the tenant resolver. For the duration of the
+      # block, every "what tenants do we have?" call site (Apartment.tenant_names,
+      # Tenant.each, Migrator, SchemaCache, CLI commands) reads from +source+
+      # instead of config.tenants_provider.
+      #
+      # The override is in-process, fiber-safe, and block-local. It does NOT
+      # automatically propagate to ActiveJob workers, child threads, or other
+      # processes — pass tenant names as job arguments if cross-process scoping
+      # is required.
+      #
+      # Accepted shapes for +source+:
+      #
+      #   * A callable (responds to +:call+) — re-evaluated on every
+      #     +Apartment.tenant_names+ access inside the block. Use a frozen Array
+      #     instead if you need a stable snapshot.
+      #   * A String or Symbol — coerced to a single-element Array of strings.
+      #   * An Array of String/Symbol — coerced to an Array of strings.
+      #
+      # Anything else (+nil+, Hash, arbitrary object) raises ArgumentError. Empty
+      # arrays are honored — Tenant.each yields zero times. Nesting fully
+      # replaces the outer override; the previous value is restored on block
+      # exit (including via raise).
+      #
+      #   Apartment::Tenant.with_tenants_provider(['acme', 'widgets']) do
+      #     Apartment::Tenant.each { |t| ... }       # yields acme, widgets only
+      #   end
+      #
+      #   Apartment::Tenant.with_tenants_provider(-> { Account.recent.pluck(:id) }) do
+      #     Apartment::Tenant.each { |t| ... }
+      #   end
+      def with_tenants_provider(source)
+        raise(ArgumentError, 'Apartment::Tenant.with_tenants_provider requires a block') unless block_given?
+
+        override = coerce_tenant_override(source)
+
+        previous = Current.tenant_override
+        Current.tenant_override = override
+        begin
+          yield
+        ensure
+          Current.tenant_override = previous
+        end
+      end
+
+      # Convenience splat over with_tenants_provider for the common case of an
+      # enumerated list of names.
+      #
+      #   Apartment::Tenant.with_tenants('acme', 'widgets') do
+      #     Apartment::Tenant.each { |t| ... }
+      #   end
+      def with_tenants(*names, &)
+        with_tenants_provider(names, &)
       end
 
       # Pool stats delegated to pool_manager.
@@ -82,15 +136,36 @@ module Apartment
 
       private
 
-      def fetch_tenant_list
-        config = Apartment.config or
-          raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.')
-        result = config.tenants_provider.call
-        unless result.respond_to?(:each)
-          raise(ConfigurationError,
-                "tenants_provider must return an Enumerable, got #{result.class}")
+      # Validate and coerce a +with_tenants_provider+ source argument.
+      # Callables pass through. String, Symbol, and Arrays of String/Symbol
+      # become a frozen Array<String>. Everything else raises ArgumentError —
+      # silently coercing nil/Hash/random objects produces tenant names like
+      # "" or "[:k, v]" that fail far from the call site.
+      def coerce_tenant_override(source)
+        return source if source.respond_to?(:call)
+
+        names = wrap_tenant_names(source)
+        validate_tenant_name_array!(names)
+        names.map(&:to_s).freeze
+      end
+
+      def wrap_tenant_names(source)
+        case source
+        when String, Symbol then [source]
+        when Array          then source
+        else
+          raise(ArgumentError,
+                'Apartment::Tenant.with_tenants_provider expects a callable, ' \
+                "String, Symbol, or Array of String/Symbol; got #{source.class}")
         end
-        result
+      end
+
+      def validate_tenant_name_array!(names)
+        return if names.all? { |n| n.is_a?(String) || n.is_a?(Symbol) }
+
+        raise(ArgumentError,
+              'Apartment::Tenant.with_tenants_provider Array entries must be ' \
+              'String or Symbol')
       end
 
       def adapter

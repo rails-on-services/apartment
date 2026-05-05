@@ -63,7 +63,7 @@ module Apartment
         )
       end
 
-      tenants = Apartment.config.tenants_provider.call
+      tenants = Apartment.tenant_names
       tenant_results = if @threads.positive?
                          run_parallel(tenants)
                        else

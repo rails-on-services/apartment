@@ -15,7 +15,7 @@ module Apartment
     end
 
     def dump_all
-      Apartment.config.tenants_provider.call.map { |t| dump(t) }
+      Apartment.tenant_names.map { |t| dump(t) }
     end
 
     def cache_path_for(tenant)

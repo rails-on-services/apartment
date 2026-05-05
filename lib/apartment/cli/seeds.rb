@@ -29,7 +29,7 @@ module Apartment
       end
 
       def seed_all
-        tenants = Apartment.config.tenants_provider.call
+        tenants = Apartment.tenant_names
         failed = []
         tenants.each do |t|
           say("Seeding tenant: #{t}")

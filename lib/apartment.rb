@@ -35,7 +35,7 @@ loader.setup
 require_relative 'apartment/errors'
 
 module Apartment # rubocop:disable Metrics/ModuleLength
-  class << self
+  class << self # rubocop:disable Metrics/ClassLength
     attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
 
@@ -71,12 +71,27 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       @activated == true
     end
 
-    # v3 compatibility: Apartment.tenant_names returns the current tenant list.
-    # Delegates to config.tenants_provider.call.
+    # Returns the current tenant list. Single resolver used by Tenant.each,
+    # Migrator, SchemaCache, and the CLI commands. Honors the per-block
+    # override set by Tenant.with_tenants_provider / with_tenants when present;
+    # otherwise resolves through @config.tenants_provider.
+    #
+    # The override (or the configured provider) may itself be a callable, in
+    # which case it is invoked on every access. Whatever the source, the
+    # resolved value must respond to :each.
     def tenant_names
       raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.') unless @config
 
-      @config.tenants_provider.call
+      override = Current.tenant_override
+      source = override || @config.tenants_provider
+      result = source.respond_to?(:call) ? source.call : source
+
+      unless result.respond_to?(:each)
+        source_label = override ? 'tenant_override' : 'tenants_provider'
+        raise(ConfigurationError,
+              "#{source_label} must return an Enumerable, got #{result.class}")
+      end
+      result
     end
 
     # v3 compatibility: Apartment.excluded_models returns the excluded models list.

@@ -16,7 +16,7 @@ v4 replaces the thread-local tenant switching model with pool-per-tenant archite
 
 ### Configuration
 
-`config.tenant_names` has been removed. Use `config.tenants_provider` instead; it must be a callable (proc or lambda). The convenience method `Apartment.tenant_names` still works — it delegates to `config.tenants_provider.call`.
+`config.tenant_names` has been removed. Use `config.tenants_provider` instead; it must be a callable (proc or lambda). The convenience method `Apartment.tenant_names` still works — it is now the single resolver used internally by `Tenant.each`, `Migrator`, `SchemaCache`, and the CLI commands. It honors a per-block override set via `Apartment::Tenant.with_tenants_provider` / `Apartment::Tenant.with_tenants` when one is active, and validates that the resolved value responds to `:each` (raising `ConfigurationError` otherwise — previously this check ran only in `Tenant.each`).
 
 `config.tenant_strategy` is now required. Supported values: `:schema` (PostgreSQL schema-per-tenant) and `:database_name` (separate database per tenant). Additional strategies (`:shard`, `:database_config`) are reserved for future use and will raise `AdapterNotFound` if configured today.
 
