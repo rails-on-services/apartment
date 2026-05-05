@@ -17,6 +17,13 @@ Apartment.configure do |config|
   # The default tenant (used on boot and between requests).
   # config.default_tenant = 'public'
 
+  # Strict tenant discipline. When false, Apartment::Tenant.switch(default_tenant)
+  # raises — apps must use Tenant.reset (block-less) or Tenant.switch!(name) for
+  # explicit re-entry into the default tenant. Catches accidental block-form
+  # switches into the shared schema. Defaults to true for backward compatibility;
+  # recommended for new PostgreSQL :schema apps that want strict semantics.
+  # config.default_tenant_switch_allowed = false
+
   # Models that live in the shared/default schema (not per-tenant).
   # The recommended approach is to declare this in the model itself:
   #

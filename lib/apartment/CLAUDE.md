@@ -42,6 +42,11 @@ lib/apartment/
 
 `switch(tenant) { ... }` sets `Current.tenant` via ensure block. Delegates lifecycle ops (`create`, `drop`, `migrate`, `seed`) to `Apartment.adapter`. No thread-local state — uses `CurrentAttributes` for fiber safety.
 
+**Predicates and strict-mode guard (4.0.0.alpha3)**:
+- `inside_tenant?` reads `Current.tenant` directly (NOT `Tenant.current`), so it ignores the `default_tenant` fallback. Use when "is there an explicit tenant context?" matters more than "what tenant is effectively active?".
+- `assert_inside_tenant!(message: nil)` raises `ApartmentError` when `Current.tenant` is `nil`. Test-time discipline; `message:` kwarg supports richer failure context.
+- `switch(name) { ... }` calls `guard_default_tenant_switch!`, which raises when `Apartment.config.default_tenant_switch_allowed` is `false` AND `name == default_tenant`. `switch!` and `reset` are exempt by design — they remain the unguarded paths back to the default tenant. The flag defaults to `true` (permissive) for all strategies; new PG `:schema` apps wanting strict semantics opt in. See `docs/testing.md`.
+
 ### config.rb — Configuration
 
 `Apartment.configure { |c| ... }` builds config, validates, freezes. Prepare-then-swap pattern: failed configure preserves previous working config. Frozen after validation — tests must reconfigure, not stub.

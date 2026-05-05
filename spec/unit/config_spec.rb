@@ -26,6 +26,40 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.shard_key_prefix).to(eq('apartment')) }
     it { expect(config.force_separate_pinned_pool).to(be(false)) }
     it { expect(config.test_fixture_cleanup).to(be(true)) }
+    it { expect(config.default_tenant_switch_allowed).to(be(true)) }
+  end
+
+  describe '#default_tenant_switch_allowed validation' do
+    before do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+    end
+
+    it 'accepts true' do
+      config.default_tenant_switch_allowed = true
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts false' do
+      config.default_tenant_switch_allowed = false
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'rejects non-boolean values' do
+      config.default_tenant_switch_allowed = 'yes'
+      expect { config.validate! }.to(raise_error(
+                                       Apartment::ConfigurationError,
+                                       /default_tenant_switch_allowed must be true or false/
+                                     ))
+    end
+
+    it 'rejects nil' do
+      config.default_tenant_switch_allowed = nil
+      expect { config.validate! }.to(raise_error(
+                                       Apartment::ConfigurationError,
+                                       /default_tenant_switch_allowed must be true or false/
+                                     ))
+    end
   end
 
   describe '#tenant_strategy=' do

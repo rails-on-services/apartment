@@ -12,6 +12,8 @@ module Apartment
       def switch(tenant, &block)
         raise(ArgumentError, 'Apartment::Tenant.switch requires a block') unless block
 
+        guard_default_tenant_switch!(tenant)
+
         previous = Current.tenant
         Current.tenant = tenant
         Current.previous_tenant = previous
@@ -39,6 +41,32 @@ module Apartment
       # Reset to default tenant.
       def reset
         switch!(Apartment.config&.default_tenant)
+      end
+
+      # Predicate: was a tenant explicitly entered?
+      # Reads Current.tenant directly (not Tenant.current) so it does NOT
+      # consider the default_tenant fallback. Use this when "is there an
+      # explicit tenant context right now?" matters more than "what tenant
+      # is effectively active?" — typically test setup and assertion code.
+      #
+      # Note: after Tenant.reset, inside_tenant? returns true. reset enters the
+      # default tenant via switch!, which is an explicit entry. To check
+      # "no tenant ever entered," combine with Current.previous_tenant.nil?.
+      def inside_tenant?
+        !Current.tenant.nil?
+      end
+
+      # Raise if no tenant has been explicitly entered. Test-time guard for
+      # suites that want to fail loudly when ambient writes would land in
+      # the default tenant. No-op when a tenant is active.
+      def assert_inside_tenant!(message: nil)
+        return if inside_tenant?
+
+        raise(Apartment::ApartmentError,
+              message ||
+              'Expected an explicit tenant context, but Apartment::Current.tenant is nil. ' \
+              'Wrap the call in Apartment::Tenant.switch(tenant) { ... } or call ' \
+              'Apartment::Tenant.switch!(tenant).')
       end
 
       # Initialize: resolve excluded_models shim, then process pinned models.
@@ -143,6 +171,23 @@ module Apartment
       end
 
       private
+
+      # Raise when default_tenant_switch_allowed is false and the caller is
+      # block-switching into the default tenant. switch! and reset are exempt:
+      # neither enters this guard, so they remain the legitimate paths into
+      # the default tenant under strict mode.
+      def guard_default_tenant_switch!(tenant)
+        cfg = Apartment.config
+        return if cfg.nil? || cfg.default_tenant_switch_allowed
+        return if cfg.default_tenant.nil?
+        return unless tenant.to_s == cfg.default_tenant.to_s
+
+        raise(Apartment::ApartmentError,
+              "switch(#{cfg.default_tenant.inspect}) is disabled by " \
+              'default_tenant_switch_allowed = false. Inside a block scope, call ' \
+              'Apartment::Tenant.reset to re-enter the default tenant. For non-block ' \
+              'scopes (suite bootstrap, before(:context)), use Apartment::Tenant.switch!(name).')
+      end
 
       # Validate and coerce a +with_tenants_provider+ source argument.
       # Callables pass through. String, Symbol, and Arrays of String/Symbol
