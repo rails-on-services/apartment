@@ -55,7 +55,7 @@ RSpec.describe(Apartment) do
   end
 
   describe '.tenant_names' do
-    it 'delegates to config.tenants_provider.call' do
+    it 'returns the result of calling config.tenants_provider' do
       tenants = %w[acme widgets]
       described_class.configure do |config|
         config.tenant_strategy = :schema

@@ -5,7 +5,7 @@ require_relative 'instrumentation'
 require_relative 'errors'
 
 module Apartment
-  class Migrator
+  class Migrator # rubocop:disable Metrics/ClassLength
     Result = Data.define(
       :tenant,
       :status,

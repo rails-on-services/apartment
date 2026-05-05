@@ -365,6 +365,48 @@ RSpec.describe(Apartment::Tenant) do
       end
       expect(seen_inside).to(eq(%w[inner]))
     end
+
+    it 'does not clear an outer override when the inner call raises ArgumentError' do
+      described_class.with_tenants_provider(%w[outer]) do
+        expect do
+          described_class.with_tenants_provider(%w[inner]) # no block
+        end.to(raise_error(ArgumentError, /requires a block/))
+        expect(Apartment::Current.tenant_override).to(eq(%w[outer]))
+      end
+    end
+
+    it 'does not clear an outer override when coercion raises ArgumentError' do
+      described_class.with_tenants_provider(%w[outer]) do
+        expect do
+          described_class.with_tenants_provider(nil) { :unreachable }
+        end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+        expect(Apartment::Current.tenant_override).to(eq(%w[outer]))
+      end
+    end
+
+    it 'raises ArgumentError for nil' do
+      expect do
+        described_class.with_tenants_provider(nil) { :unreachable }
+      end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+    end
+
+    it 'raises ArgumentError for a Hash' do
+      expect do
+        described_class.with_tenants_provider({ acme: 1 }) { :unreachable }
+      end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+    end
+
+    it 'raises ArgumentError for an arbitrary object' do
+      expect do
+        described_class.with_tenants_provider(Object.new) { :unreachable }
+      end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+    end
+
+    it 'raises ArgumentError for an Array containing a non-String/Symbol entry' do
+      expect do
+        described_class.with_tenants_provider(['acme', 42]) { :unreachable }
+      end.to(raise_error(ArgumentError, /Array entries must be String or Symbol/))
+    end
   end
 
   describe '.with_tenants' do

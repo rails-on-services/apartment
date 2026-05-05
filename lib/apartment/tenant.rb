@@ -80,8 +80,20 @@ module Apartment
       # Tenant.each, Migrator, SchemaCache, CLI commands) reads from +source+
       # instead of config.tenants_provider.
       #
-      # +source+ may be a callable (re-evaluated on each access) or anything
-      # coercible to an Array of strings via Array(source).map(&:to_s). Empty
+      # The override is in-process, fiber-safe, and block-local. It does NOT
+      # automatically propagate to ActiveJob workers, child threads, or other
+      # processes — pass tenant names as job arguments if cross-process scoping
+      # is required.
+      #
+      # Accepted shapes for +source+:
+      #
+      #   * A callable (responds to +:call+) — re-evaluated on every
+      #     +Apartment.tenant_names+ access inside the block. Use a frozen Array
+      #     instead if you need a stable snapshot.
+      #   * A String or Symbol — coerced to a single-element Array of strings.
+      #   * An Array of String/Symbol — coerced to an Array of strings.
+      #
+      # Anything else (+nil+, Hash, arbitrary object) raises ArgumentError. Empty
       # arrays are honored — Tenant.each yields zero times. Nesting fully
       # replaces the outer override; the previous value is restored on block
       # exit (including via raise).
@@ -96,18 +108,15 @@ module Apartment
       def with_tenants_provider(source)
         raise(ArgumentError, 'Apartment::Tenant.with_tenants_provider requires a block') unless block_given?
 
-        override =
-          if source.respond_to?(:call)
-            source
-          else
-            Array(source).map(&:to_s).freeze
-          end
+        override = coerce_tenant_override(source)
 
         previous = Current.tenant_override
         Current.tenant_override = override
-        yield
-      ensure
-        Current.tenant_override = previous
+        begin
+          yield
+        ensure
+          Current.tenant_override = previous
+        end
       end
 
       # Convenience splat over with_tenants_provider for the common case of an
@@ -126,6 +135,38 @@ module Apartment
       end
 
       private
+
+      # Validate and coerce a +with_tenants_provider+ source argument.
+      # Callables pass through. String, Symbol, and Arrays of String/Symbol
+      # become a frozen Array<String>. Everything else raises ArgumentError —
+      # silently coercing nil/Hash/random objects produces tenant names like
+      # "" or "[:k, v]" that fail far from the call site.
+      def coerce_tenant_override(source)
+        return source if source.respond_to?(:call)
+
+        names = wrap_tenant_names(source)
+        validate_tenant_name_array!(names)
+        names.map(&:to_s).freeze
+      end
+
+      def wrap_tenant_names(source)
+        case source
+        when String, Symbol then [source]
+        when Array          then source
+        else
+          raise(ArgumentError,
+                'Apartment::Tenant.with_tenants_provider expects a callable, ' \
+                "String, Symbol, or Array of String/Symbol; got #{source.class}")
+        end
+      end
+
+      def validate_tenant_name_array!(names)
+        return if names.all? { |n| n.is_a?(String) || n.is_a?(Symbol) }
+
+        raise(ArgumentError,
+              'Apartment::Tenant.with_tenants_provider Array entries must be ' \
+              'String or Symbol')
+      end
 
       def adapter
         Apartment.adapter or

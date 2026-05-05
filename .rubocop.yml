@@ -68,7 +68,7 @@ Rails/SkipsModelValidations:
     - lib/apartment/pool_manager.rb
 
 Metrics/ClassLength:
-  Max: 165
+  Max: 155
   Exclude:
     - spec/**/*.rb
 

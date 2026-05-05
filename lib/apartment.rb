@@ -35,7 +35,7 @@ loader.setup
 require_relative 'apartment/errors'
 
 module Apartment # rubocop:disable Metrics/ModuleLength
-  class << self
+  class << self # rubocop:disable Metrics/ClassLength
     attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
 
