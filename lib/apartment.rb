@@ -71,12 +71,19 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       @activated == true
     end
 
-    # v3 compatibility: Apartment.tenant_names returns the current tenant list.
-    # Delegates to config.tenants_provider.call.
+    # Returns the current tenant list. Single resolver used by Tenant.each,
+    # Migrator, SchemaCache, and the CLI commands. Resolves through
+    # @config.tenants_provider; the result must respond to :each.
     def tenant_names
       raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.') unless @config
 
-      @config.tenants_provider.call
+      result = @config.tenants_provider.call
+
+      unless result.respond_to?(:each)
+        raise(ConfigurationError,
+              "tenants_provider must return an Enumerable, got #{result.class}")
+      end
+      result
     end
 
     # v3 compatibility: Apartment.excluded_models returns the excluded models list.

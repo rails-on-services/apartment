@@ -71,7 +71,7 @@ module Apartment
       def each(tenants = nil)
         raise(ArgumentError, 'Apartment::Tenant.each requires a block') unless block_given?
 
-        tenants ||= fetch_tenant_list
+        tenants ||= Apartment.tenant_names
         tenants.each { |tenant| switch(tenant) { yield(tenant) } }
       end
 
@@ -81,17 +81,6 @@ module Apartment
       end
 
       private
-
-      def fetch_tenant_list
-        config = Apartment.config or
-          raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.')
-        result = config.tenants_provider.call
-        unless result.respond_to?(:each)
-          raise(ConfigurationError,
-                "tenants_provider must return an Enumerable, got #{result.class}")
-        end
-        result
-      end
 
       def adapter
         Apartment.adapter or
