@@ -200,11 +200,6 @@ RSpec.describe(Apartment::Tenant) do
                           /switch\("public"\) is disabled.*default_tenant_switch_allowed/m))
       end
 
-      it 'error message points at reset and switch!' do
-        expect { described_class.switch('public') { :ok } }
-          .to(raise_error(/Apartment::Tenant\.reset.*Apartment::Tenant\.switch!/m))
-      end
-
       it 'permits switch into a non-default tenant' do
         expect { described_class.switch('tenant1') { :ok } }.not_to(raise_error)
       end
@@ -225,6 +220,28 @@ RSpec.describe(Apartment::Tenant) do
         end
         # default_tenant is nil; no tenant name can match, so guard never fires.
         expect { described_class.switch('t1') { :ok } }.not_to(raise_error)
+      end
+
+      it 'raises on Symbol tenant matching String default_tenant' do
+        # default_tenant = 'public' (String) from the surrounding configure
+        expect { described_class.switch(:public) { :ok } }
+          .to(raise_error(Apartment::ApartmentError, /switch\("public"\) is disabled/))
+      end
+
+      it 'raises on String tenant matching Symbol default_tenant' do
+        Apartment.configure do |c|
+          c.tenant_strategy = :schema
+          c.tenants_provider = -> { %w[tenant1] }
+          c.default_tenant = :public
+          c.default_tenant_switch_allowed = false
+        end
+        expect { described_class.switch('public') { :ok } }
+          .to(raise_error(Apartment::ApartmentError, /is disabled/))
+      end
+
+      it 'error message points at reset for block scope and switch! for non-block' do
+        expect { described_class.switch('public') { :ok } }
+          .to(raise_error(/Inside a block scope, call Apartment::Tenant\.reset.*non-block scopes.*Apartment::Tenant\.switch!/m))
       end
     end
   end

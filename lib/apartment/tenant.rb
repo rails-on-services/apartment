@@ -48,6 +48,10 @@ module Apartment
       # consider the default_tenant fallback. Use this when "is there an
       # explicit tenant context right now?" matters more than "what tenant
       # is effectively active?" — typically test setup and assertion code.
+      #
+      # Note: after Tenant.reset, switched? returns true. reset enters the
+      # default tenant via switch!, which is an explicit entry. To check
+      # "no tenant ever entered," combine with Current.previous_tenant.nil?.
       def switched?
         !Current.tenant.nil?
       end
@@ -168,11 +172,6 @@ module Apartment
 
       private
 
-      # Validate and coerce a +with_tenants_provider+ source argument.
-      # Callables pass through. String, Symbol, and Arrays of String/Symbol
-      # become a frozen Array<String>. Everything else raises ArgumentError —
-      # silently coercing nil/Hash/random objects produces tenant names like
-      # "" or "[:k, v]" that fail far from the call site.
       # Raise when default_tenant_switch_allowed is false and the caller is
       # block-switching into the default tenant. switch! and reset are exempt:
       # neither enters this guard, so they remain the legitimate paths into
@@ -185,11 +184,16 @@ module Apartment
 
         raise(Apartment::ApartmentError,
               "switch(#{cfg.default_tenant.inspect}) is disabled by " \
-              'default_tenant_switch_allowed = false. Use Apartment::Tenant.reset for ' \
-              'explicit re-entry into the default tenant, or Apartment::Tenant.switch!(name) ' \
-              'for non-block scopes.')
+              'default_tenant_switch_allowed = false. Inside a block scope, call ' \
+              'Apartment::Tenant.reset to re-enter the default tenant. For non-block ' \
+              'scopes (suite bootstrap, before(:context)), use Apartment::Tenant.switch!(name).')
       end
 
+      # Validate and coerce a +with_tenants_provider+ source argument.
+      # Callables pass through. String, Symbol, and Arrays of String/Symbol
+      # become a frozen Array<String>. Everything else raises ArgumentError —
+      # silently coercing nil/Hash/random objects produces tenant names like
+      # "" or "[:k, v]" that fail far from the call site.
       def coerce_tenant_override(source)
         return source if source.respond_to?(:call)
 
