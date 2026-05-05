@@ -267,6 +267,128 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
+  describe '.with_tenants_provider' do
+    it 'requires a block' do
+      expect { described_class.with_tenants_provider(['a']) }.to(raise_error(ArgumentError, /requires a block/))
+    end
+
+    it 'overrides the resolver for Apartment.tenant_names' do
+      described_class.with_tenants_provider(%w[acme widgets]) do
+        expect(Apartment.tenant_names).to(eq(%w[acme widgets]))
+      end
+    end
+
+    it 'overrides the resolver for Tenant.each' do
+      visited = []
+      described_class.with_tenants_provider(%w[acme widgets]) do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq(%w[acme widgets]))
+    end
+
+    it 'restores the ambient resolver after the block' do
+      described_class.with_tenants_provider(%w[acme]) {}
+      expect(Apartment.tenant_names).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'restores the ambient resolver after an exception in the block' do
+      begin
+        described_class.with_tenants_provider(%w[acme]) { raise('boom') }
+      rescue RuntimeError
+        nil
+      end
+      expect(Apartment.tenant_names).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'coerces a String to a single-element Array of strings' do
+      described_class.with_tenants_provider('acme') do
+        expect(Apartment.tenant_names).to(eq(%w[acme]))
+      end
+    end
+
+    it 'coerces a Symbol to a single-element Array of strings' do
+      described_class.with_tenants_provider(:acme) do
+        expect(Apartment.tenant_names).to(eq(%w[acme]))
+      end
+    end
+
+    it 'coerces an Array of mixed Strings and Symbols to strings' do
+      described_class.with_tenants_provider([:acme, 'widgets']) do
+        expect(Apartment.tenant_names).to(eq(%w[acme widgets]))
+      end
+    end
+
+    it 'freezes the coerced override Array' do
+      described_class.with_tenants_provider(%w[acme widgets]) do
+        expect(Apartment::Current.tenant_override).to(be_frozen)
+      end
+    end
+
+    it 'honors an empty Array (Tenant.each yields zero times)' do
+      visited = []
+      described_class.with_tenants_provider([]) do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq([]))
+    end
+
+    it 'accepts a callable and re-evaluates it on every tenant_names access' do
+      calls = 0
+      callable = lambda do
+        calls += 1
+        ["tenant_#{calls}"]
+      end
+
+      described_class.with_tenants_provider(callable) do
+        expect(Apartment.tenant_names).to(eq(%w[tenant_1]))
+        expect(Apartment.tenant_names).to(eq(%w[tenant_2]))
+      end
+      expect(calls).to(eq(2))
+    end
+
+    it 'raises ConfigurationError when a callable override returns a non-Enumerable' do
+      callable = -> { 42 }
+      described_class.with_tenants_provider(callable) do
+        expect do
+          Apartment.tenant_names
+        end.to(raise_error(Apartment::ConfigurationError, /tenant_override must return an Enumerable/))
+      end
+    end
+
+    it 'fully replaces an outer override when nested' do
+      seen_inside = nil
+      described_class.with_tenants_provider(%w[outer1 outer2]) do
+        described_class.with_tenants_provider(%w[inner]) do
+          seen_inside = Apartment.tenant_names
+        end
+        expect(Apartment.tenant_names).to(eq(%w[outer1 outer2]))
+      end
+      expect(seen_inside).to(eq(%w[inner]))
+    end
+  end
+
+  describe '.with_tenants' do
+    it 'delegates to with_tenants_provider with the splat as the source' do
+      visited = []
+      described_class.with_tenants('acme', 'widgets') do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq(%w[acme widgets]))
+    end
+
+    it 'with no arguments yields zero iterations through Tenant.each' do
+      visited = []
+      described_class.with_tenants do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq([]))
+    end
+
+    it 'requires a block' do
+      expect { described_class.with_tenants('acme') }.to(raise_error(ArgumentError, /requires a block/))
+    end
+  end
+
   describe '.create' do
     it 'delegates to adapter' do
       expect(mock_adapter).to(receive(:create).with('new_tenant'))

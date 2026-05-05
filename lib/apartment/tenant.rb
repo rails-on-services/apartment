@@ -75,7 +75,6 @@ module Apartment
         tenants.each { |tenant| switch(tenant) { yield(tenant) } }
       end
 
-
       # Block-scoped override of the tenant resolver. For the duration of the
       # block, every "what tenants do we have?" call site (Apartment.tenant_names,
       # Tenant.each, Migrator, SchemaCache, CLI commands) reads from +source+
@@ -117,8 +116,8 @@ module Apartment
       #   Apartment::Tenant.with_tenants('acme', 'widgets') do
       #     Apartment::Tenant.each { |t| ... }
       #   end
-      def with_tenants(*names, &block)
-        with_tenants_provider(names, &block)
+      def with_tenants(*names, &)
+        with_tenants_provider(names, &)
       end
 
       # Pool stats delegated to pool_manager.

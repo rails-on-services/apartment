@@ -69,6 +69,29 @@ RSpec.describe(Apartment) do
       described_class.clear_config
       expect { described_class.tenant_names }.to(raise_error(Apartment::ConfigurationError, /not configured/))
     end
+
+    it 'raises ConfigurationError when tenants_provider returns a non-Enumerable' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { 42 }
+      end
+
+      expect do
+        described_class.tenant_names
+      end.to(raise_error(Apartment::ConfigurationError, /tenants_provider must return an Enumerable/))
+    end
+
+    it 'returns the override when Current.tenant_override is set' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { %w[ambient] }
+      end
+
+      Apartment::Tenant.with_tenants_provider(%w[overridden]) do
+        expect(described_class.tenant_names).to(eq(%w[overridden]))
+      end
+      expect(described_class.tenant_names).to(eq(%w[ambient]))
+    end
   end
 
   describe '.excluded_models' do
