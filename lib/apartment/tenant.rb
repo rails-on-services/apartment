@@ -98,6 +98,14 @@ module Apartment
       # replaces the outer override; the previous value is restored on block
       # exit (including via raise).
       #
+      # The accepted shapes are intentionally broader than +config.tenants_provider+,
+      # which requires a callable. The block override targets test-suite ergonomics
+      # where a literal list is the natural call shape; the configured provider stays
+      # callable-only because production tenant lists are nearly always backed by a
+      # query that should resolve at access time. The contract that internal callers
+      # see — what +Apartment.tenant_names+ returns — is identical: an object that
+      # responds to +:each+, validated at resolution.
+      #
       #   Apartment::Tenant.with_tenants_provider(['acme', 'widgets']) do
       #     Apartment::Tenant.each { |t| ... }       # yields acme, widgets only
       #   end
