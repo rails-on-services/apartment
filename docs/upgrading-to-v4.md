@@ -62,9 +62,31 @@ Apartment::Tenant.switch(tenant) do
 end
 ```
 
-`switch!` still exists for console/REPL use but is discouraged in application code.
+`switch!` still exists for console/REPL use but is discouraged in application code. `switch!` is **not deprecated** — it remains the correct primitive for non-block scopes (suite bootstrap, `before(:context)` hooks, structural test setup where an `around` can't reach in). The "prefer blocks" guidance applies when a block is natural.
 
 `Apartment::Tenant.current` is unchanged between v3 and v4.
+
+### New v4 predicates and guard (optional)
+
+Two new predicates and a config flag landed in 4.0.0.alpha3 to support strict tenant discipline. All are opt-in; defaults preserve existing behavior.
+
+```ruby
+# Predicate: was a tenant explicitly entered?
+Apartment::Tenant.switched?            # reads Current.tenant directly, ignores default fallback
+
+# Test-time assertion: raise when no explicit tenant is active
+Apartment::Tenant.assert_inside_tenant!
+Apartment::Tenant.assert_inside_tenant!(message: 'spec must declare a tenant')
+
+# Config: opt-in guard on switch(default_tenant) { ... }
+Apartment.configure do |config|
+  config.default_tenant_switch_allowed = false  # raises on switch(default_tenant) block form
+end
+```
+
+`Tenant.reset` and `Tenant.switch!` bypass the guard by design — they are the documented paths back to the default tenant under strict mode. Defaults to `true` (permissive) for all strategies; opt in to `false` for new PostgreSQL `:schema` apps that want strict semantics from day one.
+
+See [Testing with Apartment v4](./testing.md) for recipe-level guidance on strict discipline, cross-pool transaction visibility, and pinned-model cleanup.
 
 ### Models
 
