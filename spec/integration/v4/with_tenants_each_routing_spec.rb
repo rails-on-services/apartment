@@ -4,14 +4,18 @@ require 'spec_helper'
 require_relative 'support'
 
 # :schema strategy is PG-only — gated to PostgreSQL.
-RSpec.describe('v4 with_tenants + each routing', :integration,
+RSpec.describe('v4 with_tenants + each routing', :integration, # rubocop:disable RSpec/MultipleMemoizedHelpers
                skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PostgreSQL')) do
   include V4IntegrationHelper
 
   let(:tmp_dir)         { Dir.mktmpdir('apartment_with_tenants_each') }
   let(:created_tenants) { [] }
-  let(:tenants)         { %w[acme globex] }
-  let(:table_name)      { 'wte_widgets' }
+  # Random suffix avoids collisions with leftover schemas/tables from prior
+  # local runs. CI is fresh per run, but local dev DBs accumulate state.
+  let(:rand_suffix)         { SecureRandom.hex(4) }
+  let(:tenants)             { ["acme_#{rand_suffix}", "globex_#{rand_suffix}"] }
+  let(:table_name)          { "widgets_#{rand_suffix}" }
+  let(:default_tenant_name) { 'public' }
 
   before do
     V4IntegrationHelper.ensure_test_database!
@@ -22,7 +26,7 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
     Apartment.configure do |c|
       c.tenant_strategy   = :schema
       c.tenants_provider  = -> { [] }
-      c.default_tenant    = V4IntegrationHelper.default_tenant
+      c.default_tenant    = default_tenant_name
       c.check_pending_migrations = false
       c.configure_postgres { |pg| pg.persistent_schemas = ['extensions'] }
     end
@@ -42,13 +46,12 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
     # never in the default-tenant schema. If it leaks there, the routing
     # assertions below pass by accident — a query under a fallback search_path
     # that includes the default tenant resolves the table from there.
-    default = Apartment.config.default_tenant
     leaked = ActiveRecord::Base.connection.select_value(<<~SQL.squish)
       SELECT 1 FROM information_schema.tables
-      WHERE table_schema = #{ActiveRecord::Base.connection.quote(default)}
+      WHERE table_schema = #{ActiveRecord::Base.connection.quote(default_tenant_name)}
         AND table_name = #{ActiveRecord::Base.connection.quote(table_name)}
     SQL
-    raise("#{table_name} leaked into default tenant '#{default}'; reproducer invalid") if leaked
+    raise("#{table_name} leaked into default tenant '#{default_tenant_name}'; reproducer invalid") if leaked
   end
 
   after do
@@ -76,7 +79,8 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
   end
 
   it 'resolves a tenant-only table during each (no PG::UndefinedTable)' do
-    klass = Class.new(ActiveRecord::Base) { self.table_name = 'wte_widgets' }
+    klass = Class.new(ActiveRecord::Base)
+    klass.table_name = table_name
     stub_const('Widget', klass)
 
     counts = {}
@@ -93,7 +97,8 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
   end
 
   it 'resolves tenant-only tables when an outer Tenant.switch wraps with_tenants + each (RSpec around-hook shape)' do
-    klass = Class.new(ActiveRecord::Base) { self.table_name = 'wte_widgets' }
+    klass = Class.new(ActiveRecord::Base)
+    klass.table_name = table_name
     stub_const('Widget', klass)
 
     expect do
@@ -106,7 +111,8 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
   end
 
   it 'routes correctly when the override is a callable' do
-    klass = Class.new(ActiveRecord::Base) { self.table_name = 'wte_widgets' }
+    klass = Class.new(ActiveRecord::Base)
+    klass.table_name = table_name
     stub_const('Widget', klass)
 
     visited = []
@@ -131,7 +137,7 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
     expect(Apartment::Current.tenant).to(be_nil)
   end
 
-  context 'under a non-default role' do
+  context 'under a non-default role' do # rubocop:disable RSpec/MultipleMemoizedHelpers
     before do
       reading_config = V4IntegrationHelper.default_connection_config(tmp_dir: tmp_dir)
       db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
@@ -145,7 +151,8 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
     end
 
     it 'keys per-tenant pools by the active role and routes search_path correctly' do
-      klass = Class.new(ActiveRecord::Base) { self.table_name = 'wte_widgets' }
+      klass = Class.new(ActiveRecord::Base)
+      klass.table_name = table_name
       stub_const('Widget', klass)
 
       seen = {}
@@ -165,6 +172,41 @@ RSpec.describe('v4 with_tenants + each routing', :integration,
 
       pool_keys = Apartment.pool_manager.stats[:tenants]
       tenants.each { |t| expect(pool_keys).to(include("#{t}:reading")) }
+    end
+  end
+
+  context 'with a non-default default_tenant configured' do # rubocop:disable RSpec/MultipleMemoizedHelpers
+    let(:default_tenant_name) { "wte_root_#{SecureRandom.hex(4)}" }
+
+    before do
+      ActiveRecord::Base.connection.execute(
+        "CREATE SCHEMA IF NOT EXISTS #{ActiveRecord::Base.connection.quote_table_name(default_tenant_name)}"
+      )
+    end
+
+    after do
+      ActiveRecord::Base.connection.execute(
+        "DROP SCHEMA IF EXISTS #{ActiveRecord::Base.connection.quote_table_name(default_tenant_name)} CASCADE"
+      )
+    end
+
+    it 'honors the configured default_tenant in routing and the precondition' do
+      expect(Apartment.config.default_tenant).to(eq(default_tenant_name))
+
+      seen = {}
+      Apartment::Tenant.with_tenants(*tenants) do
+        Apartment::Tenant.each do |t|
+          seen[t] = ActiveRecord::Base.connection.select_value('SHOW search_path').to_s
+        end
+      end
+
+      expect(seen.keys).to(eq(tenants))
+      seen.each do |t, sp|
+        expect(sp).to(include(t))
+        # The default tenant is NOT public here; the search_path under each
+        # iteration must not depend on PG's public-by-default behavior.
+        expect(sp).not_to(include(default_tenant_name))
+      end
     end
   end
 end
