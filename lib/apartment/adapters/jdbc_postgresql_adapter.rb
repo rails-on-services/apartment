@@ -41,7 +41,7 @@ module Apartment
         raise(ActiveRecord::StatementInvalid, "Could not find schema #{tenant}") unless schema_exists?(tenant)
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
-        Apartment.connection.schema_search_path = full_search_path
+        set_schema_search_path(full_search_path)
       rescue ActiveRecord::StatementInvalid, ActiveRecord::JDBCError
         raise(TenantNotFound, "One of the following schema(s) is invalid: #{full_search_path}")
       end

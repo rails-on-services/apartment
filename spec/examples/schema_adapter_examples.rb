@@ -228,6 +228,33 @@ shared_examples_for 'a schema based apartment adapter' do
         end
       end
     end
+
+    # Regression for https://github.com/rails-on-services/apartment/issues/396.
+    # Apartment::Tenant.reset and AbstractAdapter#connect_to_new's
+    # connection-exception rescue both call adapter.reset directly, bypassing
+    # the :switch callback chain. PG#reset reassigns schema_search_path and
+    # would hit the same memoization no-op as switch! if the ivar held a
+    # stale value matching the default-tenant search path.
+    context 'when the PostgreSQL session search_path has drifted from the AR cache' do
+      it 'still issues SET search_path on reset' do
+        session_path = -> { connection.execute('SHOW search_path').first['search_path'] }
+
+        # Land on the default tenant so the AR ivar caches its search path.
+        subject.switch!(schema1)
+        subject.reset
+        expect(session_path.call).to(include(public_schema))
+
+        # Drift the session away from the cached default-tenant value.
+        connection.execute(%(SET search_path TO "#{schema1}"))
+        expect(session_path.call).to(include(schema1.to_s))
+
+        # Without cache invalidation, schema_search_path= would early-return
+        # here because the ivar already holds the default-tenant value.
+        subject.reset
+
+        expect(session_path.call).to(include(public_schema))
+      end
+    end
   end
 
   describe '#switch!' do
@@ -303,6 +330,30 @@ shared_examples_for 'a schema based apartment adapter' do
 
       it 'prioritizes the switched schema to front of schema_search_path' do
         expect(connection.schema_search_path).to(start_with(%("#{schema1}")))
+      end
+    end
+
+    # Regression for https://github.com/rails-on-services/apartment/issues/396.
+    # Rails 8.1's PostgreSQLAdapter#schema_search_path= memoizes the last
+    # assigned value and returns early on identical re-assignment. When the
+    # PostgreSQL session's search_path has been changed out from under the
+    # ivar (transactional ROLLBACK, reconnect, pooled-connection reuse),
+    # the next switch! to the same tenant would silently skip the SET and
+    # leave queries pointing at the wrong schema.
+    context 'when the PostgreSQL session search_path has drifted from the AR cache' do
+      it 'still issues SET search_path on switch!' do
+        session_path = -> { connection.execute('SHOW search_path').first['search_path'] }
+
+        subject.switch!(schema1)
+
+        # Force divergence: change the session directly, leaving the AR
+        # ivar pointing at schema1.
+        connection.execute(%(SET search_path TO "#{public_schema}"))
+        expect(session_path.call).to(include(public_schema))
+
+        subject.switch!(schema1)
+
+        expect(session_path.call).to(include(schema1.to_s))
       end
     end
   end

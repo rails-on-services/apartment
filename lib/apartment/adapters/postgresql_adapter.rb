@@ -41,12 +41,12 @@ module Apartment
       #
       def reset
         @current = default_tenant
-        Apartment.connection.schema_search_path = full_search_path
+        set_schema_search_path(full_search_path)
       end
 
       def init
         super
-        Apartment.connection.schema_search_path = full_search_path
+        set_schema_search_path(full_search_path)
       end
 
       def current
@@ -76,12 +76,25 @@ module Apartment
         raise(ActiveRecord::StatementInvalid, "Could not find schema #{tenant}") unless schema_exists?(tenant)
 
         @current = tenant.is_a?(Array) ? tenant.map(&:to_s) : tenant.to_s
-        Apartment.connection.schema_search_path = full_search_path
+        set_schema_search_path(full_search_path)
       rescue *rescuable_exceptions => e
         raise_schema_connect_to_new(tenant, e)
       end
 
       private
+
+      # Force a fresh +SET search_path+ even when ActiveRecord's
+      # +@schema_search_path+ cache still matches +value+. Rails 8.1 added a
+      # memoization early-return to PostgreSQLAdapter#schema_search_path= (see
+      # rails/rails#54698), which makes the assignment a no-op when the ivar
+      # is unchanged. After a transactional ROLLBACK or a connection reconnect
+      # the ivar can hold a stale value while the actual session search_path
+      # has reverted, so we must invalidate the ivar before reassigning.
+      # This is a cache-invalidating wrapper, not a plain writer.
+      def set_schema_search_path(value) # rubocop:disable Naming/AccessorMethodName
+        Apartment.connection.instance_variable_set(:@schema_search_path, nil)
+        Apartment.connection.schema_search_path = value
+      end
 
       def tenant_exists?(tenant)
         return true unless Apartment.tenant_presence_check
