@@ -81,6 +81,7 @@ module Apartment
       count = 0
       @pool_manager.idle_tenants(timeout: @idle_timeout).each do |tenant|
         next if default_tenant_pool?(tenant)
+        next if pool_pinned?(@pool_manager.peek(tenant))
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -102,6 +103,7 @@ module Apartment
       candidates.each do |tenant|
         break if evicted >= excess
         next if default_tenant_pool?(tenant)
+        next if pool_pinned?(@pool_manager.peek(tenant))
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -122,6 +124,26 @@ module Apartment
       return false unless @default_tenant
 
       pool_key == @default_tenant || pool_key.start_with?("#{@default_tenant}:")
+    end
+
+    # True when Rails' transactional-fixture machinery has pinned the pool
+    # to a single connection for the duration of a test
+    # (ConnectionPool#pin_connection!). Evicting a pinned pool strands the
+    # fixture transaction — teardown's unpin_connection! then raises or
+    # marks the database dirty. ActiveRecord exposes no public predicate
+    # for this, so we read the @pinned_connection ivar it sets; the name
+    # has been stable since pin_connection! landed in Rails 7.1.
+    # True when Rails' transactional-fixture machinery has pinned the pool
+    # to a single connection for the duration of a test
+    # (ConnectionPool#pin_connection!). Evicting a pinned pool strands the
+    # fixture transaction — teardown's unpin_connection! then raises or
+    # marks the database dirty. ActiveRecord exposes no public predicate
+    # for this, so we read the @pinned_connection ivar it sets; the name
+    # has been stable since pin_connection! landed in Rails 7.1.
+    def pool_pinned?(pool)
+      return false unless pool&.instance_variable_defined?(:@pinned_connection)
+
+      !pool.instance_variable_get(:@pinned_connection).nil?
     end
   end
 end
