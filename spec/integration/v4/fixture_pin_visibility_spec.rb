@@ -41,8 +41,10 @@ RSpec.describe('v4 transactional-fixture visibility for lazy tenant pools', :int
         @saved_pool_configs = Hash.new { |hash, key| hash[key] = {} }
       end
 
-      # `ActiveRecord::TestFixtures#run_in_transaction?` expects a
-      # Minitest-style host; supply the minimum it calls.
+      # run_in_transaction? = use_transactional_tests && !uses_transaction?(name).
+      # uses_transaction? is Rails' per-example opt-OUT list — `false` keeps
+      # transactional fixtures (and the pinning subscriber) ON. Flipping it to
+      # `true` would silently disable pinning and rot the examples below.
       def self.uses_transaction?(_name) = false
       def name = 'fixture_pin_visibility_reproduction'
 

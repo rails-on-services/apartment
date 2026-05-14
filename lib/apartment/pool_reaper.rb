@@ -131,7 +131,9 @@ module Apartment
     # strands the fixture transaction; teardown then errors or marks the DB
     # dirty. AR exposes no public predicate, so we read the ivar it sets.
     # Best-effort: callers check-then-remove, so a pool can be pinned in
-    # that sub-millisecond window — the cost is a flaky test, not corruption.
+    # that sub-millisecond window. Evicting one then orphans its fixture
+    # transaction — a test-isolation failure (dirty fixture state, rows
+    # leaking between examples), not production data corruption.
     def pool_pinned?(pool)
       return false unless pool&.instance_variable_defined?(:@pinned_connection)
 
