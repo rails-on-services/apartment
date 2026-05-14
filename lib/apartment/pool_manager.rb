@@ -23,9 +23,9 @@ module Apartment
       pool
     end
 
-    # Read a pool without updating its idle timestamp. Used by PoolReaper
-    # to inspect a candidate (e.g. its pinned state) before deciding to
-    # evict — +get+ would reset the very idleness the reaper is measuring.
+    # Read a pool without updating its idle timestamp. PoolReaper uses this
+    # to inspect an eviction candidate; +get+ would reset the very idleness
+    # the reaper is measuring.
     def peek(tenant_key)
       @pools[tenant_key]
     end

@@ -7,25 +7,20 @@ require 'apartment/test_fixtures'
 # Regression guard for transactional-fixture visibility of lazily-created
 # tenant pools.
 #
-# Apartment creates tenant pools lazily, on first access. In a host
-# application's test suite running with transactional fixtures, that first
-# access can happen *after* Rails' `setup_transactional_fixtures` has
-# already snapshotted and pinned the :writing pools — so a lazy tenant
-# pool is pinned late, by the `!connection.active_record` subscriber
-# rather than the initial snapshot. The concern: a write made inside the
-# example could miss the fixture transaction and be invisible to a later
-# read on the same tenant.
+# Apartment creates tenant pools lazily, on first access. Under a host
+# application's transactional fixtures, that first access can land *after*
+# Rails' `setup_transactional_fixtures` has snapshotted and pinned the
+# :writing pools — so a lazy tenant pool is pinned late, by the
+# `!connection.active_record` subscriber rather than the initial snapshot.
+# The concern: a write made inside the example could miss the fixture
+# transaction and be invisible to a later read on the same tenant.
 #
-# These specs reproduce that lazy-creation timing faithfully — real Rails
-# `setup_fixtures` / `teardown_fixtures`, `Apartment::TestFixtures`
-# prepended as the Railtie wires it, the first in-example write triggering
-# lazy pool creation — and confirm the write IS visible to a later read on
-# the same tenant. The subscriber pins the lazy pool in time;
-# transactional visibility holds across `with_tenants`, `each`, and nested
-# `switch`.
-#
-# Kept as a regression guard: if a future change to the pool or pin
-# lifecycle breaks lazy-pool visibility, these go red.
+# These specs drive the real Rails fixture lifecycle (`setup_fixtures` /
+# `teardown_fixtures`, `Apartment::TestFixtures` prepended as the Railtie
+# wires it) and confirm the subscriber pins the lazy pool in time:
+# visibility holds across `with_tenants`, `each`, and nested `switch`. The
+# last example also confirms PoolReaper can detect the pin — guarding the
+# private-ivar read against a future ActiveRecord rename.
 #
 # :schema strategy is PG-only.
 RSpec.describe('v4 transactional-fixture visibility for lazy tenant pools', :integration, # rubocop:disable RSpec/MultipleMemoizedHelpers
@@ -174,5 +169,26 @@ RSpec.describe('v4 transactional-fixture visibility for lazy tenant pools', :int
     end
 
     expect(counts[write_tenant]).to(eq(5))
+  end
+
+  # Triangulates PoolReaper#pool_pinned? against a real, freshly-pinned
+  # ConnectionPool on whatever Rails version CI runs. The unit tests use a
+  # bare-Object fake, so only this catches an ActiveRecord ivar rename.
+  it 'pins the lazily-created tenant pool detectably for PoolReaper' do
+    widget_class
+    reaper = Apartment::PoolReaper.new(
+      pool_manager: Apartment.pool_manager, interval: 60, idle_timeout: 60
+    )
+    pinned_mid_example = nil
+
+    FixtureLifecycleHost.new.run_example do
+      Apartment::Tenant.switch(write_tenant) do
+        Widget.create!
+        pool = Apartment.pool_manager.peek("#{write_tenant}:writing")
+        pinned_mid_example = reaper.send(:pool_pinned?, pool)
+      end
+    end
+
+    expect(pinned_mid_example).to(be(true))
   end
 end

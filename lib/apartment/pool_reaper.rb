@@ -127,19 +127,11 @@ module Apartment
     end
 
     # True when Rails' transactional-fixture machinery has pinned the pool
-    # to a single connection for the duration of a test
-    # (ConnectionPool#pin_connection!). Evicting a pinned pool strands the
-    # fixture transaction — teardown's unpin_connection! then raises or
-    # marks the database dirty. ActiveRecord exposes no public predicate
-    # for this, so we read the @pinned_connection ivar it sets; the name
-    # has been stable since pin_connection! landed in Rails 7.1.
-    # True when Rails' transactional-fixture machinery has pinned the pool
-    # to a single connection for the duration of a test
-    # (ConnectionPool#pin_connection!). Evicting a pinned pool strands the
-    # fixture transaction — teardown's unpin_connection! then raises or
-    # marks the database dirty. ActiveRecord exposes no public predicate
-    # for this, so we read the @pinned_connection ivar it sets; the name
-    # has been stable since pin_connection! landed in Rails 7.1.
+    # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting a pinned pool
+    # strands the fixture transaction; teardown then errors or marks the DB
+    # dirty. AR exposes no public predicate, so we read the ivar it sets.
+    # Best-effort: callers check-then-remove, so a pool can be pinned in
+    # that sub-millisecond window — the cost is a flaky test, not corruption.
     def pool_pinned?(pool)
       return false unless pool&.instance_variable_defined?(:@pinned_connection)
 
