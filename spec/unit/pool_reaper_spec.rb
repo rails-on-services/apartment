@@ -113,6 +113,58 @@ RSpec.describe(Apartment::PoolReaper) do
     end
   end
 
+  describe 'pinned pool protection' do
+    # A pool Rails' transactional-fixture machinery has pinned to a single
+    # connection. Evicting it would strand the fixture transaction.
+    def pinned_pool
+      pool = Object.new
+      pool.instance_variable_set(:@pinned_connection, Object.new)
+      pool
+    end
+
+    it 'does not evict a pinned pool that is idle beyond timeout' do
+      pool_manager.fetch_or_create('pinned') { pinned_pool }
+      pool_manager.instance_variable_get(:@timestamps)['pinned'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
+
+      pool_manager.fetch_or_create('stale') { 'pool_stale' }
+      pool_manager.instance_variable_get(:@timestamps)['stale'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 10
+
+      reaper.start
+      sleep 0.2
+
+      expect(pool_manager.tracked?('pinned')).to(be(true))
+      expect(disconnect_calls).not_to(include('pinned'))
+      expect(pool_manager.tracked?('stale')).to(be(false))
+    end
+
+    it 'does not evict a pinned pool under max_total LRU pressure' do
+      lru_reaper = described_class.new(
+        pool_manager: pool_manager,
+        interval: 0.05,
+        idle_timeout: 999,
+        max_total: 1,
+        on_evict: on_evict
+      )
+
+      pool_manager.fetch_or_create('pinned') { pinned_pool }
+      pool_manager.instance_variable_get(:@timestamps)['pinned'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 300
+
+      pool_manager.fetch_or_create('evictable') { 'pool_evictable' }
+      pool_manager.instance_variable_get(:@timestamps)['evictable'] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - 100
+
+      lru_reaper.start
+      sleep 0.2
+      lru_reaper.stop
+
+      expect(pool_manager.tracked?('pinned')).to(be(true))
+      expect(disconnect_calls).not_to(include('pinned'))
+    end
+  end
+
   describe 'protected tenants' do
     let(:reaper) do
       described_class.new(

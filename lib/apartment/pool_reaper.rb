@@ -81,6 +81,7 @@ module Apartment
       count = 0
       @pool_manager.idle_tenants(timeout: @idle_timeout).each do |tenant|
         next if default_tenant_pool?(tenant)
+        next if pool_pinned?(@pool_manager.peek(tenant))
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -102,6 +103,7 @@ module Apartment
       candidates.each do |tenant|
         break if evicted >= excess
         next if default_tenant_pool?(tenant)
+        next if pool_pinned?(@pool_manager.peek(tenant))
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -122,6 +124,20 @@ module Apartment
       return false unless @default_tenant
 
       pool_key == @default_tenant || pool_key.start_with?("#{@default_tenant}:")
+    end
+
+    # True when Rails' transactional-fixture machinery has pinned the pool
+    # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting a pinned pool
+    # strands the fixture transaction; teardown then errors or marks the DB
+    # dirty. AR exposes no public predicate, so we read the ivar it sets.
+    # Best-effort: callers check-then-remove, so a pool can be pinned in
+    # that sub-millisecond window. Evicting one then orphans its fixture
+    # transaction — a test-isolation failure (dirty fixture state, rows
+    # leaking between examples), not production data corruption.
+    def pool_pinned?(pool)
+      return false unless pool&.instance_variable_defined?(:@pinned_connection)
+
+      !pool.instance_variable_get(:@pinned_connection).nil?
     end
   end
 end
