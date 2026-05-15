@@ -193,4 +193,35 @@ RSpec.describe('v4 transactional-fixture visibility for lazy tenant pools', :int
 
     expect(pinned_mid_example).to(be(true))
   end
+
+  # Covers the case PR #399 cannot: a pool that holds an open transaction
+  # without being formally pinned (production migration, batch job, an app
+  # `ActiveRecord::Base.transaction` block outside fixture machinery). The
+  # in-use guard must skip eviction and emit :skip_evict.
+  it 'PoolReaper skips a tenant pool with an open transaction even when unpinned' do
+    widget_class
+    reaper = Apartment::PoolReaper.new(
+      pool_manager: Apartment.pool_manager, interval: 60, idle_timeout: 0.001
+    )
+    skips = Concurrent::Array.new
+    subscription = ActiveSupport::Notifications.subscribe('skip_evict.apartment') { |e| skips << e }
+
+    Apartment::Tenant.switch(write_tenant) do
+      ActiveRecord::Base.connection.begin_transaction
+      Widget.create!
+      sleep(0.01)
+
+      expect(reaper.run_cycle).to(eq(0))
+      expect(Apartment.pool_manager.tracked?("#{write_tenant}:writing")).to(be(true))
+
+      skip_event = skips.find { |e| e.payload[:tenant] == "#{write_tenant}:writing" }
+      expect(skip_event).not_to(be_nil)
+      expect(skip_event.payload).to(include(reason: :in_use))
+      expect(skip_event.payload[:open_transactions]).to(be_positive)
+    ensure
+      ActiveRecord::Base.connection.rollback_transaction if ActiveRecord::Base.connection.transaction_open?
+    end
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscription) if subscription
+  end
 end
