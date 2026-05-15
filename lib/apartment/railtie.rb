@@ -96,9 +96,15 @@ module Apartment
     # are short, tenant counts low, memory pressure absent, and an eviction
     # mid-example orphans transactional-fixture state. Stop the reaper that
     # Apartment.configure started; a suite that genuinely needs eviction
-    # can call Apartment.pool_reaper.start explicitly.
+    # can call Apartment.pool_reaper.start explicitly. Emits :reaper_stopped
+    # so an upgrading adopter notices the behavior change without combing
+    # release notes.
     def self.deactivate_pool_reaper_in_test_env!
-      Apartment.pool_reaper&.stop if Rails.env.test?
+      return unless Rails.env.test?
+      return unless Apartment.pool_reaper
+
+      Apartment.pool_reaper.stop
+      Apartment::Instrumentation.instrument(:reaper_stopped, reason: :test_env)
     end
 
     # Resolve an elevator symbol/string to its class. Class method for testability.

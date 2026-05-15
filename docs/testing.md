@@ -181,6 +181,8 @@ The reaper is also defensive against transactional state when it does run. Two g
 
 Both skip paths emit `skip_evict.apartment` notifications with `reason:` `:pinned` or `:in_use` (the `:in_use` payload includes `busy_connections` and `open_transactions`). If a tenant key shows up repeatedly in `skip_evict` events over time, that's the signal for a leaked connection or forgotten transaction — fix the leak, don't tune the reaper.
 
+Both guards are best-effort: the reaper checks the pool state and then removes it as separate steps, so a pool can become pinned or in-use in the sub-millisecond window between. The cost of an unlucky race is a test-isolation failure (dirty fixture state, rows leaking between examples), not production data corruption.
+
 Two narrow cases the in-use guard does **not** cover:
 
 - A server-side cursor (`WITH HOLD`, certain `COPY` paths) holding server state without an open transaction. ActiveRecord exposes no public predicate for this; rare in typical Rails code.

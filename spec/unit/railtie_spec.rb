@@ -107,6 +107,21 @@ RSpec.describe('Apartment::Railtie') do
       expect(reaper).to(have_received(:stop))
     end
 
+    it 'emits reaper_stopped.apartment with reason :test_env when it stops the reaper' do
+      reaper = instance_double(Apartment::PoolReaper, stop: nil)
+      allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+      events = []
+      sub = ActiveSupport::Notifications.subscribe('reaper_stopped.apartment') { |e| events << e }
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+      expect(events.size).to(eq(1))
+      expect(events.first.payload).to(eq(reason: :test_env))
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub) if sub
+    end
+
     it 'does nothing outside the test environment' do
       reaper = instance_double(Apartment::PoolReaper, stop: nil)
       allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
