@@ -91,6 +91,15 @@ module Apartment
       # the ivar can hold a stale value while the actual session search_path
       # has reverted, so we must invalidate the ivar before reassigning.
       # This is a cache-invalidating wrapper, not a plain writer.
+      #
+      # Maintenance note: this couples us to Rails' private
+      # +@schema_search_path+ ivar. Watch rails/rails#54698 for an upstream
+      # fix or a public invalidation API -- once one ships, this workaround
+      # should be dropped in favor of the public path. If a future Rails
+      # release renames or removes the ivar, this helper degrades silently
+      # back to the memoization no-op; the regression specs under
+      # +describe '#switch!'+ and +describe '#reset'+ in
+      # +spec/examples/schema_adapter_examples.rb+ are the canary.
       def set_schema_search_path(value) # rubocop:disable Naming/AccessorMethodName
         Apartment.connection.instance_variable_set(:@schema_search_path, nil)
         Apartment.connection.schema_search_path = value
