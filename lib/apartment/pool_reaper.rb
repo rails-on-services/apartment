@@ -81,7 +81,7 @@ module Apartment
       count = 0
       @pool_manager.idle_tenants(timeout: @idle_timeout).each do |tenant|
         next if default_tenant_pool?(tenant)
-        next if pool_pinned?(@pool_manager.peek(tenant))
+        next if protected_pool?(tenant, eviction_reason: :idle)
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -95,15 +95,30 @@ module Apartment
     end
 
     def evict_lru
-      excess = @pool_manager.stats[:total_pools] - @max_total
+      total = @pool_manager.stats[:total_pools]
+      excess = total - @max_total
       return 0 if excess <= 0
 
-      candidates = @pool_manager.lru_tenants(count: excess + 1)
+      evicted = perform_lru_eviction(excess, total)
+
+      if evicted < excess
+        Instrumentation.instrument(:cap_unmet,
+                                   max_total: @max_total,
+                                   current: total - evicted,
+                                   unevicted: excess - evicted)
+      end
+
+      evicted
+    end
+
+    # The LRU loop body, factored out so evict_lru reads as "evict up to
+    # excess, then report the cap if we couldn't get there."
+    def perform_lru_eviction(excess, candidate_count)
       evicted = 0
-      candidates.each do |tenant|
+      @pool_manager.lru_tenants(count: candidate_count).each do |tenant|
         break if evicted >= excess
         next if default_tenant_pool?(tenant)
-        next if pool_pinned?(@pool_manager.peek(tenant))
+        next if protected_pool?(tenant, eviction_reason: :lru)
 
         pool = @pool_manager.remove(tenant)
         deregister_from_ar_handler(tenant)
@@ -126,18 +141,61 @@ module Apartment
       pool_key == @default_tenant || pool_key.start_with?("#{@default_tenant}:")
     end
 
+    # Returns true and emits :skip_evict if the candidate pool is currently
+    # protected. Used as a single guard for both eviction paths.
+    def protected_pool?(tenant, eviction_reason:)
+      pool = @pool_manager.peek(tenant)
+      if pool_pinned?(pool)
+        instrument_skip(reason: :pinned, tenant: tenant, eviction_reason: eviction_reason, pool: pool)
+        return true
+      end
+      if pool_in_use?(pool)
+        instrument_skip(reason: :in_use, tenant: tenant, eviction_reason: eviction_reason, pool: pool)
+        return true
+      end
+      false
+    end
+
     # True when Rails' transactional-fixture machinery has pinned the pool
     # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting a pinned pool
     # strands the fixture transaction; teardown then errors or marks the DB
     # dirty. AR exposes no public predicate, so we read the ivar it sets.
-    # Best-effort: callers check-then-remove, so a pool can be pinned in
-    # that sub-millisecond window. Evicting one then orphans its fixture
-    # transaction — a test-isolation failure (dirty fixture state, rows
-    # leaking between examples), not production data corruption.
+    # TOCTOU caveat applies — see docs/testing.md "Pool lifecycle in tests".
     def pool_pinned?(pool)
       return false unless pool&.instance_variable_defined?(:@pinned_connection)
 
       !pool.instance_variable_get(:@pinned_connection).nil?
+    end
+
+    # True when at least one connection is leased or holds an open
+    # transaction (long migration, batch job, unpinned fixture tx). Forcing
+    # eviction would potentially orphan that work, so skip and let the next
+    # reap cycle re-evaluate. See docs/testing.md for the server-side-cursor
+    # case this misses.
+    def pool_in_use?(pool)
+      return false unless pool.respond_to?(:connections)
+
+      pool.connections.any? do |conn|
+        (conn.respond_to?(:in_use?) && conn.in_use?) ||
+          (conn.respond_to?(:open_transactions) && conn.open_transactions.positive?)
+      end
+    end
+
+    # Build and emit the :skip_evict payload. :pinned is a binary state
+    # with nothing useful to surface; :in_use carries busy_connections and
+    # open_transactions so a tenant skipped for many cycles is diagnosable
+    # from instrumentation alone.
+    def instrument_skip(reason:, tenant:, eviction_reason:, pool:)
+      payload = { tenant: tenant, reason: reason, eviction_reason: eviction_reason }
+      if reason == :in_use && pool.respond_to?(:connections)
+        payload[:busy_connections] = pool.connections.count do |c|
+          c.respond_to?(:in_use?) && c.in_use?
+        end
+        payload[:open_transactions] = pool.connections.sum do |c|
+          c.respond_to?(:open_transactions) ? c.open_transactions : 0
+        end
+      end
+      Instrumentation.instrument(:skip_evict, payload)
     end
   end
 end

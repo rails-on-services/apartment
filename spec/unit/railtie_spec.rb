@@ -95,4 +95,48 @@ RSpec.describe('Apartment::Railtie') do
       expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Subdomain, {})).to(be(false))
     end
   end
+
+  describe '.deactivate_pool_reaper_in_test_env!' do
+    it 'stops Apartment.pool_reaper when Rails.env.test? is true' do
+      reaper = instance_double(Apartment::PoolReaper, stop: nil)
+      allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+      expect(reaper).to(have_received(:stop))
+    end
+
+    it 'emits reaper_stopped.apartment with reason :test_env when it stops the reaper' do
+      reaper = instance_double(Apartment::PoolReaper, stop: nil)
+      allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+      events = []
+      sub = ActiveSupport::Notifications.subscribe('reaper_stopped.apartment') { |e| events << e }
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+      expect(events.size).to(eq(1))
+      expect(events.first.payload).to(eq(reason: :test_env))
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub) if sub
+    end
+
+    it 'does nothing outside the test environment' do
+      reaper = instance_double(Apartment::PoolReaper, stop: nil)
+      allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('production')))
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+      expect(reaper).not_to(have_received(:stop))
+    end
+
+    it 'is a no-op when no reaper is configured' do
+      allow(Apartment).to(receive(:pool_reaper).and_return(nil))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+      expect { Apartment::Railtie.deactivate_pool_reaper_in_test_env! }.not_to(raise_error)
+    end
+  end
 end

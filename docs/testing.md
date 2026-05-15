@@ -164,3 +164,28 @@ end
 ```
 
 > **Footnote on test-prof.** If your suite uses test-prof's `let_it_be` / `before_all`, prefer the suite-level `switch!` shown above over per-example `around { switch(...) { example.run } }`. `let_it_be` commits its setup data inside its own transaction; wrapping examples in an `around switch` can interact with the savepoint hierarchy in a way that DatabaseCleaner's rollback can't unwind cleanly when an example raises — producing a transaction-poisoning cascade where every subsequent example fails with `PG::InFailedSqlTransaction`. Suite-level `switch!` avoids this because there's no per-example switching wrapping `let_it_be` setup.
+
+## Pool lifecycle in tests
+
+`Apartment::PoolReaper` evicts idle and excess tenant pools on a background timer. In production it bounds memory under high tenant counts; in test suites it's typically a liability — short runs, few tenants, no memory pressure, and an eviction mid-example can orphan transactional-fixture state. **The Railtie stops the reaper automatically when `Rails.env.test?`.** A suite that genuinely needs eviction (long-running parallel tenant churn, large fixtures) can opt back in:
+
+```ruby
+# spec/rails_helper.rb
+Apartment.pool_reaper&.start
+```
+
+The reaper is also defensive against transactional state when it does run. Two guards block eviction of a candidate pool:
+
+- **Pinned pools** (`ConnectionPool#pin_connection!`) — the path Rails' transactional fixtures use, plus the lazy-creation case where the `!connection.active_record` subscriber pins after-the-fact.
+- **In-use pools** — at least one connection is leased (`Connection#in_use?`) or holds an open transaction (`Connection#open_transactions > 0`). Covers any consumer that opened a transaction outside the fixture machinery: long migrations, batch jobs, an explicit `ActiveRecord::Base.transaction` block.
+
+Both skip paths emit `skip_evict.apartment` notifications with `reason:` `:pinned` or `:in_use` (the `:in_use` payload includes `busy_connections` and `open_transactions`). If a tenant key shows up repeatedly in `skip_evict` events over time, that's the signal for a leaked connection or forgotten transaction — fix the leak, don't tune the reaper.
+
+Both guards are best-effort: the reaper checks the pool state and then removes it as separate steps, so a pool can become pinned or in-use in the sub-millisecond window between. The cost of an unlucky race is a test-isolation failure (dirty fixture state, rows leaking between examples), not production data corruption.
+
+Two narrow cases the in-use guard does **not** cover:
+
+- A server-side cursor (`WITH HOLD`, certain `COPY` paths) holding server state without an open transaction. ActiveRecord exposes no public predicate for this; rare in typical Rails code.
+- A pool whose connections have all been returned but a query-cache or prepared-statement cache remains warm — correctly evictable; the next access rebuilds both.
+
+When LRU pressure can't reach `max_total_connections` because too many pools are protected, the reaper emits `cap_unmet.apartment` instead of forcing eviction. The cap is best-effort under active workload — if you see it firing, check for the same leak signature in `skip_evict`.
