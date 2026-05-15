@@ -37,7 +37,7 @@ module Apartment
 
       desc 'list', 'List all tenants'
       def list
-        Apartment.config.tenants_provider.call.each { |t| say(t) }
+        Apartment.tenant_names.each { |t| say(t) }
       end
 
       desc 'current', 'Show current tenant'
@@ -56,7 +56,7 @@ module Apartment
       end
 
       def create_all
-        tenants = Apartment.config.tenants_provider.call
+        tenants = Apartment.tenant_names
         failed = []
         tenants.each do |t|
           say("Creating tenant: #{t}") unless quiet?

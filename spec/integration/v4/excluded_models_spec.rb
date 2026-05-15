@@ -66,13 +66,29 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
-  it 'pin_tenant establishes a dedicated connection for the model' do
-    expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
+  context 'pinned model connection routing' do
+    it 'shares the tenant connection when shared_pinned_connection? is true' do
+      if Apartment.adapter.shared_pinned_connection?
+        expect(GlobalSetting.connection_specification_name).to(eq(ActiveRecord::Base.connection_specification_name))
+      else
+        skip 'adapter does not support shared pinned connections'
+      end
+    end
+
+    it 'uses a separate connection when shared_pinned_connection? is false' do
+      if Apartment.adapter.shared_pinned_connection?
+        skip 'adapter supports shared pinned connections'
+      else
+        expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
+      end
+    end
   end
 
   it 'pin_tenant is idempotent' do
     expect { Apartment.adapter.process_pinned_models }.not_to(raise_error)
-    expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
+    unless Apartment.adapter.shared_pinned_connection?
+      expect(GlobalSetting.connection_specification_name).not_to(eq(ActiveRecord::Base.connection_specification_name))
+    end
   end
 
   it 'pinned model queries always target the default database' do
@@ -126,6 +142,37 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
+  context 'transactional integrity (shared connection path)' do
+    it 'rolls back both pinned and tenant model writes on transaction rollback' do
+      skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
+
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.transaction do
+          Widget.create!(name: 'will_be_rolled_back')
+          GlobalSetting.create!(key: 'will_be_rolled_back', value: 'yes')
+          raise ActiveRecord::Rollback
+        end
+
+        expect(Widget.count).to(eq(0))
+        expect(GlobalSetting.where(key: 'will_be_rolled_back').count).to(eq(0))
+      end
+    end
+
+    it 'commits both pinned and tenant model writes on successful transaction' do
+      skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
+
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.transaction do
+          Widget.create!(name: 'committed')
+          GlobalSetting.create!(key: 'committed', value: 'yes')
+        end
+
+        expect(Widget.find_by(name: 'committed')).to(be_present)
+        expect(GlobalSetting.find_by(key: 'committed')).to(be_present)
+      end
+    end
+  end
+
   context 'STI subclass of pinned model' do
     before do
       stub_const('AdminSetting', Class.new(GlobalSetting))
@@ -137,6 +184,38 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
       Apartment::Tenant.switch('tenant_a') do
         expect(AdminSetting.find_by(key: 'admin_only').value).to(eq('true'))
       end
+    end
+  end
+
+  context 'deferred pin_tenant processing (table_name after pin_tenant)' do
+    it 'qualifies explicit table_name declared after pin_tenant' do
+      # Simulate the CampusESP pattern: pin_tenant above self.table_name.
+      # Name the class first so establish_connection works on all adapters,
+      # then drive process_pinned_model directly — the same call the TracePoint
+      # triggers after the class body closes. The unit spec covers TracePoint
+      # deferral; here we verify the qualification outcome with a real adapter.
+      klass = Class.new(ApplicationRecord)
+      stub_const('DeferredPinned', klass)
+      klass.include(Apartment::Model)
+      klass.table_name = 'global_settings'
+      Apartment.process_pinned_model(klass)
+
+      if Apartment.adapter.shared_pinned_connection?
+        expect(DeferredPinned.table_name).to(end_with('.global_settings'))
+      else
+        expect(DeferredPinned.table_name).to(eq('global_settings'))
+      end
+    end
+
+    it 'qualifies convention table_name via process_pinned_model' do
+      # Convention naming: no explicit self.table_name. Name first, then
+      # include + process so the adapter sees the class name and can qualify.
+      klass = Class.new(ApplicationRecord)
+      stub_const('ConventionDeferred', klass)
+      klass.include(Apartment::Model)
+      Apartment.process_pinned_model(klass)
+
+      expect(ConventionDeferred.table_name).to(include('.')) if Apartment.adapter.shared_pinned_connection?
     end
   end
 

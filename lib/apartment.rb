@@ -34,8 +34,8 @@ loader.setup
 
 require_relative 'apartment/errors'
 
-module Apartment
-  class << self
+module Apartment # rubocop:disable Metrics/ModuleLength
+  class << self # rubocop:disable Metrics/ClassLength
     attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
 
@@ -56,17 +56,59 @@ module Apartment
     end
 
     # Check if a class (or any of its ancestors) is a pinned model.
-    # Used by ConnectionHandling to skip tenant pool routing.
+    # Delegates to the class's own apartment_pinned? (defined by the
+    # Apartment::Model concern). Falls back to registry lookup for
+    # models registered via the excluded_models shim without the concern.
     def pinned_model?(klass)
-      klass.ancestors.any? { |a| a.is_a?(Class) && pinned_models.include?(a) }
+      if klass.respond_to?(:apartment_pinned?)
+        klass.apartment_pinned?
+      else
+        klass.ancestors.any? { |a| a.is_a?(Class) && pinned_models.include?(a) }
+      end
     end
 
     def activated?
       @activated == true
     end
 
+    # Returns the current tenant list. Single resolver used by Tenant.each,
+    # Migrator, SchemaCache, and the CLI commands. Honors the per-block
+    # override set by Tenant.with_tenants_provider / with_tenants when present;
+    # otherwise resolves through @config.tenants_provider.
+    #
+    # The override (or the configured provider) may itself be a callable, in
+    # which case it is invoked on every access. Whatever the source, the
+    # resolved value must respond to :each.
+    def tenant_names
+      raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.') unless @config
+
+      override = Current.tenant_override
+      source = override || @config.tenants_provider
+      result = source.respond_to?(:call) ? source.call : source
+
+      unless result.respond_to?(:each)
+        source_label = override ? 'tenant_override' : 'tenants_provider'
+        raise(ConfigurationError,
+              "#{source_label} must return an Enumerable, got #{result.class}")
+      end
+      result
+    end
+
+    # v3 compatibility: Apartment.excluded_models returns the excluded models list.
+    # Deprecated in v4 (use Apartment::Model + pin_tenant instead).
+    def excluded_models
+      raise(ConfigurationError, 'Apartment not configured. Call Apartment.configure first.') unless @config
+
+      @config.excluded_models
+    end
+
     def process_pinned_model(klass)
-      adapter&.process_pinned_model(klass)
+      unless adapter
+        warn "[Apartment] Cannot process pinned model #{klass.name || klass.inspect}: " \
+             'adapter not initialized. Model registered but unprocessed.'
+        return
+      end
+      adapter.process_pinned_model(klass)
     end
 
     # Configure Apartment v4. Yields a Config instance, validates it,
@@ -82,6 +124,7 @@ module Apartment
 
       new_config = Config.new
       yield(new_config)
+      new_config.apply_defaults!
       new_config.validate!
       new_config.freeze!
 
@@ -104,12 +147,7 @@ module Apartment
     # Reset all configuration and stop background tasks.
     def clear_config
       teardown_old_state
-      # Reset per-model processing flags so re-configuration re-establishes connections.
-      @pinned_models&.each do |klass|
-        next unless klass.instance_variable_defined?(:@apartment_connection_established)
-
-        klass.remove_instance_variable(:@apartment_connection_established)
-      end
+      @pinned_models&.each { |klass| klass.apartment_restore! if klass.respond_to?(:apartment_restore!) }
       @config = nil
       @pool_manager = nil
       @pool_reaper = nil
@@ -156,6 +194,22 @@ module Apartment
       )
     rescue StandardError => e
       warn "[Apartment] Failed to deregister AR pool for #{pool_key}: #{e.class}: #{e.message}"
+    end
+
+    # Deregister all tenant pools from AR's ConnectionHandler and clear the
+    # pool manager cache. Tenant context is also reset. Pools rebuild lazily
+    # on the next +connection_pool+ call.
+    #
+    # Called automatically by +Apartment::TestFixtures+ before Rails' fixture
+    # setup iterates shards. Can also be called manually in custom test harnesses
+    # that need to clear tenant state between examples.
+    #
+    # @return [void]
+    # @see Apartment::TestFixtures
+    def reset_tenant_pools!
+      deregister_all_tenant_pools
+      @pool_manager&.clear
+      Apartment::Current.reset
     end
 
     private

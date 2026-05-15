@@ -65,6 +65,10 @@ RSpec.describe('v4 Memory stability integration', :integration,
                               "Cycle 0: expected > 5 pools before reap, got #{pre_reap}")
         end
 
+        # Mirror the request/job boundary that releases sticky leases in
+        # production; without it the in-use guard correctly skips every pool.
+        ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+
         Apartment.pool_reaper.run_cycle
 
         pool_count = Apartment.pool_manager.stats[:total_pools]

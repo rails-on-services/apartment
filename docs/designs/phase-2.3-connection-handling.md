@@ -110,7 +110,7 @@ Each tenant pool has **immutable, tenant-specific config** baked in at creation:
 
 | Strategy | Config key | Example |
 |----------|-----------|---------|
-| PostgreSQL schema | `schema_search_path` | `"acme,ext,public"` |
+| PostgreSQL schema | `schema_search_path` | `'"acme","ext","public"'` |
 | PostgreSQL database | `database` | `"acme_production"` |
 | MySQL database | `database` | `"acme_production"` |
 | SQLite file | `database` | `"storage/acme.sqlite3"` |

@@ -78,7 +78,15 @@ if [ ! -d "$WORKTREE_PATH" ]; then
     fi
 fi
 
-ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd || echo "$WORKTREE_PATH")
+# Resolve to an absolute path. The cd-and-pwd dance fails silently if the
+# directory is missing or unreadable, leaving $ABS_PATH set to the (possibly
+# relative) input. Downstream cleanup blocks compare $ABS_PATH against entries
+# in the Serena registry (absolute paths only); a relative fallback misses the
+# match and leaves the entry stale. Hard-error instead.
+if ! ABS_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd); then
+    log_error "Could not resolve $WORKTREE_PATH to an absolute path"
+    exit 1
+fi
 WORKTREE_NAME=$(basename "$ABS_PATH")
 
 header "Remove worktree: $WORKTREE_NAME"
@@ -86,6 +94,10 @@ header "Remove worktree: $WORKTREE_NAME"
 # ---------------------------------------------------------------------------
 # Detect branch (using line-based parsing to handle paths with spaces)
 # ---------------------------------------------------------------------------
+# Try the porcelain parser first (also tells us this is a real registered
+# worktree), then fall back to symbolic-ref directly. The fallback handles
+# worktrees whose porcelain entry is malformed or already detached — without
+# it the script silently skipped --delete-branch and looked like a no-op.
 BRANCH=""
 IS_GIT_WORKTREE=false
 if git worktree list --porcelain | grep -q "^worktree ${ABS_PATH}$"; then
@@ -95,8 +107,11 @@ if git worktree list --porcelain | grep -q "^worktree ${ABS_PATH}$"; then
         found && /^branch / { sub("^branch refs/heads/", ""); print; exit }
         found && /^worktree / { exit }
     ')
-    [ -n "$BRANCH" ] && log_info "Branch: $BRANCH"
 fi
+if [ -z "$BRANCH" ]; then
+    BRANCH=$(git -C "$ABS_PATH" symbolic-ref --short -q HEAD 2>/dev/null || true)
+fi
+[ -n "$BRANCH" ] && log_info "Branch: $BRANCH"
 
 # ---------------------------------------------------------------------------
 # Check for uncommitted changes
@@ -172,6 +187,28 @@ else
     else
         log_warn "Color registry: failed to read $REGISTRY"
     fi
+fi
+
+# --- Serena registry cleanup ---
+# Strips this worktree's path from ~/.serena/serena_config.yml. Setup-worktree
+# also prunes stale entries on the next run as a safety net, but doing it here
+# keeps the daemon healthy until then (stale entries crash samefile checks).
+SERENA_CONFIG="$HOME/.serena/serena_config.yml"
+# strenv() reads the path from an env var instead of interpolating it into
+# the yq expression — avoids quote/escape injection if the path ever
+# contained `"` or `\`. Tempfile + mv keeps the rewrite atomic.
+if [ -f "$SERENA_CONFIG" ] && command -v yq >/dev/null 2>&1 \
+   && SERENA_REMOVE_PATH="$ABS_PATH" \
+      yq e -e '.projects // [] | .[] | select(. == strenv(SERENA_REMOVE_PATH))' \
+      "$SERENA_CONFIG" >/dev/null 2>&1; then
+    TMP_CFG="${SERENA_CONFIG}.tmp.$$"
+    trap 'rm -f "$TMP_CFG"' EXIT INT TERM
+    cp "$SERENA_CONFIG" "$TMP_CFG"
+    SERENA_REMOVE_PATH="$ABS_PATH" \
+        yq e -i 'del(.projects[] | select(. == strenv(SERENA_REMOVE_PATH)))' "$TMP_CFG"
+    mv "$TMP_CFG" "$SERENA_CONFIG"
+    trap - EXIT INT TERM
+    log_info "Serena: deregistered $ABS_PATH"
 fi
 
 # ---------------------------------------------------------------------------

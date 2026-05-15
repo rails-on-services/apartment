@@ -27,6 +27,8 @@ module Apartment
       rescue ActiveRecord::NoDatabaseError
         warn '[Apartment] Database not found during init — skipping. Run db:create first.'
       end
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
     end
 
     # Insert elevator middleware if configured.
@@ -45,7 +47,18 @@ module Apartment
         WARNING
       end
 
-      app.middleware.use(elevator_class, **opts)
+      Apartment::Railtie.insert_elevator_middleware(app.middleware, elevator_class, **opts)
+    end
+
+    # In test environments, clean up apartment's tenant pools before Rails'
+    # fixture setup iterates shards. See docs/designs/v4-test-fixtures-compatibility.md.
+    if Rails.env.test?
+      ActiveSupport.on_load(:active_record_fixtures) do
+        if Apartment.config&.test_fixture_cleanup
+          require 'apartment/test_fixtures'
+          prepend Apartment::TestFixtures
+        end
+      end
     end
 
     rake_tasks do
@@ -66,9 +79,32 @@ module Apartment
       end
     end
 
+    # Insert elevator middleware after ActionDispatch::Callbacks.
+    # In the full stack this places it just before Cookies/Session/Auth.
+    # In API mode (where Cookies is absent), Callbacks is still present.
+    # Class method for testability.
+    def self.insert_elevator_middleware(middleware_stack, elevator_class, **)
+      middleware_stack.insert_after(ActionDispatch::Callbacks, elevator_class, **)
+    end
+
     # Whether the Header elevator trust warning should fire. Class method for testability.
     def self.header_trust_warning?(elevator_class, opts)
       elevator_class <= Apartment::Elevators::Header && !opts[:trusted]
+    end
+
+    # In test environments the reaper is more liability than asset: suites
+    # are short, tenant counts low, memory pressure absent, and an eviction
+    # mid-example orphans transactional-fixture state. Stop the reaper that
+    # Apartment.configure started; a suite that genuinely needs eviction
+    # can call Apartment.pool_reaper.start explicitly. Emits :reaper_stopped
+    # so an upgrading adopter notices the behavior change without combing
+    # release notes.
+    def self.deactivate_pool_reaper_in_test_env!
+      return unless Rails.env.test?
+      return unless Apartment.pool_reaper
+
+      Apartment.pool_reaper.stop
+      Apartment::Instrumentation.instrument(:reaper_stopped, reason: :test_env)
     end
 
     # Resolve an elevator symbol/string to its class. Class method for testability.

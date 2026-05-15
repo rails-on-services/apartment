@@ -110,6 +110,142 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
+  describe '.inside_tenant?' do
+    it 'returns false when Current.tenant is nil' do
+      Apartment::Current.tenant = nil
+      expect(described_class.inside_tenant?).to(be(false))
+    end
+
+    it 'returns true after switch!' do
+      described_class.switch!('tenant1')
+      expect(described_class.inside_tenant?).to(be(true))
+    end
+
+    it 'returns true after reset (reset is an explicit entry into default_tenant)' do
+      described_class.switch!('tenant1')
+      described_class.reset
+      # reset switches to default_tenant ('public') via switch!, which sets
+      # Current.tenant. inside_tenant? reports true — reset is an explicit entry
+      # into the default tenant, distinct from "no tenant ever entered".
+      expect(described_class.inside_tenant?).to(be(true))
+    end
+
+    it 'returns false outside a switch block, true inside' do
+      Apartment::Current.tenant = nil
+      expect(described_class.inside_tenant?).to(be(false))
+      described_class.switch('tenant1') do
+        expect(described_class.inside_tenant?).to(be(true))
+      end
+      expect(described_class.inside_tenant?).to(be(false))
+    end
+
+    it 'distinguishes from .current when nothing has been entered' do
+      Apartment::Current.tenant = nil
+      expect(described_class.current).to(eq('public'))
+      expect(described_class.inside_tenant?).to(be(false))
+    end
+  end
+
+  describe '.assert_inside_tenant!' do
+    it 'raises when Current.tenant is nil' do
+      Apartment::Current.tenant = nil
+      expect { described_class.assert_inside_tenant! }
+        .to(raise_error(Apartment::ApartmentError, /no explicit tenant context|Current.tenant is nil/))
+    end
+
+    it 'no-ops when a tenant has been entered' do
+      described_class.switch!('tenant1')
+      expect { described_class.assert_inside_tenant! }.not_to(raise_error)
+    end
+
+    it 'no-ops inside a switch block' do
+      described_class.switch('tenant1') do
+        expect { described_class.assert_inside_tenant! }.not_to(raise_error)
+      end
+    end
+
+    it 'message points the caller at switch / switch!' do
+      Apartment::Current.tenant = nil
+      expect { described_class.assert_inside_tenant! }
+        .to(raise_error(/Apartment::Tenant\.switch/))
+    end
+
+    it 'honors a custom message: kwarg' do
+      Apartment::Current.tenant = nil
+      expect { described_class.assert_inside_tenant!(message: 'cross_tenant: true required') }
+        .to(raise_error(Apartment::ApartmentError, 'cross_tenant: true required'))
+    end
+  end
+
+  describe '.switch default_tenant guard' do
+    context 'when default_tenant_switch_allowed is true (default)' do
+      it 'permits switch into the default tenant' do
+        expect { described_class.switch('public') { :ok } }.not_to(raise_error)
+      end
+    end
+
+    context 'when default_tenant_switch_allowed is false' do
+      before do
+        Apartment.configure do |c|
+          c.tenant_strategy = :schema
+          c.tenants_provider = -> { %w[tenant1 tenant2] }
+          c.default_tenant = 'public'
+          c.default_tenant_switch_allowed = false
+        end
+      end
+
+      it 'raises on switch(default_tenant) block form' do
+        expect { described_class.switch('public') { :ok } }
+          .to(raise_error(Apartment::ApartmentError,
+                          /switch\("public"\) is disabled.*default_tenant_switch_allowed/m))
+      end
+
+      it 'permits switch into a non-default tenant' do
+        expect { described_class.switch('tenant1') { :ok } }.not_to(raise_error)
+      end
+
+      it 'permits switch!(default_tenant) (non-block bypass)' do
+        expect { described_class.switch!('public') }.not_to(raise_error)
+      end
+
+      it 'permits Tenant.reset' do
+        expect { described_class.reset }.not_to(raise_error)
+      end
+
+      it 'is inert when default_tenant is nil' do
+        Apartment.configure do |c|
+          c.tenant_strategy = :database_name
+          c.tenants_provider = -> { %w[t1] }
+          c.default_tenant_switch_allowed = false
+        end
+        # default_tenant is nil; no tenant name can match, so guard never fires.
+        expect { described_class.switch('t1') { :ok } }.not_to(raise_error)
+      end
+
+      it 'raises on Symbol tenant matching String default_tenant' do
+        # default_tenant = 'public' (String) from the surrounding configure
+        expect { described_class.switch(:public) { :ok } }
+          .to(raise_error(Apartment::ApartmentError, /switch\("public"\) is disabled/))
+      end
+
+      it 'raises on String tenant matching Symbol default_tenant' do
+        Apartment.configure do |c|
+          c.tenant_strategy = :schema
+          c.tenants_provider = -> { %w[tenant1] }
+          c.default_tenant = :public
+          c.default_tenant_switch_allowed = false
+        end
+        expect { described_class.switch('public') { :ok } }
+          .to(raise_error(Apartment::ApartmentError, /is disabled/))
+      end
+
+      it 'error message points at reset for block scope and switch! for non-block' do
+        expect { described_class.switch('public') { :ok } }
+          .to(raise_error(/Inside a block scope, call Apartment::Tenant\.reset.*non-block scopes.*Apartment::Tenant\.switch!/m))
+      end
+    end
+  end
+
   describe '.init' do
     it 'delegates to adapter.process_pinned_models' do
       expect(mock_adapter).to(receive(:process_pinned_models))
@@ -155,7 +291,7 @@ RSpec.describe(Apartment::Tenant) do
 
       it 'skips models already in pinned_models registry (via pin_tenant)' do
         require 'apartment/concerns/model'
-        model_class = Class.new do
+        model_class = Class.new(ActiveRecord::Base) do
           include Apartment::Model
         end
         stub_const('AlreadyPinnedModel', model_class)
@@ -176,6 +312,258 @@ RSpec.describe(Apartment::Tenant) do
         described_class.init
         expect(Apartment.pinned_models.size).to(eq(count_before))
       end
+    end
+  end
+
+  describe '.each' do
+    it 'requires a block' do
+      expect { described_class.each }.to(raise_error(ArgumentError, /requires a block/))
+    end
+
+    it 'iterates over all tenants from tenants_provider' do
+      visited = []
+      described_class.each { |t| visited << t } # rubocop:disable Style/MapIntoArray
+      expect(visited).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'switches into each tenant for the duration of the block' do
+      tenants_seen = []
+      described_class.each { |_t| tenants_seen << Apartment::Current.tenant } # rubocop:disable Style/MapIntoArray
+      expect(tenants_seen).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'restores tenant context after iteration' do
+      Apartment::Current.tenant = 'original'
+      described_class.each { |_t| }
+      expect(Apartment::Current.tenant).to(eq('original'))
+    end
+
+    it 'accepts a custom tenant list' do
+      visited = []
+      described_class.each(%w[custom1 custom2]) { |t| visited << t }
+      expect(visited).to(eq(%w[custom1 custom2]))
+    end
+
+    it 'propagates exceptions from the block' do
+      expect do
+        described_class.each { raise('boom') } # rubocop:disable Lint/UnreachableLoop
+      end.to(raise_error(RuntimeError, 'boom'))
+    end
+
+    it 'restores tenant context after an exception' do
+      Apartment::Current.tenant = 'original'
+      begin
+        described_class.each { raise('boom') } # rubocop:disable Lint/UnreachableLoop
+      rescue RuntimeError
+        nil
+      end
+      expect(Apartment::Current.tenant).to(eq('original'))
+    end
+
+    it 'raises ConfigurationError when tenants_provider returns nil' do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = ->(*) { nil } # rubocop:disable Style/NilLambda
+        config.default_tenant = 'public'
+      end
+      Apartment.adapter = mock_adapter
+
+      expect do
+        described_class.each { |_t| }
+      end.to(raise_error(Apartment::ConfigurationError, /tenants_provider must return an Enumerable/))
+    end
+
+    it 'raises ConfigurationError when Apartment is not configured' do
+      Apartment.clear_config
+      expect do
+        described_class.each { |_t| }
+      end.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+
+    it 'stops iteration on first exception (fail-fast)' do
+      visited = []
+      expect do
+        described_class.each(%w[tenant1 tenant2 tenant3]) do |t|
+          visited << t
+          raise('fail on tenant2') if t == 'tenant2'
+        end
+      end.to(raise_error(RuntimeError, 'fail on tenant2'))
+      expect(visited).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'is a no-op for an empty tenant list' do
+      called = false
+      described_class.each([]) { |_t| called = true }
+      expect(called).to(be(false))
+    end
+
+    it 'returns the result of iterating the tenant list' do
+      result = described_class.each(%w[a b]) { |_t| }
+      expect(result).to(eq(%w[a b]))
+    end
+  end
+
+  describe '.with_tenants_provider' do
+    it 'requires a block' do
+      expect { described_class.with_tenants_provider(['a']) }.to(raise_error(ArgumentError, /requires a block/))
+    end
+
+    it 'overrides the resolver for Apartment.tenant_names' do
+      described_class.with_tenants_provider(%w[acme widgets]) do
+        expect(Apartment.tenant_names).to(eq(%w[acme widgets]))
+      end
+    end
+
+    it 'overrides the resolver for Tenant.each' do
+      visited = []
+      described_class.with_tenants_provider(%w[acme widgets]) do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq(%w[acme widgets]))
+    end
+
+    it 'restores the ambient resolver after the block' do
+      described_class.with_tenants_provider(%w[acme]) {}
+      expect(Apartment.tenant_names).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'restores the ambient resolver after an exception in the block' do
+      begin
+        described_class.with_tenants_provider(%w[acme]) { raise('boom') }
+      rescue RuntimeError
+        nil
+      end
+      expect(Apartment.tenant_names).to(eq(%w[tenant1 tenant2]))
+    end
+
+    it 'coerces a String to a single-element Array of strings' do
+      described_class.with_tenants_provider('acme') do
+        expect(Apartment.tenant_names).to(eq(%w[acme]))
+      end
+    end
+
+    it 'coerces a Symbol to a single-element Array of strings' do
+      described_class.with_tenants_provider(:acme) do
+        expect(Apartment.tenant_names).to(eq(%w[acme]))
+      end
+    end
+
+    it 'coerces an Array of mixed Strings and Symbols to strings' do
+      described_class.with_tenants_provider([:acme, 'widgets']) do
+        expect(Apartment.tenant_names).to(eq(%w[acme widgets]))
+      end
+    end
+
+    it 'freezes the coerced override Array' do
+      described_class.with_tenants_provider(%w[acme widgets]) do
+        expect(Apartment::Current.tenant_override).to(be_frozen)
+      end
+    end
+
+    it 'honors an empty Array (Tenant.each yields zero times)' do
+      visited = []
+      described_class.with_tenants_provider([]) do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq([]))
+    end
+
+    it 'accepts a callable and re-evaluates it on every tenant_names access' do
+      calls = 0
+      callable = lambda do
+        calls += 1
+        ["tenant_#{calls}"]
+      end
+
+      described_class.with_tenants_provider(callable) do
+        expect(Apartment.tenant_names).to(eq(%w[tenant_1]))
+        expect(Apartment.tenant_names).to(eq(%w[tenant_2]))
+      end
+      expect(calls).to(eq(2))
+    end
+
+    it 'raises ConfigurationError when a callable override returns a non-Enumerable' do
+      callable = -> { 42 }
+      described_class.with_tenants_provider(callable) do
+        expect do
+          Apartment.tenant_names
+        end.to(raise_error(Apartment::ConfigurationError, /tenant_override must return an Enumerable/))
+      end
+    end
+
+    it 'fully replaces an outer override when nested' do
+      seen_inside = nil
+      described_class.with_tenants_provider(%w[outer1 outer2]) do
+        described_class.with_tenants_provider(%w[inner]) do
+          seen_inside = Apartment.tenant_names
+        end
+        expect(Apartment.tenant_names).to(eq(%w[outer1 outer2]))
+      end
+      expect(seen_inside).to(eq(%w[inner]))
+    end
+
+    it 'does not clear an outer override when the inner call raises ArgumentError' do
+      described_class.with_tenants_provider(%w[outer]) do
+        expect do
+          described_class.with_tenants_provider(%w[inner]) # no block
+        end.to(raise_error(ArgumentError, /requires a block/))
+        expect(Apartment::Current.tenant_override).to(eq(%w[outer]))
+      end
+    end
+
+    it 'does not clear an outer override when coercion raises ArgumentError' do
+      described_class.with_tenants_provider(%w[outer]) do
+        expect do
+          described_class.with_tenants_provider(nil) { :unreachable }
+        end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+        expect(Apartment::Current.tenant_override).to(eq(%w[outer]))
+      end
+    end
+
+    it 'raises ArgumentError for nil' do
+      expect do
+        described_class.with_tenants_provider(nil) { :unreachable }
+      end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+    end
+
+    it 'raises ArgumentError for a Hash' do
+      expect do
+        described_class.with_tenants_provider({ acme: 1 }) { :unreachable }
+      end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+    end
+
+    it 'raises ArgumentError for an arbitrary object' do
+      expect do
+        described_class.with_tenants_provider(Object.new) { :unreachable }
+      end.to(raise_error(ArgumentError, /callable, String, Symbol/))
+    end
+
+    it 'raises ArgumentError for an Array containing a non-String/Symbol entry' do
+      expect do
+        described_class.with_tenants_provider(['acme', 42]) { :unreachable }
+      end.to(raise_error(ArgumentError, /Array entries must be String or Symbol/))
+    end
+  end
+
+  describe '.with_tenants' do
+    it 'delegates to with_tenants_provider with the splat as the source' do
+      visited = []
+      described_class.with_tenants('acme', 'widgets') do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq(%w[acme widgets]))
+    end
+
+    it 'with no arguments yields zero iterations through Tenant.each' do
+      visited = []
+      described_class.with_tenants do
+        described_class.each { |t| visited << t }
+      end
+      expect(visited).to(eq([]))
+    end
+
+    it 'requires a block' do
+      expect { described_class.with_tenants('acme') }.to(raise_error(ArgumentError, /requires a block/))
     end
   end
 

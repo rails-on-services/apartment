@@ -52,6 +52,31 @@ RSpec.describe('Apartment::Railtie') do
     end
   end
 
+  describe '.insert_elevator_middleware' do
+    let(:middleware_stack) { double('MiddlewareStack') }
+    let(:elevator_class) { Apartment::Elevators::Subdomain }
+
+    before do
+      Apartment.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.elevator = :subdomain
+      end
+    end
+
+    it 'inserts after ActionDispatch::Callbacks' do
+      expect(middleware_stack).to(receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class))
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
+    end
+
+    it 'forwards kwargs to insert_after' do
+      expect(middleware_stack).to(
+        receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class, foo: :bar)
+      )
+      Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class, foo: :bar)
+    end
+  end
+
   describe '.header_trust_warning?' do
     it 'returns true for Header with trusted: false' do
       expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, {})).to(be(true))
@@ -68,6 +93,50 @@ RSpec.describe('Apartment::Railtie') do
 
     it 'returns false for non-Header elevator' do
       expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Subdomain, {})).to(be(false))
+    end
+  end
+
+  describe '.deactivate_pool_reaper_in_test_env!' do
+    it 'stops Apartment.pool_reaper when Rails.env.test? is true' do
+      reaper = instance_double(Apartment::PoolReaper, stop: nil)
+      allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+      expect(reaper).to(have_received(:stop))
+    end
+
+    it 'emits reaper_stopped.apartment with reason :test_env when it stops the reaper' do
+      reaper = instance_double(Apartment::PoolReaper, stop: nil)
+      allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+      events = []
+      sub = ActiveSupport::Notifications.subscribe('reaper_stopped.apartment') { |e| events << e }
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+      expect(events.size).to(eq(1))
+      expect(events.first.payload).to(eq(reason: :test_env))
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub) if sub
+    end
+
+    it 'does nothing outside the test environment' do
+      reaper = instance_double(Apartment::PoolReaper, stop: nil)
+      allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('production')))
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+      expect(reaper).not_to(have_received(:stop))
+    end
+
+    it 'is a no-op when no reaper is configured' do
+      allow(Apartment).to(receive(:pool_reaper).and_return(nil))
+      allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+      expect { Apartment::Railtie.deactivate_pool_reaper_in_test_env! }.not_to(raise_error)
     end
   end
 end

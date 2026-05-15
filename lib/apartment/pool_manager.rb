@@ -23,6 +23,13 @@ module Apartment
       pool
     end
 
+    # Read a pool without updating its idle timestamp. PoolReaper uses this
+    # to inspect an eviction candidate; +get+ would reset the very idleness
+    # the reaper is measuring.
+    def peek(tenant_key)
+      @pools[tenant_key]
+    end
+
     # Delete pool first, then timestamp. This ordering prevents a concurrent
     # #get from orphaning a timestamp (get checks @pools, skips touch if absent).
     def remove(tenant_key)

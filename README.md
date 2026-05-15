@@ -60,7 +60,7 @@ The generated initializer at `config/initializers/apartment.rb` configures Apart
 Apartment.configure do |config|
   config.tenant_strategy = :schema          # :schema (PostgreSQL) or :database_name (MySQL/SQLite)
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
+  config.default_tenant = 'public'          # auto-defaults for :schema; required for :database_name
 end
 ```
 
@@ -112,7 +112,7 @@ config.elevator = :subdomain
 config.elevator_options = {}
 ```
 
-The Railtie auto-inserts elevator middleware. No manual `config.middleware.use` needed.
+The Railtie auto-inserts elevator middleware after `ActionDispatch::Callbacks` (just before cookies/sessions in full mode; works in API mode too).
 
 See the [Elevators](#elevators) section for available options.
 
@@ -217,7 +217,14 @@ Apartment.configure do |config|
 end
 ```
 
-The Railtie inserts the elevator as middleware automatically. You do not need `config.middleware.use` or `config.middleware.insert_before`.
+The Railtie inserts the elevator after `ActionDispatch::Callbacks` automatically. In the full middleware stack this places it just before cookies, sessions, and authentication. In API mode (where cookies/sessions are absent), `Callbacks` is still present so the elevator works without changes.
+
+If you need different positioning, skip `config.elevator` and insert manually:
+
+```ruby
+# config/application.rb
+config.middleware.insert_before 'Warden::Manager', Apartment::Elevators::Subdomain
+```
 
 ### Custom Elevator
 
@@ -322,6 +329,12 @@ For automatic tenant propagation:
 
 - [apartment-sidekiq](https://github.com/rails-on-services/apartment-sidekiq)
 - [apartment-activejob](https://github.com/rails-on-services/apartment-activejob)
+
+## Convenience Methods
+
+`Apartment.tenant_names` returns the current tenant list (delegates to `config.tenants_provider.call`). Preserves the v3 API so existing call sites work without changes.
+
+`Apartment.excluded_models` returns the excluded models list (delegates to `config.excluded_models`). Deprecated in v4; use `Apartment::Model` + `pin_tenant` instead.
 
 ## Troubleshooting
 
