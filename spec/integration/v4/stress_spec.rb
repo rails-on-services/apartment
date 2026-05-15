@@ -274,6 +274,11 @@ RSpec.describe('v4 Stress / concurrency integration', :integration, :stress,
       role = ActiveRecord::Base.current_role
       expect(Apartment.pool_manager.tracked?("reap_me:#{role}")).to(be(true))
 
+      # Mirror the request/job boundary that releases sticky leases in
+      # production; the in-use guard correctly skips a pool whose
+      # connection is still checked out.
+      ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+
       # Poll until reaper evicts the idle pool or timeout
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
       until !Apartment.pool_manager.tracked?("reap_me:#{role}") ||
