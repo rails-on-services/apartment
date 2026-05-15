@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# rubocop:disable Style/ClassAndModuleChildren
+# rubocop:disable Style/ClassAndModuleChildren, Style/OneClassPerFile
 
 # NOTE: This patch is meant to remove any schema_prefix appart from the ones for
 # excluded models. The schema_prefix would be resolved by apartment's setting
@@ -55,4 +55,4 @@ require 'active_record/connection_adapters/postgresql_adapter'
 class ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
   include Apartment::PostgreSqlAdapterPatch
 end
-# rubocop:enable Style/ClassAndModuleChildren
+# rubocop:enable Style/ClassAndModuleChildren, Style/OneClassPerFile

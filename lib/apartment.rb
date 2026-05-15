@@ -164,17 +164,22 @@ module Apartment
   end
 
   # Exceptions
-  ApartmentError = Class.new(StandardError)
+  class ApartmentError < StandardError
+  end
 
   # Raised when apartment cannot find the adapter specified in <tt>config/database.yml</tt>
-  AdapterNotFound = Class.new(ApartmentError)
+  class AdapterNotFound < ApartmentError
+  end
 
   # Raised when apartment cannot find the file to be loaded
-  FileNotFound = Class.new(ApartmentError)
+  class FileNotFound < ApartmentError
+  end
 
   # Tenant specified is unknown
-  TenantNotFound = Class.new(ApartmentError)
+  class TenantNotFound < ApartmentError
+  end
 
   # The Tenant attempting to be created already exists
-  TenantExists = Class.new(ApartmentError)
+  class TenantExists < ApartmentError
+  end
 end
