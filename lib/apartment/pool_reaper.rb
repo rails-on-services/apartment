@@ -113,8 +113,6 @@ module Apartment
 
     # The LRU loop body, factored out so evict_lru reads as "evict up to
     # excess, then report the cap if we couldn't get there."
-    # The LRU loop body, factored out so evict_lru reads as "evict up to
-    # excess, then report the cap if we couldn't get there."
     def perform_lru_eviction(excess, candidate_count)
       evicted = 0
       @pool_manager.lru_tenants(count: candidate_count).each do |tenant|
@@ -162,14 +160,6 @@ module Apartment
     # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting a pinned pool
     # strands the fixture transaction; teardown then errors or marks the DB
     # dirty. AR exposes no public predicate, so we read the ivar it sets.
-    # Best-effort: callers check-then-remove, so a pool can be pinned in
-    # that sub-millisecond window. Evicting one then orphans its fixture
-    # transaction — a test-isolation failure (dirty fixture state, rows
-    # leaking between examples), not production data corruption.
-    # True when Rails' transactional-fixture machinery has pinned the pool
-    # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting a pinned pool
-    # strands the fixture transaction; teardown then errors or marks the DB
-    # dirty. AR exposes no public predicate, so we read the ivar it sets.
     # TOCTOU caveat applies — see docs/testing.md "Pool lifecycle in tests".
     def pool_pinned?(pool)
       return false unless pool&.instance_variable_defined?(:@pinned_connection)
@@ -191,9 +181,6 @@ module Apartment
       end
     end
 
-    # Build and emit the :skip_evict payload. For :in_use, include
-    # connection-state details so a tenant skipped for many cycles is
-    # diagnosable from instrumentation alone.
     # Build and emit the :skip_evict payload. :pinned is a binary state
     # with nothing useful to surface; :in_use carries busy_connections and
     # open_transactions so a tenant skipped for many cycles is diagnosable
