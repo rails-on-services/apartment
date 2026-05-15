@@ -141,14 +141,6 @@ module Apartment
       pool_key == @default_tenant || pool_key.start_with?("#{@default_tenant}:")
     end
 
-    # True when Rails' transactional-fixture machinery has pinned the pool
-    # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting a pinned pool
-    # strands the fixture transaction; teardown then errors or marks the DB
-    # dirty. AR exposes no public predicate, so we read the ivar it sets.
-    # Best-effort: callers check-then-remove, so a pool can be pinned in
-    # that sub-millisecond window. Evicting one then orphans its fixture
-    # transaction — a test-isolation failure (dirty fixture state, rows
-    # leaking between examples), not production data corruption.
     # Returns true and emits :skip_evict if the candidate pool is currently
     # protected. Used as a single guard for both eviction paths.
     def protected_pool?(tenant, eviction_reason:)
@@ -178,18 +170,11 @@ module Apartment
       !pool.instance_variable_get(:@pinned_connection).nil?
     end
 
-    # True when at least one connection in the pool is leased or holds an
-    # open transaction (long-running migration, batch job, unpinned fixture
-    # tx). Forced eviction here would orphan that work, so we skip and let
-    # the next reap cycle re-evaluate. Note: a server-side cursor without
-    # an open transaction is not detectable via AR's public API and falls
-    # outside this guard — rare in typical Rails.
-    # True when at least one connection in the pool is leased or holds an
-    # open transaction (long-running migration, batch job, unpinned fixture
-    # tx). Forced eviction here would orphan that work, so we skip and let
-    # the next reap cycle re-evaluate. Note: a server-side cursor without
-    # an open transaction is not detectable via AR's public API and falls
-    # outside this guard — rare in typical Rails.
+    # True when at least one connection is leased or holds an open
+    # transaction (long migration, batch job, unpinned fixture tx). Forcing
+    # eviction would potentially orphan that work, so skip and let the next
+    # reap cycle re-evaluate. See docs/testing.md for the server-side-cursor
+    # case this misses.
     def pool_in_use?(pool)
       return false unless pool.respond_to?(:connections)
 
