@@ -27,6 +27,8 @@ module Apartment
       rescue ActiveRecord::NoDatabaseError
         warn '[Apartment] Database not found during init — skipping. Run db:create first.'
       end
+
+      Apartment::Railtie.deactivate_pool_reaper_in_test_env!
     end
 
     # Insert elevator middleware if configured.
@@ -88,6 +90,15 @@ module Apartment
     # Whether the Header elevator trust warning should fire. Class method for testability.
     def self.header_trust_warning?(elevator_class, opts)
       elevator_class <= Apartment::Elevators::Header && !opts[:trusted]
+    end
+
+    # In test environments the reaper is more liability than asset: suites
+    # are short, tenant counts low, memory pressure absent, and an eviction
+    # mid-example orphans transactional-fixture state. Stop the reaper that
+    # Apartment.configure started; a suite that genuinely needs eviction
+    # can call Apartment.pool_reaper.start explicitly.
+    def self.deactivate_pool_reaper_in_test_env!
+      Apartment.pool_reaper&.stop if Rails.env.test?
     end
 
     # Resolve an elevator symbol/string to its class. Class method for testability.
