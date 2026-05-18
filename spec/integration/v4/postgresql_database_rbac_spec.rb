@@ -4,14 +4,6 @@ require 'spec_helper'
 require_relative 'support'
 require_relative 'support/rbac_helper'
 
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
-    end
-  end
-end
-
 RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration, :postgresql_only, :rbac,
                skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PG')) do
   include V4IntegrationHelper

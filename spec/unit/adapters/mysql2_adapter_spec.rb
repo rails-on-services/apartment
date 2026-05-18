@@ -15,15 +15,6 @@ unless defined?(ActiveRecord::Base)
   end
 end
 
-# Minimal Rails stub for environmentify tests.
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
-    end
-  end
-end
-
 # Shared examples for MySQL-family adapters (MySQL2 and Trilogy share identical behavior).
 RSpec.shared_examples('a MySQL adapter') do
   let(:connection_config) { { adapter: adapter_name, host: 'localhost', database: 'myapp' } }

@@ -167,6 +167,34 @@ end
 
 ## Pool lifecycle in tests
 
+### The invariant
+
+v3's test-suite pain was a **variable problem**: at any given moment, which `search_path` is current? Tests that crossed tenants had to reason about an in-flight setting and reset it carefully. v4 swapped that for a **resource lifecycle problem**: does the connection pool that fixtures enrolled for rollback still exist with the same object identity? Rails' transactional fixtures pin pools by object reference (`ConnectionPool#pin_connection!`) and unwind them by walking that same reference at teardown. Discard a pinned pool mid-suite and the recreated one has a fresh `object_id`; the fixture transaction never enrolled it; rollback misses its writes.
+
+The rule, in one line: **pool lifecycle changes during fixture-transaction ownership are a violation.** Any Apartment API that discards or replaces a pool must refuse to do so while Rails owns it. `Apartment::PoolReaper` already implements this for eviction (see the reaper subsection below); `Apartment.reset_tenant_pools!` extends it to the explicit-reset path.
+
+The failure-class inventory, rejected alternatives, and ongoing investigation live in `docs/designs/fixture-pool-lifecycle.md`.
+
+### `Apartment.reset_tenant_pools!` in test env
+
+In `Rails.env.test?`, `Apartment.reset_tenant_pools!` raises `Apartment::FixtureLifecycleViolation` when any tenant pool in `Apartment.pool_manager` is currently pinned by fixtures. Outside test env, semantics are unchanged.
+
+```text
+Apartment::FixtureLifecycleViolation: reset_tenant_pools! called while pool
+'acme:writing' is pinned by transactional fixtures. Use Apartment::Test::Truncation
+for cross-tenant specs that must cycle pools. See docs/designs/fixture-pool-lifecycle.md.
+```
+
+The guard fires when a tenant pool already exists in the pool manager AND has been pinned. The common bootstrap path — `Apartment::TestFixtures` calling `reset_tenant_pools!` before `setup_shared_connection_pool` runs, no tenant pools tracked yet — is unaffected. If you hit the violation, the call is happening at the wrong time, not from the wrong place.
+
+What to do instead, depending on the call site:
+
+- **Cleanup hook in a cross-tenant spec** (the most common cause): the spec needs to cycle pools mid-suite. Switch off transactional fixtures for that example or context and use a deletion/truncation strategy (`DatabaseCleaner.strategy = :deletion`). Programmatic opt-out via `Apartment::Test::Truncation` is on the roadmap (`docs/designs/fixture-pool-lifecycle.md` member #5).
+- **Suite bootstrap or teardown**: move the call out of any `before(:each)` / `after(:each)` that runs under transactional fixtures. `before(:suite)` and `after(:suite)` are safe; `before(:all)` and `after(:all)` are safe if `use_transactional_tests` is the default (Rails enrols the fixture tx per-example, not per-group).
+- **Production cleanup script that imports Rails**: not a real call site, but if it shows up, ensure the script runs outside `Rails.env.test?` or call the pool-manager's `clear` directly.
+
+### Pool reaper
+
 `Apartment::PoolReaper` evicts idle and excess tenant pools on a background timer. In production it bounds memory under high tenant counts; in test suites it's typically a liability — short runs, few tenants, no memory pressure, and an eviction mid-example can orphan transactional-fixture state. **The Railtie stops the reaper automatically when `Rails.env.test?`.** A suite that genuinely needs eviction (long-running parallel tenant churn, large fixtures) can opt back in:
 
 ```ruby

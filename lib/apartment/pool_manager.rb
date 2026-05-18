@@ -96,6 +96,14 @@ module Apartment
       }
     end
 
+    # Yields each tracked pool as +[tenant_key, pool]+. Snapshot semantics
+    # follow Concurrent::Map#each_pair: keys observed during iteration are
+    # those present at the time the iterator visits them. Read-only; do not
+    # mutate the manager from inside the block.
+    def each_pair(&)
+      @pools.each_pair(&)
+    end
+
     # Disconnect all pools before clearing to prevent connection leaks.
     # Each pool's disconnect! is individually rescued so one broken pool
     # doesn't prevent cleanup of others.

@@ -24,6 +24,7 @@ rescue LoadError
 end
 
 require 'apartment'
+require_relative 'support/rails_stub'
 
 RSpec.configure do |config|
   config.after do

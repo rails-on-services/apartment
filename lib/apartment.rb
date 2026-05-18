@@ -207,6 +207,7 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # @return [void]
     # @see Apartment::TestFixtures
     def reset_tenant_pools!
+      guard_pinned_pools_during_fixtures!
       deregister_all_tenant_pools
       @pool_manager&.clear
       Apartment::Current.reset
@@ -226,6 +227,30 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       deregister_all_tenant_pools
       @pool_manager&.clear
       @adapter = nil
+    end
+
+    # Refuse to discard tenant pools while Rails' transactional fixtures own
+    # them. The recreated pool would have a fresh object identity that the
+    # fixture transaction never enrolled, causing silent test pollution.
+    # Test-env-scoped via +Rails.env.test?+ so production keeps the existing
+    # semantics; reuses the same +@pinned_connection+ primitive the reaper
+    # already reads. See docs/designs/fixture-pool-lifecycle.md.
+    def guard_pinned_pools_during_fixtures!
+      return unless rails_test_env?
+      return unless @pool_manager
+
+      @pool_manager.each_pair do |tenant_key, pool|
+        next unless Apartment::PoolReaper.pool_pinned?(pool)
+
+        raise(Apartment::FixtureLifecycleViolation, tenant_key)
+      end
+    end
+
+    def rails_test_env?
+      return false unless defined?(Rails) && Rails.respond_to?(:env)
+
+      env = Rails.env
+      env.respond_to?(:test?) ? env.test? : env.to_s == 'test'
     end
 
     def deregister_all_tenant_pools

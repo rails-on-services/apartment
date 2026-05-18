@@ -30,19 +30,6 @@ class TestAdapter < Apartment::Adapters::AbstractAdapter
   end
 end
 
-# Minimal Rails stub for environmentify tests.
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
-    end
-
-    def self.root
-      Pathname.new('/rails/app')
-    end
-  end
-end
-
 # Minimal ActiveRecord stub for migrate tests.
 unless defined?(ActiveRecord::Base)
   module ActiveRecord

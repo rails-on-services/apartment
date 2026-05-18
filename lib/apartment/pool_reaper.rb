@@ -8,6 +8,21 @@ module Apartment
   # Complementary to ActiveRecord's ConnectionPool::Reaper which handles
   # intra-pool connection reaping — this handles inter-pool (tenant) eviction.
   class PoolReaper
+    # True when Rails' transactional-fixture machinery has pinned the pool
+    # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting or discarding a
+    # pinned pool strands the fixture transaction; teardown then errors or
+    # marks the DB dirty. ActiveRecord exposes no public predicate, so we
+    # read the ivar it sets. TOCTOU caveat applies — see docs/testing.md
+    # "Pool lifecycle in tests".
+    #
+    # Exposed as a class method so {Apartment.reset_tenant_pools!} can reuse
+    # the same primitive without instantiating a reaper.
+    def self.pool_pinned?(pool)
+      return false unless pool&.instance_variable_defined?(:@pinned_connection)
+
+      !pool.instance_variable_get(:@pinned_connection).nil?
+    end
+
     def initialize(pool_manager:, interval:, idle_timeout:, max_total: nil,
                    default_tenant: nil, shard_key_prefix: nil, on_evict: nil)
       raise(ArgumentError, 'interval must be a positive number') unless interval.is_a?(Numeric) && interval.positive?
@@ -156,15 +171,10 @@ module Apartment
       false
     end
 
-    # True when Rails' transactional-fixture machinery has pinned the pool
-    # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting a pinned pool
-    # strands the fixture transaction; teardown then errors or marks the DB
-    # dirty. AR exposes no public predicate, so we read the ivar it sets.
-    # TOCTOU caveat applies — see docs/testing.md "Pool lifecycle in tests".
+    # Instance-side wrapper around the class predicate; kept for callers
+    # (and specs) that already hold a reaper instance.
     def pool_pinned?(pool)
-      return false unless pool&.instance_variable_defined?(:@pinned_connection)
-
-      !pool.instance_variable_get(:@pinned_connection).nil?
+      self.class.pool_pinned?(pool)
     end
 
     # True when at least one connection is leased or holds an open
