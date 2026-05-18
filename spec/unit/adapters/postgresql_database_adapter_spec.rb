@@ -14,15 +14,6 @@ unless defined?(ActiveRecord::Base)
   end
 end
 
-# Minimal Rails stub for environmentify tests.
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
-    end
-  end
-end
-
 RSpec.describe(Apartment::Adapters::PostgresqlDatabaseAdapter) do
   let(:connection_config) { { adapter: 'postgresql', host: 'localhost', database: 'myapp' } }
   let(:adapter) { described_class.new(connection_config) }

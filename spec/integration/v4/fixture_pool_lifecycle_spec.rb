@@ -2,20 +2,7 @@
 
 require 'spec_helper'
 require_relative 'support'
-require 'active_support/string_inquirer'
 require 'apartment/test_fixtures'
-
-# The guard under test (`reset_tenant_pools!`) checks `Rails.env.test?`. The
-# integration env loads ActiveRecord without the Rails framework, so stub a
-# minimal Rails returning a StringInquirer to honour `.test?`. Examples that
-# need to simulate non-test env override this per-example via `allow(Rails)`.
-unless defined?(Rails)
-  module Rails
-    def self.env
-      ActiveSupport::StringInquirer.new('test')
-    end
-  end
-end
 
 # Integration coverage for the fixture pool lifecycle failure class.
 #
