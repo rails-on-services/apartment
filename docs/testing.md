@@ -181,15 +181,16 @@ In `Rails.env.test?`, `Apartment.reset_tenant_pools!` raises `Apartment::Fixture
 
 ```text
 Apartment::FixtureLifecycleViolation: reset_tenant_pools! called while pool
-'acme:writing' is pinned by transactional fixtures. Use Apartment::Test::Truncation
-for cross-tenant specs that must cycle pools. See docs/designs/fixture-pool-lifecycle.md.
+'acme:writing' is pinned by transactional fixtures. To cycle pools mid-suite,
+disable transactional fixtures for this test (use_transactional_tests = false)
+and clean up by deletion. See docs/testing.md.
 ```
 
 The guard fires when a tenant pool already exists in the pool manager AND has been pinned. The common bootstrap path — `Apartment::TestFixtures` calling `reset_tenant_pools!` before `setup_shared_connection_pool` runs, no tenant pools tracked yet — is unaffected. If you hit the violation, the call is happening at the wrong time, not from the wrong place.
 
 What to do instead, depending on the call site:
 
-- **Cleanup hook in a cross-tenant spec** (the most common cause): the spec needs to cycle pools mid-suite. Switch off transactional fixtures for that example or context and use a deletion/truncation strategy (`DatabaseCleaner.strategy = :deletion`). Programmatic opt-out via `Apartment::Test::Truncation` is on the roadmap (`docs/designs/fixture-pool-lifecycle.md` member #5).
+- **Cleanup hook in a cross-tenant spec** (the most common cause): the spec needs to cycle pools mid-suite. See ["Cycling pools mid-suite"](#cycling-pools-mid-suite) below for the documented opt-out recipe.
 - **Suite bootstrap or teardown**: move the call out of any `before(:each)` / `after(:each)` that runs under transactional fixtures. `before(:suite)` and `after(:suite)` are safe; `before(:all)` and `after(:all)` are safe if `use_transactional_tests` is the default (Rails enrols the fixture tx per-example, not per-group).
 - **Production cleanup script that imports Rails**: not a real call site, but if it shows up, ensure the script runs outside `Rails.env.test?` or call the pool-manager's `clear` directly.
 
@@ -217,3 +218,58 @@ Two narrow cases the in-use guard does **not** cover:
 - A pool whose connections have all been returned but a query-cache or prepared-statement cache remains warm — correctly evictable; the next access rebuilds both.
 
 When LRU pressure can't reach `max_total_connections` because too many pools are protected, the reaper emits `cap_unmet.apartment` instead of forcing eviction. The cap is best-effort under active workload — if you see it firing, check for the same leak signature in `skip_evict`.
+
+### Cycling pools mid-suite
+
+A small set of specs legitimately needs to cycle tenant pools — cross-tenant cleanup suites that drop and recreate tenants per example, integration tests that exercise `Apartment::Tenant.create` / `destroy` directly, or harness tests for the pool manager itself. Inside transactional fixtures, this trips `FixtureLifecycleViolation`. The opt-out is to take the offending example (or its enclosing TestCase / `describe` block) out of fixture transactions and clean up by deletion instead.
+
+Opting out at the class / group level uses Rails' supported primitive:
+
+```ruby
+RSpec.describe 'tenant lifecycle', cross_tenant: true do
+  self.use_transactional_tests = false
+  # … examples that switch, create, and destroy tenants freely
+end
+```
+
+```ruby
+# Minitest equivalent — per test method or per class
+class TenantLifecycleTest < ActiveSupport::TestCase
+  self.use_transactional_tests = false
+  # …
+end
+
+class MixedTest < ActiveSupport::TestCase
+  uses_transaction :test_recreates_pool   # only this method opts out
+  # …
+end
+```
+
+With `use_transactional_tests = false`, no pool gets pinned and `Apartment.reset_tenant_pools!` runs without tripping the guard. The cost: nothing rolls back automatically — neither tenant data nor pinned-model writes to the default schema. You own the cleanup.
+
+A pragmatic cleanup recipe for the opted-out group:
+
+```ruby
+RSpec.shared_context 'cycles pools', cross_tenant: true do
+  before do
+    DatabaseCleaner.strategy = :deletion   # :truncation also works; :transaction does not
+    DatabaseCleaner.start
+  end
+
+  after do
+    DatabaseCleaner.clean
+    clean_pinned_models!                   # see "Cleaning shared (default) tenant data" above
+    Apartment.reset_tenant_pools!          # now safe — no pins left
+  end
+end
+
+RSpec.configure { |c| c.include_context 'cycles pools', cross_tenant: true }
+```
+
+Three notes on the recipe:
+
+- **Cleanup scope is yours.** `:deletion` cleans tables in the default and tenant schemas reached via the same handler. Pinned-model writes to the primary schema are *not* covered by tenant-pool cleanup alone — chain `clean_pinned_models!` (or the equivalent for your suite). The pinned-model helper is documented above.
+- **Reset pools last.** Calling `reset_tenant_pools!` before deletion would leave tenant rows behind in the DB; calling it after means the next example starts with no live pools and a clean slate.
+- **Inheritance is sticky.** `self.use_transactional_tests = false` at the group level applies to nested describes too. Prefer narrow opt-in (`describe '…', cross_tenant: true do`) over flipping it globally; the metadata makes the opt-out grep-able.
+
+Apartment does not ship an `Apartment::Test::CrossTenant` module. The mechanism above is Rails-native, the cleanup recipe is sensitive to the suite's other tools (DatabaseCleaner, test-prof, factory caching), and the cost of getting it wrong is a noisy `FixtureLifecycleViolation`, not silent data loss. Copy the recipe and adapt.

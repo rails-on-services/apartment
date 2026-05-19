@@ -18,8 +18,8 @@ require 'apartment/test_fixtures'
 # Five examples:
 #   1. The guard raises `Apartment::FixtureLifecycleViolation` when a tenant
 #      pool carries `@pinned_connection`.
-#   2. The violation message names the offending tenant pool and redirects to
-#      the truncation strategy (contract-locked text).
+#   2. The violation message names the offending tenant pool and points at the
+#      use_transactional_tests = false opt-out + docs/testing.md (contract-locked text).
 #   3. Negative case: with no pinned pools, the call passes (the guard must
 #      not over-trigger and break suite bootstrapping — `Apartment::TestFixtures`
 #      itself invokes `reset_tenant_pools!` before `setup_shared_connection_pool`
@@ -130,7 +130,7 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
     end.to(raise_error(Apartment::FixtureLifecycleViolation))
   end
 
-  it 'violation message names the offending tenant pool and redirects to the truncation strategy doc' do
+  it 'violation message names the offending tenant pool and points at the use_transactional_tests opt-out' do
     widget_class
 
     message = nil
@@ -146,8 +146,8 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
     expect(message).not_to(be_nil)
     expect(message).to(include("#{write_tenant}:writing"))
     expect(message).to(include('transactional fixtures'))
-    expect(message).to(include('Apartment::Test::Truncation'))
-    expect(message).to(include('docs/designs/fixture-pool-lifecycle.md'))
+    expect(message).to(include('use_transactional_tests = false'))
+    expect(message).to(include('docs/testing.md'))
   end
 
   it 'is allowed outside fixture-transaction ownership (negative case)' do
