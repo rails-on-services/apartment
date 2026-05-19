@@ -43,7 +43,8 @@ module Apartment
   # fresh object identity that never enrols in the rollback. Test-env-scoped
   # — production callers are unaffected.
   #
-  # See docs/designs/fixture-pool-lifecycle.md.
+  # See docs/testing.md for the consumer-facing opt-out recipe and
+  # docs/designs/fixture-pool-lifecycle.md for the failure-class design.
   class FixtureLifecycleViolation < ApartmentError
     attr_reader :pool_key
 

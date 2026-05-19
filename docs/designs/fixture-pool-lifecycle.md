@@ -1,6 +1,8 @@
 # Fixture Pool Lifecycle
 
-Status: living. Last consolidated 2026-05-19 after PRs #399, #400, and #403 (which squashed the `reset_tenant_pools!` guard, the integration spec, and the docs invariant section onto `main` as `abcf755`).
+Status: living. Last consolidated 2026-05-19 after PRs #399, #400, #403 (which squashed the `reset_tenant_pools!` guard, the integration spec, and the docs invariant section onto `main` as `abcf755`), and #404 (the escape-hatch docs pass).
+
+> **Numbering note.** Two independent number spaces appear below. *Failure-class members* (the table under "Failure class members") are numbered 1–9. *Workstream items* are numbered within their bucket — Shipped #1–6, Eventually #7, Never #1–7. References always name the space: "failure-class member 4" vs "Shipped #6" / "Never #6". A bare "#N" inside a bucket refers to that bucket.
 
 ## TLDR
 
@@ -28,7 +30,7 @@ This is the broader rule the in-use guard from #400 specialized for the reaper c
 | 8 | Schema cache / prepared-statement drift after tenant DDL | Suspected | Pinned-model joins after DDL in one tenant may resolve against stale caches in another. |
 | 9 | Within-process thread / job boundaries | Suspected | Sidekiq inline, async executors, parallel_tests workers, or app-level threads that `switch` a tenant inside a worker thread may resolve pools differently from the originating thread. Different family from #6 (RSpec parallel examples). |
 
-Members 1–4 are closed; the workstream's escape-hatch question (originally tracked as workstream item 6) is closed docs-only — see Shipped #6. Failure-class members 5, 7, 8, 9 are tracked but not in scope this iteration. The next active piece of work is the multi-handler / `:reading` variant (Eventually #7), gated on the dummy app gaining replicas.
+Failure-class members 1–4 are closed; the workstream's escape-hatch question (originally tracked as workstream item 6) is closed docs-only — see Shipped #6. Failure-class members 5, 7, 8, 9 are tracked but not in scope this iteration. The next active piece of work is the multi-handler / `:reading` variant (Eventually #7), gated on the dummy app gaining replicas.
 
 ## Shipped
 
@@ -49,9 +51,9 @@ Failure-class members 1–4 and the workstream's escape-hatch resolution. Detail
    and clean up by deletion. See docs/testing.md.
    ```
 
-   The message previously pointed at an `Apartment::Test::Truncation` module on the roadmap. Member 6 (workstream item) is now closed as docs-only — see [docs/testing.md § Cycling pools mid-suite](../testing.md#cycling-pools-mid-suite) for the recipe. The message text was updated in lockstep so the violation directs users to the actual documented opt-out.
+   The message previously pointed at an `Apartment::Test::Truncation` module on the roadmap. The escape-hatch workstream item (Shipped #6) is now closed docs-only — see [docs/testing.md § Cycling pools mid-suite](../testing.md#cycling-pools-mid-suite) for the recipe. The message text was updated in lockstep so the violation directs users to the actual documented opt-out.
 
-4. **Integration spec** (`spec/integration/v4/fixture_pool_lifecycle_spec.rb`, `abcf755`). Five examples cover the guard, the contract-locked message, the negative case, the pool-identity mechanism, and the (a′) tiebreaker. Re-verified 2026-05-19: green on Rails 7.2 / 8.0 / 8.1 + PG, all matrix versions. The (a′) result settles member 6: lazy enrollment is reliable, `preload_test_pools!` stays unbuilt (see Never #6).
+4. **Integration spec** (`spec/integration/v4/fixture_pool_lifecycle_spec.rb`, `abcf755`). Five examples cover the guard, the contract-locked message, the negative case, the pool-identity mechanism, and the (a′) tiebreaker. Re-verified 2026-05-19: green on Rails 7.2 / 8.0 / 8.1 + PG, all matrix versions. The (a′) result confirms lazy enrollment is reliable, so `preload_test_pools!` stays unbuilt (see Never #6).
 
 5. **`docs/testing.md` invariant section** (`abcf755`). Opens with the v3→v4 posture (v3's pain was a variable problem — which `search_path` is current; v4's pain is a resource lifecycle problem — does the pool still exist with the object identity fixtures enrolled), then states the rule and points back here.
 
@@ -86,10 +88,10 @@ These are explicit rejections, with the reason recorded so they don't get re-lit
 Items the broader-class observation surfaced but that need their own design conversations before they enter a roadmap.
 
 - **Parallel-spec safety hardening**. Order-dependent flakes (this doc) and concurrent flakes are different families. Process-scoping the `reset_tenant_pools!` guard is one piece; broader concurrent-fixture-tx semantics is its own investigation.
-- **`PQTRANS_INERROR` recovery hooks** (member 7). The downstream `ROLLBACK` loop is evidence the variant exists. Gem-side coverage would mean an instrumented detection + recovery path, probably in `Apartment::Tenant.switch`'s ensure block.
-- **Schema cache invalidation on tenant DDL** (member 8). Pinned-model joins after one tenant's DDL may resolve against stale caches. Needs adapter-specific design (PG vs MySQL diverge on cache invalidation primitives).
+- **`PQTRANS_INERROR` recovery hooks** (failure-class member 7). The downstream `ROLLBACK` loop is evidence the variant exists. Gem-side coverage would mean an instrumented detection + recovery path, probably in `Apartment::Tenant.switch`'s ensure block.
+- **Schema cache invalidation on tenant DDL** (failure-class member 8). Pinned-model joins after one tenant's DDL may resolve against stale caches. Needs adapter-specific design (PG vs MySQL diverge on cache invalidation primitives).
 - **Adapter-specific savepoint behavior**. PG schema adapter under `pin_connection!` with DDL inside a tenant tx may detach the savepoint stack. Sanity check is in the existing integration spec; deeper coverage is wishlist.
-- **Within-process thread / job boundaries** (member 9). Sidekiq inline, async executors, parallel_tests workers, or app-level threads that `switch` inside a worker thread may resolve pools differently from the originating thread.
+- **Within-process thread / job boundaries** (failure-class member 9). Sidekiq inline, async executors, parallel_tests workers, or app-level threads that `switch` inside a worker thread may resolve pools differently from the originating thread.
 
 ## Detection primitives
 
@@ -107,7 +109,7 @@ Across Rails 7.2 / 8.0 / 8.1 the `@pinned_connection` semantics are stable. 8.x+
 - `docs/testing.md` — consumer-facing summary of the invariant and the available test helpers.
 - `lib/apartment/pool_reaper.rb` — existing pinned and in-use guards (PRs #399, #400); the `reset_tenant_pools!` guard reuses the same primitives.
 - `lib/apartment/errors.rb` — `FixtureLifecycleViolation` definition.
-- `spec/integration/v4/fixture_pool_lifecycle_spec.rb` — the integration coverage that closes members 3 and 4.
+- `spec/integration/v4/fixture_pool_lifecycle_spec.rb` — the integration coverage that closes failure-class members 3 and 4.
 - `Apartment::Tenant.with_tenants_provider` / `with_tenants` (PRs #391, #395) — block-scoped tenant-resolver overrides that consumers use to define a tenant set for a test suite without cycling pools. Adjacent but independent of this failure class; named here so future contributors don't conflate them with the docs-only escape-hatch recipe (workstream item 6).
 
 ## Origin
