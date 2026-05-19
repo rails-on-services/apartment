@@ -6,7 +6,7 @@ require 'apartment/test_fixtures'
 
 # Integration coverage for the fixture pool lifecycle failure class.
 #
-# Design: docs/designs/fixture-pool-lifecycle.md (member #3).
+# Design: docs/designs/fixture-pool-lifecycle.md (failure-class members 3 and 4).
 #
 # The invariant: pool lifecycle changes during fixture-transaction ownership
 # are a violation. `reset_tenant_pools!` invoked mid-suite discards pools that
@@ -18,8 +18,8 @@ require 'apartment/test_fixtures'
 # Five examples:
 #   1. The guard raises `Apartment::FixtureLifecycleViolation` when a tenant
 #      pool carries `@pinned_connection`.
-#   2. The violation message names the offending tenant pool and redirects to
-#      the truncation strategy (contract-locked text).
+#   2. The violation message names the offending tenant pool and points at the
+#      use_transactional_tests = false opt-out and docs/testing.md (contract-locked text).
 #   3. Negative case: with no pinned pools, the call passes (the guard must
 #      not over-trigger and break suite bootstrapping — `Apartment::TestFixtures`
 #      itself invokes `reset_tenant_pools!` before `setup_shared_connection_pool`
@@ -31,8 +31,9 @@ require 'apartment/test_fixtures'
 #   5. The (a′) tiebreaker: does a tenant pool created lazily inside an
 #      example (no prior reset) enroll in the fixture rollback? Asserts
 #      rollback, not visibility — a leased connection can pass in-example
-#      writes while teardown's rollback still misses them. Outcome determines
-#      whether design member #6 (`preload_test_pools!`) ships.
+#      writes while teardown's rollback still misses them. Settled green
+#      across the matrix; the `preload_test_pools!` helper was retired
+#      unbuilt. This example stays as the regression lock.
 #
 # Covers Rails 7.2 / 8.0 / 8.1 via the existing appraisal matrix.
 # :schema strategy is PG-only; `pin_connection!` semantics are crispest there.
@@ -130,7 +131,7 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
     end.to(raise_error(Apartment::FixtureLifecycleViolation))
   end
 
-  it 'violation message names the offending tenant pool and redirects to the truncation strategy doc' do
+  it 'violation message names the offending tenant pool and points at the use_transactional_tests opt-out' do
     widget_class
 
     message = nil
@@ -146,8 +147,8 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
     expect(message).not_to(be_nil)
     expect(message).to(include("#{write_tenant}:writing"))
     expect(message).to(include('transactional fixtures'))
-    expect(message).to(include('Apartment::Test::Truncation'))
-    expect(message).to(include('docs/designs/fixture-pool-lifecycle.md'))
+    expect(message).to(include('use_transactional_tests = false'))
+    expect(message).to(include('docs/testing.md'))
   end
 
   it 'is allowed outside fixture-transaction ownership (negative case)' do
@@ -187,13 +188,14 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
   end
 
   it 'rolls back rows written via lazy pool creation in the non-reset path (a′ tiebreaker)' do
-    # The (a′) question (design member #4, settles #6): `setup_fixtures` runs
+    # The (a′) question (failure-class member 4): `setup_fixtures` runs
     # first with no tenant pool, the example then switches to the tenant for
     # the first time and writes. Does the lazily-created pool enroll in the
     # fixture transaction so teardown rolls the row back?
     #
-    # If GREEN: lazy enrollment works; `preload_test_pools!` is YAGNI.
-    # If RED:   ship design member #6 to materialise pools pre-snapshot.
+    # Settled green across the matrix: lazy enrollment works, so the
+    # `preload_test_pools!` helper was retired unbuilt (see the design doc's
+    # Never list). This example stays as the regression lock.
     #
     # Asserting rollback (not visibility): a leased connection can return
     # in-example writes via the same handle while teardown's enrollment

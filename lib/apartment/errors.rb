@@ -43,7 +43,8 @@ module Apartment
   # fresh object identity that never enrols in the rollback. Test-env-scoped
   # — production callers are unaffected.
   #
-  # See docs/designs/fixture-pool-lifecycle.md.
+  # See docs/testing.md for the consumer-facing opt-out recipe and
+  # docs/designs/fixture-pool-lifecycle.md for the failure-class design.
   class FixtureLifecycleViolation < ApartmentError
     attr_reader :pool_key
 
@@ -57,9 +58,9 @@ module Apartment
     def default_message
       pool_clause = @pool_key ? "pool '#{@pool_key}'" : 'a tenant pool'
       "reset_tenant_pools! called while #{pool_clause} is pinned by " \
-        'transactional fixtures. Use Apartment::Test::Truncation for ' \
-        'cross-tenant specs that must cycle pools. ' \
-        'See docs/designs/fixture-pool-lifecycle.md.'
+        'transactional fixtures. To cycle pools mid-suite, disable ' \
+        'transactional fixtures for this test (use_transactional_tests = false) ' \
+        'and clean up by deletion. See docs/testing.md.'
     end
   end
 
