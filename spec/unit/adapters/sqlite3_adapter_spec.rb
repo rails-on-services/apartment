@@ -3,15 +3,6 @@
 require 'spec_helper'
 require_relative '../../../lib/apartment/adapters/sqlite3_adapter'
 
-# Minimal Rails stub for environmentify tests.
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
-    end
-  end
-end
-
 RSpec.describe(Apartment::Adapters::Sqlite3Adapter) do
   let(:connection_config) { { adapter: 'sqlite3', database: 'db/myapp.sqlite3' } }
   let(:adapter) { described_class.new(connection_config) }

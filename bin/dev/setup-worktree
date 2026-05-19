@@ -271,8 +271,9 @@ if [ "$SKIP_PEACOCK" = false ]; then
             _REGISTRY_TMP=$(mktemp "${REGISTRY}.XXXXXX")
             if jq --arg name "$WORKTREE_NAME" --arg color "$ASSIGNED_COLOR" \
                '.worktree_colors[$name] = $color' "$REGISTRY" > "$_REGISTRY_TMP" \
+               && jq empty "$_REGISTRY_TMP" 2>/dev/null \
                && mv "$_REGISTRY_TMP" "$REGISTRY"; then
-                _REGISTRY_TMP=""  # Successfully moved, nothing to clean up
+                _REGISTRY_TMP=""  # Successfully moved, trap won't try to clean it
                 PEACOCK_COLOR="$ASSIGNED_COLOR"
                 log_info "Color registry: assigned $ASSIGNED_COLOR to $WORKTREE_NAME"
             else

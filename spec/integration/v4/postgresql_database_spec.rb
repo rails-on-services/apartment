@@ -3,14 +3,6 @@
 require 'spec_helper'
 require_relative 'support'
 
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
-    end
-  end
-end
-
 RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
                skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PostgreSQL')) do
   include V4IntegrationHelper

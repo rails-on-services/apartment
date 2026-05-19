@@ -36,6 +36,33 @@ module Apartment
   # Raised when schema loading fails during tenant creation.
   class SchemaLoadError < ApartmentError; end
 
+  # Raised when a pool-lifecycle API (e.g. {Apartment.reset_tenant_pools!})
+  # is invoked while Rails' transactional fixtures own one or more tenant
+  # pools. Discarding a pinned pool mid-fixture-tx leaves the next example's
+  # fixture-setup snapshot without those pools; the recreated pool has a
+  # fresh object identity that never enrols in the rollback. Test-env-scoped
+  # — production callers are unaffected.
+  #
+  # See docs/designs/fixture-pool-lifecycle.md.
+  class FixtureLifecycleViolation < ApartmentError
+    attr_reader :pool_key
+
+    def initialize(pool_key = nil, message: nil)
+      @pool_key = pool_key
+      super(message || default_message)
+    end
+
+    private
+
+    def default_message
+      pool_clause = @pool_key ? "pool '#{@pool_key}'" : 'a tenant pool'
+      "reset_tenant_pools! called while #{pool_clause} is pinned by " \
+        'transactional fixtures. Use Apartment::Test::Truncation for ' \
+        'cross-tenant specs that must cycle pools. ' \
+        'See docs/designs/fixture-pool-lifecycle.md.'
+    end
+  end
+
   # Raised in development when a tenant has pending migrations.
   class PendingMigrationError < ApartmentError
     attr_reader :tenant

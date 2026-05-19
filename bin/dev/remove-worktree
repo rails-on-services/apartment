@@ -176,6 +176,7 @@ else
         # Key exists — remove it
         _REGISTRY_TMP=$(mktemp "${REGISTRY}.XXXXXX")
         if jq --arg name "$WORKTREE_NAME" 'del(.worktree_colors[$name])' "$REGISTRY" > "$_REGISTRY_TMP" \
+            && jq empty "$_REGISTRY_TMP" 2>/dev/null \
             && mv "$_REGISTRY_TMP" "$REGISTRY"; then
             log_info "Color registry: freed color for $WORKTREE_NAME"
         else
