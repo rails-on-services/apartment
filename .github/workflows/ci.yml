@@ -92,6 +92,10 @@ jobs:
       CI: true
       RAILS_ENV: test
       DATABASE_ENGINE: postgresql
+      # request_lifecycle_spec skips if the dummy app or rack-test fails to
+      # load. This flag turns that skip into a hard failure here, where the
+      # spec must run — it silently skipped in CI for months otherwise.
+      REQUEST_LIFECYCLE_REQUIRED: '1'
     services:
       postgres:
         image: postgres:${{ matrix.pg }}-alpine

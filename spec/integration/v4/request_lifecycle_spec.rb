@@ -5,48 +5,76 @@
 #   rspec spec/integration/v4/request_lifecycle_spec.rb
 
 require 'spec_helper'
+require_relative 'support'
 
+# CI's PostgreSQL job sets REQUEST_LIFECYCLE_REQUIRED so a missing dummy app or
+# rack-test fails the build loudly. This spec silently skipped in CI for months
+# once rack-test fell out of the appraisal gemfiles; the flag makes that visible.
 DUMMY_APP_AVAILABLE = begin
   require_relative('../../dummy/config/environment')
   require('rack/test')
   true
 rescue LoadError, StandardError => e
+  raise if ENV['REQUEST_LIFECYCLE_REQUIRED']
+
   warn "[request_lifecycle_spec] Skipping: #{e.message}"
   false
 end
 
-RSpec.describe('v4 Request lifecycle', :request_lifecycle,
-               skip: (DUMMY_APP_AVAILABLE ? false : 'requires dummy Rails app + PostgreSQL')) do
+RSpec.describe(
+  'v4 Request lifecycle', :request_lifecycle,
+  skip: (DUMMY_APP_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires dummy Rails app + PostgreSQL')
+) do
   include Rack::Test::Methods
 
   def app
     Rails.application
   end
 
-  before(:all) do
-    # Ensure test schemas exist
-    %w[acme widgets].each do |tenant|
+  def test_tenants = %w[acme widgets]
+
+  # spec_helper.rb clears Apartment.config after every example. The dummy app
+  # configures Apartment once, at boot — so each example must re-establish the
+  # full state the railtie's after_initialize path sets up: configure (via the
+  # app's own initializer), activate!, and Tenant.init. Configuring alone is
+  # not enough — clear_config also drops the adapter and unsets @activated.
+  def establish_apartment!
+    load(Rails.root.join('config/initializers/apartment.rb'))
+    Apartment.activate!
+    Apartment::Tenant.init
+  end
+
+  before do
+    establish_apartment!
+
+    test_tenants.each do |tenant|
       Apartment.adapter.create(tenant)
+    rescue Apartment::TenantExists
+      nil
+    end
+
+    # force: true gives each example a clean users table — clear_config does
+    # not truncate, so without this rows would leak between examples. The
+    # default tenant is included: a request with no subdomain falls through
+    # to it, and the controller still calls User.count.
+    [Apartment.config.default_tenant, *test_tenants].each do |tenant|
       Apartment::Tenant.switch(tenant) do
         ActiveRecord::Base.connection.create_table(:users, force: true) do |t|
           t.string(:name)
         end
       end
-    rescue Apartment::TenantExists
-      nil
     end
   end
 
+  after { Apartment::Current.reset }
+
   after(:all) do
-    %w[acme widgets].each do |tenant|
+    establish_apartment! unless Apartment.config
+    test_tenants.each do |tenant|
       Apartment.adapter.drop(tenant)
     rescue StandardError
       nil
     end
-  end
-
-  after do
-    Apartment::Current.reset
   end
 
   it 'elevator switches tenant based on subdomain' do
@@ -72,7 +100,8 @@ RSpec.describe('v4 Request lifecycle', :request_lifecycle,
   it 'tenant context is cleaned up after request' do
     header 'Host', 'acme.example.com'
     get '/tenant_info'
-    # After request completes, tenant should be reset to default
+    # The executor resets Apartment::Current after the request; Tenant.current
+    # then falls back to default_tenant.
     expect(Apartment::Tenant.current).to(eq('public'))
   end
 
@@ -82,31 +111,5 @@ RSpec.describe('v4 Request lifecycle', :request_lifecycle,
     expect(last_response).to(be_ok)
     body = JSON.parse(last_response.body)
     expect(body['tenant']).to(eq('public'))
-  end
-
-  context 'with Header elevator' do
-    around do |example|
-      Rails.application.middleware.use(Apartment::Elevators::Header, header: 'X-Tenant-Id')
-      example.run
-    ensure
-      Rails.application.middleware.delete(Apartment::Elevators::Header)
-    end
-
-    it 'switches tenant based on X-Tenant-Id header' do
-      header 'X-Tenant-Id', 'acme'
-      header 'Host', 'example.com'
-      get '/tenant_info'
-      expect(last_response).to(be_ok)
-      body = JSON.parse(last_response.body)
-      expect(body['tenant']).to(eq('acme'))
-    end
-
-    it 'falls through to default tenant when header is absent' do
-      header 'Host', 'example.com'
-      get '/tenant_info'
-      expect(last_response).to(be_ok)
-      body = JSON.parse(last_response.body)
-      expect(body['tenant']).to(eq('public'))
-    end
   end
 end

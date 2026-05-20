@@ -32,7 +32,15 @@ module Apartment
     end
 
     # Insert elevator middleware if configured.
-    initializer 'apartment.middleware' do |app|
+    #
+    # Ordered after :load_config_initializers so config/initializers/apartment.rb
+    # (the conventional place for Apartment.configure) has already run — a plain
+    # railtie initializer runs before it, when Apartment.config is still nil, and
+    # would silently insert nothing. Kept before :build_middleware_stack so the
+    # insertion lands while the stack is still mutable.
+    initializer 'apartment.middleware',
+                after: :load_config_initializers,
+                before: :build_middleware_stack do |app|
       next unless Apartment.config&.elevator
 
       elevator_class = Apartment::Railtie.resolve_elevator_class(Apartment.config.elevator)

@@ -8,6 +8,12 @@ require 'action_controller/railtie'
 
 Bundler.require
 require 'apartment'
+# spec_helper.rb requires 'apartment' before any Rails is loaded, so the
+# conditional `require 'apartment/railtie' if defined?(Rails::Railtie)` in
+# lib/apartment.rb is missed. Load it explicitly — the Rails railties above
+# are already required, and this runs before initialize!, so Apartment's
+# initializers (the elevator middleware insertion) register in time.
+require 'apartment/railtie'
 
 module Dummy
   class Application < Rails::Application

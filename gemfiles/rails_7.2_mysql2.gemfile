@@ -3,7 +3,9 @@
 source "https://rubygems.org"
 
 gem "appraisal", "~> 2.5"
+gem "rack-test", require: false
 gem "rspec", "~> 3.10"
+gem "rspec-rails", "~> 8.0", require: false
 gem "rails", "~> 7.2.0"
 gem "mysql2", "~> 0.5"
 
@@ -14,6 +16,11 @@ group :development do
   gem "rubocop-rake", require: false
   gem "rubocop-rspec", require: false
   gem "rubocop-thread_safety", require: false
+end
+
+group :development, :test do
+  gem "simplecov", require: false
+  gem "test-prof", require: false
 end
 
 gemspec path: "../"
