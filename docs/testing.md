@@ -54,7 +54,7 @@ Three primitives, three scopes:
 
 ## Tenant context is reset before every rspec-rails example
 
-`Apartment::Current` is an `ActiveSupport::CurrentAttributes` subclass. Recent rspec-rails (verified on rspec-rails 8.0.4 + Rails 8.1) mixes `ActiveSupport::CurrentAttributes::TestHelper` into every typed example group — `RailsExampleGroup`, which backs model, request, controller, system, and job specs. Its `before_setup` calls `ActiveSupport::CurrentAttributes.clear_all`, which resets **every** `CurrentAttributes` subclass — `Apartment::Current` included — at the start of each example. All four attributes (`tenant`, `previous_tenant`, `migrating`, `tenant_override`) return to `nil`.
+`Apartment::Current` is an `ActiveSupport::CurrentAttributes` subclass. Recent rspec-rails (8.x) mixes `ActiveSupport::CurrentAttributes::TestHelper` into every typed example group — `RailsExampleGroup`, which backs model, request, controller, system, and job specs. Its `before_setup` calls `ActiveSupport::CurrentAttributes.clear_all`, which resets **every** `CurrentAttributes` subclass — `Apartment::Current` included — at the start of each example. All four attributes (`tenant`, `previous_tenant`, `migrating`, `tenant_override`) return to `nil`.
 
 That is correct framework behavior: it stops tenant context leaking between examples. But it dictates *where* tenant context can be established:
 
@@ -65,7 +65,7 @@ That is correct framework behavior: it stops tenant context leaking between exam
 | `before(:each)` / `config.before(:each)` | Yes — runs after the reset |
 | An `around` defined inside an example group | Yes — but only for that group |
 
-rspec-rails runs the reset (`before_setup`) inside a *group-level* `around` hook. A global `config.around` is the outermost hook in the stack, so whatever it sets is wiped by the reset before the body runs; a `before(:each)` runs after the reset and survives. (The gem's own suite is plain RSpec, not rspec-rails, so it never sees this reset — which is why earlier guidance here recommended suite-level and `config.around` switching that a real rspec-rails app silently defeats.)
+rspec-rails runs the reset (`before_setup`) inside a *group-level* `around` hook. A global `config.around` is the outermost hook in the stack, so whatever it sets is wiped by the reset before the body runs; a `before(:each)` runs after the reset and survives. (The gem's own suite is plain RSpec, not rspec-rails, so it never exercises this reset directly; `spec/unit/rspec_rails_lifecycle_spec.rb` is the dedicated regression guard.)
 
 **The rule: establish tenant context in `before(:each)`, on every example.**
 

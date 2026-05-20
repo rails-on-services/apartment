@@ -22,7 +22,9 @@ require 'spec_helper'
 # config.around) does not.
 #
 # Only the two adapter modules are required — not all of `rspec/rails`, which
-# pulls ActionView matchers that need a booted Rails app.
+# pulls ActionView matchers that need a booted Rails app. When rspec-rails is
+# absent the spec skips; the dedicated CI job sets RSPEC_RAILS_REQUIRED so a
+# skip there — where rspec-rails must be present — fails loudly instead.
 
 rspec_rails_loaded =
   begin
@@ -30,6 +32,8 @@ rspec_rails_loaded =
     require('active_support/current_attributes/test_helper')
     true
   rescue LoadError => e
+    raise if ENV['RSPEC_RAILS_REQUIRED']
+
     warn "[rspec_rails_lifecycle_spec] skipping: #{e.message}"
     false
   end
@@ -41,12 +45,15 @@ if rspec_rails_loaded
       # cannot be loaded standalone (it pulls rspec/rails/matchers -> ActionView),
       # so this asserts against its source: if a future rspec-rails stops mixing
       # these modules into RailsExampleGroup, docs/testing.md's guidance is stale.
+      gem_spec = Gem.loaded_specs['rspec-rails']
+      raise('rspec-rails is loaded but not registered in Gem.loaded_specs') unless gem_spec
+
       source = File.read(File.join(
-                           Gem.loaded_specs['rspec-rails'].full_gem_path,
+                           gem_spec.full_gem_path,
                            'lib/rspec/rails/example/rails_example_group.rb'
                          ))
-      expect(source).to(include('CurrentAttributes::TestHelper'))
-      expect(source).to(include('MinitestLifecycleAdapter'))
+      expect(source).to(include('ActiveSupport::CurrentAttributes::TestHelper'))
+      expect(source).to(include('RSpec::Rails::MinitestLifecycleAdapter'))
     end
 
     # The two modules below, in this order, are what RailsExampleGroup mixes
@@ -78,6 +85,23 @@ if rspec_rails_loaded
 
       it 'is wiped before the example body' do
         expect(Apartment::Current.tenant).to(be_nil)
+      end
+    end
+
+    context 'tenant context set in an around hook inside the example group' do
+      include RSpec::Rails::MinitestLifecycleAdapter
+      include ActiveSupport::CurrentAttributes::TestHelper
+
+      # Registered after MinitestLifecycleAdapter, so this around nests
+      # *inside* the adapter's around — it runs after before_setup ->
+      # clear_all, the way an `around` written inside an example group does.
+      around do |example|
+        Apartment::Current.tenant = 'set-in-group-around'
+        example.run
+      end
+
+      it 'survives the per-example reset' do
+        expect(Apartment::Current.tenant).to(eq('set-in-group-around'))
       end
     end
   end
