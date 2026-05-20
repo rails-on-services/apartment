@@ -49,6 +49,26 @@ jobs:
       - name: Run unit specs
         run: bundle exec rspec spec/unit/ --format progress
 
+  # ── rspec-rails lifecycle regression ───────────────────────────────
+  # Pins the rspec-rails CurrentAttributes reset that docs/testing.md relies
+  # on. Needs rspec-rails, which the appraisal gemfiles do not carry — so it
+  # runs against the base Gemfile. The spec skips gracefully in the unit
+  # matrix above (rspec-rails absent there); RSPEC_RAILS_REQUIRED makes a
+  # missing rspec-rails fail this job rather than skip-and-pass.
+  rspec-rails-lifecycle:
+    name: rspec-rails lifecycle
+    runs-on: ubuntu-latest
+    env:
+      RSPEC_RAILS_REQUIRED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - name: Run rspec-rails lifecycle regression spec
+        run: bundle exec rspec spec/unit/rspec_rails_lifecycle_spec.rb --format documentation
+
   # ── PostgreSQL integration tests ───────────────────────────────────
   postgresql:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'postgresql' }}
