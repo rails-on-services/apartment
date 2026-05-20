@@ -1,6 +1,6 @@
 # Testing with Apartment v4
 
-This guide covers patterns for using Apartment in test suites: tenant discipline, the `switch` / `switch!` / `reset` distinction, cross-pool transaction visibility, and cleaning shared (default) tenant data between specs.
+This guide covers patterns for using Apartment in test suites: tenant discipline, the `switch` / `switch!` / `reset` distinction, how rspec-rails resets tenant context between examples, cross-pool transaction visibility, and cleaning shared (default) tenant data between specs.
 
 ## Strict tenant discipline
 
@@ -30,7 +30,7 @@ end
 
 Raises `Apartment::ApartmentError` when no tenant has been explicitly entered (i.e. `Apartment::Current.tenant` is `nil`).
 
-The simplest way to keep `inside_tenant?` true across every example is **suite-level**: call `Tenant.switch!` once after suite bootstrap (see [Recommended baseline](#recommended-baseline-for-new-v4-apps)). Per-example `around { switch(name) { example.run } }` works too, but is only necessary when specs need different tenants via metadata; otherwise prefer the suite-level form to avoid lifecycle interactions with frameworks like test-prof's `let_it_be` / `before_all` (see footnote in the baseline section).
+Establish tenant context in a `before(:each)` hook — see [Recommended baseline](#recommended-baseline-for-new-v4-apps). It has to be `before(:each)`: not a one-time suite-level `switch!`, not a global `config.around`. rspec-rails resets `Apartment::Current` before every example, and only `before(:each)` runs after that reset — see [Tenant context is reset before every rspec-rails example](#tenant-context-is-reset-before-every-rspec-rails-example).
 
 For richer failure messages, pass `message:`:
 
@@ -47,10 +47,27 @@ Three primitives, three scopes:
 | Method | Form | Use case |
 |---|---|---|
 | `Tenant.switch(name) { ... }` | Block | Default; guaranteed cleanup via `ensure`. Use everywhere a block is natural. |
-| `Tenant.switch!(name)` | No block | When the scope is structural (an `around` hook can't reach in), e.g. `before(:context)`, suite bootstrap. The caller is responsible for restoring tenant state. |
+| `Tenant.switch!(name)` | No block | When no block can wrap the scope, e.g. `before(:each) { Tenant.switch!(name) }`, console or suite setup. The caller is responsible for restoring tenant state. |
 | `Tenant.reset` | No block | Returns to `default_tenant`. Bypasses `default_tenant_switch_allowed` — the documented path back to the default tenant. |
 
 `switch!` is **not** deprecated in v4. It's correct for non-block scopes. The README's "prefer block-based switching" guidance applies when a block is natural; structural test hooks are exempt.
+
+## Tenant context is reset before every rspec-rails example
+
+`Apartment::Current` is an `ActiveSupport::CurrentAttributes` subclass. Recent rspec-rails (verified on rspec-rails 8.0.4 + Rails 8.1) mixes `ActiveSupport::CurrentAttributes::TestHelper` into every typed example group — `RailsExampleGroup`, which backs model, request, controller, system, and job specs. Its `before_setup` calls `ActiveSupport::CurrentAttributes.clear_all`, which resets **every** `CurrentAttributes` subclass — `Apartment::Current` included — at the start of each example. All four attributes (`tenant`, `previous_tenant`, `migrating`, `tenant_override`) return to `nil`.
+
+That is correct framework behavior: it stops tenant context leaking between examples. But it dictates *where* tenant context can be established:
+
+| Where tenant context is set | Survives to the example body? |
+|---|---|
+| Suite bootstrap (`rails_helper.rb` load time) | No — re-reset before every example |
+| A global `config.around` hook | No — `config.around` wraps outside the reset |
+| `before(:each)` / `config.before(:each)` | Yes — runs after the reset |
+| An `around` defined inside an example group | Yes — but only for that group |
+
+rspec-rails runs the reset (`before_setup`) inside a *group-level* `around` hook. A global `config.around` is the outermost hook in the stack, so whatever it sets is wiped by the reset before the body runs; a `before(:each)` runs after the reset and survives. (The gem's own suite is plain RSpec, not rspec-rails, so it never sees this reset — which is why earlier guidance here recommended suite-level and `config.around` switching that a real rspec-rails app silently defeats.)
+
+**The rule: establish tenant context in `before(:each)`, on every example.**
 
 ## Cross-pool transaction visibility
 
@@ -134,36 +151,54 @@ Apartment.configure do |config|
   config.default_tenant = 'public'
   config.default_tenant_switch_allowed = false
 end
+```
 
-# spec/rails_helper.rb (after the suite bootstraps tenants)
-Apartment::Tenant.switch!('test_tenant')
-
+```ruby
+# spec/rails_helper.rb
 RSpec.configure do |c|
-  c.before(:each) { Apartment::Tenant.assert_inside_tenant! }
+  # before(:each), not a one-time suite-level switch!: Apartment::Current is
+  # reset before every example (see "Tenant context is reset ..." above), so
+  # the tenant has to be re-entered each time.
+  c.before(:each) { Apartment::Tenant.switch!('test_tenant') }
 end
 ```
 
-This keeps the default schema for shared/pinned data (`Apartment::Model` + `pin_tenant`), enters an explicit tenant once at suite bootstrap so every example inherits it, and makes the "I forgot to switch" bug fail loudly at the first read of pinned data.
+This keeps the default schema for shared/pinned data (`Apartment::Model` + `pin_tenant`) and enters an explicit tenant for every example.
 
-For suites that need **different tenants per example**, layer an `around` hook on top — driven by metadata so the default stays suite-level:
+If you would rather have each spec enter its own tenant — so a forgotten switch fails loudly — drop the `switch!` and assert instead:
+
+```ruby
+c.before(:each) { Apartment::Tenant.assert_inside_tenant! }
+```
+
+Each spec is then responsible for switching, in its own `before(:each)` or in an `around` defined *inside* the example group. A group-level `around` survives the reset; a global `config.around` does not.
+
+For **different tenants per example**, drive the switch from metadata — still `before(:each)`:
 
 ```ruby
 RSpec.configure do |c|
-  c.around do |example|
-    tenants = Array(example.metadata[:tenants])
-    next example.run if tenants.empty?
-
-    Apartment::Tenant.with_tenants(*tenants) { example.run }
+  c.before(:each) do |example|
+    tenant = example.metadata[:tenant]
+    Apartment::Tenant.switch!(tenant) if tenant
   end
 end
 
 # Per-spec opt-in:
-RSpec.describe MyJob, tenants: %w[acme widgets] do
+RSpec.describe MyJob, tenant: 'acme' do
   # ...
 end
 ```
 
-> **Footnote on test-prof.** If your suite uses test-prof's `let_it_be` / `before_all`, prefer the suite-level `switch!` shown above over per-example `around { switch(...) { example.run } }`. `let_it_be` commits its setup data inside its own transaction; wrapping examples in an `around switch` can interact with the savepoint hierarchy in a way that DatabaseCleaner's rollback can't unwind cleanly when an example raises — producing a transaction-poisoning cascade where every subsequent example fails with `PG::InFailedSqlTransaction`. Suite-level `switch!` avoids this because there's no per-example switching wrapping `let_it_be` setup.
+To scope `Apartment::Tenant.each` to a set of tenants for an example, set the iteration override in `before(:each)` — `with_tenants` is block-form and wraps a code path, not an example:
+
+```ruby
+c.before(:each) do |example|
+  names = Array(example.metadata[:tenants]).map(&:to_s).freeze
+  Apartment::Current.tenant_override = names unless names.empty?
+end
+```
+
+> **Footnote on test-prof.** `let_it_be` / `before_all` run setup in `before(:context)` — outside the per-example `Apartment::Current` reset. If those blocks create tenant-scoped data, establish tenant context for them explicitly (a `before(:context)` / `before_all` that calls `Apartment::Tenant.switch!`). Do not wrap examples in an `around switch` to compensate: a global `config.around` is defeated by the reset above, and an `around` wrapping `let_it_be`'s committed setup can also poison the savepoint hierarchy into a `PG::InFailedSqlTransaction` cascade.
 
 ## Pool lifecycle in tests
 
