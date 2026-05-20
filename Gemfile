@@ -7,6 +7,10 @@ gemspec
 gem 'appraisal', '~> 2.5'
 gem 'rack-test', require: false
 gem 'rspec', '~> 3.10'
+# Loaded only by spec/unit/rspec_rails_lifecycle_spec.rb (require: false keeps
+# it out of the plain-RSpec suite). That spec pins the rspec-rails
+# CurrentAttributes lifecycle that docs/testing.md depends on.
+gem 'rspec-rails', '~> 8.0', require: false
 
 group :development do
   gem 'rubocop', require: false
