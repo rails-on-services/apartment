@@ -120,11 +120,15 @@ RSpec.describe(Apartment) do
       end
 
       Apartment::Current.tenant = 'acme'
+      Apartment::Current.previous_tenant = 'public'
+      Apartment::Current.migrating = true
       Apartment::Current.tenant_override = %w[acme widgets]
 
       described_class.reset_tenant_pools!
 
       expect(Apartment::Current.tenant).to(eq('acme'))
+      expect(Apartment::Current.previous_tenant).to(eq('public'))
+      expect(Apartment::Current.migrating).to(be(true))
       expect(Apartment::Current.tenant_override).to(eq(%w[acme widgets]))
     end
   end

@@ -15,7 +15,7 @@ require 'apartment/test_fixtures'
 # lazy-recreated pool has fresh object identity that never enrolls in the
 # fixture transaction.
 #
-# Five examples:
+# Six examples:
 #   1. The guard raises `Apartment::FixtureLifecycleViolation` when a tenant
 #      pool carries `@pinned_connection`.
 #   2. The violation message names the offending tenant pool and points at the
@@ -34,6 +34,10 @@ require 'apartment/test_fixtures'
 #      writes while teardown's rollback still misses them. Settled green
 #      across the matrix; the `preload_test_pools!` helper was retired
 #      unbuilt. This example stays as the regression lock.
+#   6. reset_tenant_pools! resets pools only — it must not clear
+#      Apartment::Current. Drives the real around-hook -> setup_fixtures ->
+#      setup_shared_connection_pool -> reset_tenant_pools! chain and asserts
+#      a with_tenants override survives it.
 #
 # Covers Rails 7.2 / 8.0 / 8.1 via the existing appraisal matrix.
 # :schema strategy is PG-only; `pin_connection!` semantics are crispest there.
@@ -211,5 +215,30 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
     Apartment::Tenant.switch(write_tenant) { post_rollback_count = Widget.count }
 
     expect(post_rollback_count).to(eq(0))
+  end
+
+  it 'preserves a with_tenants override across fixture setup (reset_tenant_pools! leaves Current intact)' do
+    # The downstream failure path, end to end: an outer scope sets
+    # tenant_override, then setup_fixtures runs reset_tenant_pools! via
+    # setup_shared_connection_pool. reset_tenant_pools! must not clear
+    # Apartment::Current — pool lifecycle and tenant context are separate.
+    # The unit specs lock the method in isolation; this locks the real
+    # fixture-setup chain (around-hook -> setup_fixtures -> reset).
+    widget_class
+    observed_override = nil
+    observed_names    = nil
+
+    Apartment::Tenant.with_tenants(write_tenant) do
+      FixtureLifecycleGuardHost.new.run_example do
+        observed_override = Apartment::Current.tenant_override
+        observed_names    = Apartment.tenant_names
+      end
+    end
+
+    # tenants_provider returns the full `tenants` list; the override is the
+    # single write_tenant. A wiped override falls back to the provider, so
+    # the one-element result distinguishes survived-override from fallback.
+    expect(observed_override).to(eq([write_tenant]))
+    expect(observed_names).to(eq([write_tenant]))
   end
 end
