@@ -197,12 +197,17 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     end
 
     # Deregister all tenant pools from AR's ConnectionHandler and clear the
-    # pool manager cache. Tenant context is also reset. Pools rebuild lazily
-    # on the next +connection_pool+ call.
+    # pool manager cache. Pools rebuild lazily on the next +connection_pool+
+    # call.
+    #
+    # Execution context (+Apartment::Current+: tenant, tenant_override, etc.)
+    # is left untouched — pool lifecycle and tenant context are separate
+    # concerns. A caller that also wants to drop tenant context resets it
+    # explicitly via +Apartment::Tenant.reset+.
     #
     # Called automatically by +Apartment::TestFixtures+ before Rails' fixture
-    # setup iterates shards. Can also be called manually in custom test harnesses
-    # that need to clear tenant state between examples.
+    # setup iterates shards. Can also be called manually in custom test
+    # harnesses that cycle tenant pools between examples.
     #
     # @return [void]
     # @see Apartment::TestFixtures
@@ -210,7 +215,6 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       guard_pinned_pools_during_fixtures!
       deregister_all_tenant_pools
       @pool_manager&.clear
-      Apartment::Current.reset
     end
 
     private

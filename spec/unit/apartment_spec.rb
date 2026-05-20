@@ -94,6 +94,41 @@ RSpec.describe(Apartment) do
     end
   end
 
+  describe '.reset_tenant_pools!' do
+    # Regression: reset_tenant_pools! is a pool-lifecycle method. It must not
+    # touch Apartment::Current — that bag holds execution context (tenant,
+    # previous_tenant, migrating, tenant_override), none of which is pool
+    # state. A blanket Current.reset here clobbered the tenant_override set
+    # by a with_tenants around-hook, silently breaking tenant iteration for
+    # the whole example. See docs/designs/fixture-pool-lifecycle.md.
+    it 'preserves a with_tenants override so tenant_names still scopes to it' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { %w[ambient] }
+      end
+
+      Apartment::Tenant.with_tenants('acme', 'widgets') do
+        described_class.reset_tenant_pools!
+        expect(described_class.tenant_names).to(eq(%w[acme widgets]))
+      end
+    end
+
+    it 'does not reset Current tenant context' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      Apartment::Current.tenant = 'acme'
+      Apartment::Current.tenant_override = %w[acme widgets]
+
+      described_class.reset_tenant_pools!
+
+      expect(Apartment::Current.tenant).to(eq('acme'))
+      expect(Apartment::Current.tenant_override).to(eq(%w[acme widgets]))
+    end
+  end
+
   describe '.excluded_models' do
     it 'delegates to config.excluded_models' do
       described_class.configure do |config|
