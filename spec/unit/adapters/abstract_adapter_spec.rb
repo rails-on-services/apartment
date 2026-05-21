@@ -52,6 +52,10 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       c.default_tenant = 'public'
       c.schema_load_strategy = nil # disable by default in tests (explicit in schema loading tests)
     end
+    # Pinned-model registration persists for the process lifetime — clear_config
+    # no longer discards it. The #process_pinned_models specs are count-sensitive,
+    # so isolate the registry per example rather than leaking across the file.
+    Apartment.pinned_models.clear
   end
 
   # Helper: reconfigure Apartment with overrides (Config is frozen after configure,
