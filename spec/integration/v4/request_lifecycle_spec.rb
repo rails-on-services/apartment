@@ -37,7 +37,7 @@ RSpec.describe(
   # configures Apartment once, at boot — so each example must re-establish the
   # full state the railtie's after_initialize path sets up: configure (via the
   # app's own initializer), then activate! and Tenant.init. clear_config tears
-  # down everything (config, adapter, pool manager, @activated), so re-running
+  # down everything (config, adapter, pools, reaper, @activated), so re-running
   # the initializer's Apartment.configure alone would leave the suite half-booted.
   def establish_apartment!
     load(Rails.root.join('config/initializers/apartment.rb'))
@@ -89,8 +89,10 @@ RSpec.describe(
   end
 
   it 'inserts the elevator middleware into the application stack' do
-    # Directly pins the railtie's elevator insertion — a future initializer-
-    # ordering regression fails here, not via a downstream routing symptom.
+    # The elevator is inserted once, when the dummy app boots — this asserts
+    # that boot-time wiring, not anything the per-example `before` rebuilds.
+    # Pins the railtie's initializer-ordering fix directly: a regression
+    # fails here, not via a downstream routing symptom.
     expect(Rails.application.middleware.map(&:name))
       .to(include('Apartment::Elevators::Subdomain'))
   end
