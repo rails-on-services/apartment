@@ -7,6 +7,10 @@
 require 'spec_helper'
 require_relative 'support'
 
+# The dummy app's database.yml only defines a `test` environment; pin RAILS_ENV
+# so the spec boots that environment regardless of how it was invoked.
+ENV['RAILS_ENV'] ||= 'test'
+
 # CI's PostgreSQL job sets REQUEST_LIFECYCLE_REQUIRED so a missing dummy app or
 # rack-test fails the build loudly. This spec silently skipped in CI for months
 # once rack-test fell out of the appraisal gemfiles; the flag makes that visible.

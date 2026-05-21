@@ -1,0 +1,8 @@
+test:
+  adapter: postgresql
+  database: apartment_postgresql_test
+  host: <%= ENV.fetch('PGHOST', '127.0.0.1') %>
+  port: <%= ENV.fetch('PGPORT', '5432') %>
+  username: <%= ENV.fetch('PGUSER', ENV.fetch('USER', nil)) %>
+  password: <%= ENV.fetch('PGPASSWORD', nil) %>
+  schema_search_path: public
