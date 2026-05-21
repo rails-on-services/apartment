@@ -30,6 +30,9 @@ on:
 
 jobs:
   # ── Unit tests (no database required) ──────────────────────────────
+  # Also runs spec/unit/rspec_rails_lifecycle_spec.rb across the full matrix —
+  # it needs rspec-rails, which the appraisal gemfiles carry. RSPEC_RAILS_REQUIRED
+  # turns a missing rspec-rails into a hard failure rather than a silent skip.
   unit:
     name: Unit · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
@@ -40,6 +43,7 @@ jobs:
         rails: ${{ github.event_name == 'workflow_dispatch' && inputs.rails != 'all' && fromJSON(format('["{0}"]', inputs.rails)) || fromJSON('["7.2","8.0","8.1","main"]') }}
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_sqlite3.gemfile
+      RSPEC_RAILS_REQUIRED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
@@ -48,26 +52,6 @@ jobs:
           bundler-cache: true
       - name: Run unit specs
         run: bundle exec rspec spec/unit/ --format progress
-
-  # ── rspec-rails lifecycle regression ───────────────────────────────
-  # Pins the rspec-rails CurrentAttributes reset that docs/testing.md relies
-  # on. Needs rspec-rails, which the appraisal gemfiles do not carry — so it
-  # runs against the base Gemfile. The spec skips gracefully in the unit
-  # matrix above (rspec-rails absent there); RSPEC_RAILS_REQUIRED makes a
-  # missing rspec-rails fail this job rather than skip-and-pass.
-  rspec-rails-lifecycle:
-    name: rspec-rails lifecycle
-    runs-on: ubuntu-latest
-    env:
-      RSPEC_RAILS_REQUIRED: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.4'
-          bundler-cache: true
-      - name: Run rspec-rails lifecycle regression spec
-        run: bundle exec rspec spec/unit/rspec_rails_lifecycle_spec.rb --format documentation
 
   # ── PostgreSQL integration tests ───────────────────────────────────
   postgresql:
@@ -92,6 +76,10 @@ jobs:
       CI: true
       RAILS_ENV: test
       DATABASE_ENGINE: postgresql
+      # request_lifecycle_spec skips if the dummy app or rack-test fails to
+      # load. This flag turns that skip into a hard failure here, where the
+      # spec must run — it silently skipped in CI for months otherwise.
+      REQUEST_LIFECYCLE_REQUIRED: '1'
     services:
       postgres:
         image: postgres:${{ matrix.pg }}-alpine
@@ -127,7 +115,19 @@ jobs:
             GRANT apt_test_app_user TO apt_test_db_manager;
           SQL
       - name: Run v4 integration tests
-        run: bundle exec rspec spec/integration/v4/ --format progress
+        # request_lifecycle_spec boots a full Rails app and is run in its own
+        # rspec process below — it must not share a process with the other
+        # integration specs, which swap the AR connection handler for isolation.
+        # Interleaved, that produces order-dependent failures (see CI seed 3846).
+        run: bundle exec rspec spec/integration/v4/ --exclude-pattern "**/request_lifecycle_spec.rb" --format progress
+        env:
+          DATABASE_ENGINE: postgresql
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: postgres
+      - name: Run request lifecycle spec (isolated)
+        run: bundle exec rspec spec/integration/v4/request_lifecycle_spec.rb --format documentation
         env:
           DATABASE_ENGINE: postgresql
           PGHOST: 127.0.0.1
@@ -136,7 +136,7 @@ jobs:
           PGPASSWORD: postgres
       - name: Verify RBAC specs ran (not silently skipped)
         run: |
-          count=$(bundle exec rspec spec/integration/v4/ --tag rbac --format json 2>/dev/null | tail -1 | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
+          count=$(bundle exec rspec spec/integration/v4/ --exclude-pattern "**/request_lifecycle_spec.rb" --tag rbac --format json 2>/dev/null | tail -1 | ruby -rjson -e 'puts JSON.parse(STDIN.read)["summary"]["example_count"]')
           echo "RBAC examples ran: $count"
           if [ "$count" -lt 1 ]; then
             echo "::error::All RBAC examples were skipped — role provisioning may have failed"
