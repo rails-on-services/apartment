@@ -58,13 +58,18 @@ RSpec.describe(
       nil
     end
 
-    # force: true gives each example a clean users table — clear_config does
-    # not truncate, so without this rows would leak between examples. The
-    # default tenant is included: a request with no subdomain falls through
-    # to it, and the controller still calls User.count.
+    # Each example needs a clean users table per tenant: clear_config does not
+    # truncate, so force: true drops and recreates. The name MUST be schema-
+    # qualified. Tenant schemas (acme, widgets) carry `public` in their
+    # search_path so persistent/pinned tables stay visible — which makes an
+    # unqualified force-drop dangerous: `DROP TABLE users` resolves through the
+    # search_path and, before a tenant's own users table exists, lands on
+    # public.users, destroying the default tenant's table that an earlier loop
+    # iteration just created. The default tenant is included because a
+    # no-subdomain request falls through to it and the controller calls User.count.
     [Apartment.config.default_tenant, *test_tenants].each do |tenant|
       Apartment::Tenant.switch(tenant) do
-        ActiveRecord::Base.connection.create_table(:users, force: true) do |t|
+        ActiveRecord::Base.connection.create_table("#{tenant}.users", force: true) do |t|
           t.string(:name)
         end
       end
