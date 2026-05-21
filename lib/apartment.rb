@@ -147,11 +147,17 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # Reset all configuration and stop background tasks.
     def clear_config
       teardown_old_state
+      # Restore (un-qualify) pinned models, but keep them registered. pin_tenant
+      # runs once when a model's class body loads and never re-runs, so the
+      # registry is the only record of which models are pinned. Discarding it
+      # would strand every pinned model unprocessed after the next configure.
+      # The registry is bounded in production (pinned models are named
+      # constants); a test process that pins anonymous classes accumulates them
+      # here — acceptable, but count-sensitive specs must isolate it themselves.
       @pinned_models&.each { |klass| klass.apartment_restore! if klass.respond_to?(:apartment_restore!) }
       @config = nil
       @pool_manager = nil
       @pool_reaper = nil
-      @pinned_models = nil
       @activated = false
     end
 

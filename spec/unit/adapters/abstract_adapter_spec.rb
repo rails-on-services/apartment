@@ -41,7 +41,11 @@ unless defined?(ActiveRecord::Base)
   end
 end
 
-RSpec.describe(Apartment::Adapters::AbstractAdapter) do
+# Tagged :isolate_pinned_models — the #process_pinned_models specs are
+# count-sensitive, and Apartment.pinned_models is a process-lifetime registry
+# (clear_config keeps it). The spec_helper hook gives each example a clean
+# registry; see spec/CLAUDE.md.
+RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
   let(:connection_config) { { adapter: 'postgresql', host: 'localhost' } }
   let(:adapter) { TestAdapter.new(connection_config) }
 
@@ -494,6 +498,35 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter) do
       expect(klass.respond_to?(:apartment_pinned?)).to(be(true))
       expect(klass.apartment_pinned?).to(be(true))
       expect(klass.apartment_pinned_processed?).to(be(true))
+    end
+
+    # Regression: clear_config keeps the pinned-model registry, so a
+    # configure -> clear_config -> configure cycle must re-process pinned
+    # models. Before the fix the registry was discarded, so the second
+    # process_pinned_models found nothing and left the model unprocessed —
+    # its table name no longer qualified to the default tenant.
+    it 're-processes pinned models after a clear_config / configure cycle' do
+      model_class = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('ReprocessedAcrossClear', model_class)
+      allow(model_class).to(receive(:establish_connection))
+
+      ReprocessedAcrossClear.pin_tenant
+      adapter.process_pinned_models
+      expect(model_class.apartment_pinned_processed?).to(be(true))
+
+      Apartment.clear_config
+      expect(model_class.apartment_pinned_processed?).to(be(false))
+
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { %w[t1 t2] }
+        c.default_tenant = 'public'
+      end
+      adapter.process_pinned_models
+
+      expect(model_class.apartment_pinned_processed?).to(be(true))
     end
   end
 

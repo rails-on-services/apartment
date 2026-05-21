@@ -246,6 +246,14 @@ Query `information_schema.schemata` (PostgreSQL) or `SHOW DATABASES` (MySQL) to 
 
 **Solutions**: Use transactional fixtures, cache test tenant creation in `before(:suite)`, share tenants for read-only tests. See `spec_helper.rb` for patterns.
 
+### Issue: Pinned-Model Assertions Leak Across Examples
+
+**Symptom**: A spec asserting on what `process_pinned_models` handles (the count, or which classes) passes in isolation but fails in the full suite.
+
+**Cause**: `Apartment.pinned_models` is a process-lifetime registry. `pin_tenant` runs once — when a model's class body loads — and never re-runs, so `clear_config` deliberately keeps the registry (discarding it would strand every pinned model unprocessed after the next `configure`; the global `after { clear_config }` in `spec_helper.rb` does not reset it). Test models pinned by earlier examples therefore persist into later ones.
+
+**Solution**: Tag count-sensitive example groups `:isolate_pinned_models` — a `spec_helper.rb` hook clears the registry before each such example. See `spec/unit/adapters/abstract_adapter_spec.rb` for the reference pattern. Most specs tolerate the leak and need no action.
+
 ## Test Coverage
 
 Current coverage areas:

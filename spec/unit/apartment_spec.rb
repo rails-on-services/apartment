@@ -210,6 +210,23 @@ RSpec.describe(Apartment) do
       expect { described_class.clear_config }.not_to(raise_error)
       expect(klass.apartment_pinned_processed?).to(be(false))
     end
+
+    # pin_tenant runs once, when a model's class body loads — it never re-runs.
+    # Apartment.pinned_models is therefore the only record that a model is
+    # pinned. clear_config must keep it: discarding it leaves every pinned model
+    # registered-but-unprocessed after the next configure (it cannot rediscover
+    # a class whose body already ran), which is the bug this guards against.
+    it 'keeps pinned models registered across clear_config' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('PinnedAcrossClear', klass)
+      PinnedAcrossClear.pin_tenant
+
+      described_class.clear_config
+
+      expect(described_class.pinned_models).to(include(PinnedAcrossClear))
+    end
   end
 
   describe '.configure' do
