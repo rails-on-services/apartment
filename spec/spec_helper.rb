@@ -31,4 +31,12 @@ RSpec.configure do |config|
     Apartment.clear_config
     Apartment::Current.reset
   end
+
+  # Apartment.pinned_models is a process-lifetime registry — clear_config keeps
+  # it (see spec/CLAUDE.md). Example groups whose assertions depend on exactly
+  # which models are pinned tag themselves :isolate_pinned_models for a clean
+  # registry per example.
+  config.before(:each, :isolate_pinned_models) do
+    Apartment.pinned_models.clear
+  end
 end

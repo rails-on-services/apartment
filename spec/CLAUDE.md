@@ -252,7 +252,7 @@ Query `information_schema.schemata` (PostgreSQL) or `SHOW DATABASES` (MySQL) to 
 
 **Cause**: `Apartment.pinned_models` is a process-lifetime registry. `pin_tenant` runs once — when a model's class body loads — and never re-runs, so `clear_config` deliberately keeps the registry (discarding it would strand every pinned model unprocessed after the next `configure`; the global `after { clear_config }` in `spec_helper.rb` does not reset it). Test models pinned by earlier examples therefore persist into later ones.
 
-**Solution**: Specs with count-sensitive pinned-model assertions must isolate the registry themselves — `before { Apartment.pinned_models.clear }`. See `spec/unit/adapters/abstract_adapter_spec.rb` for the reference pattern. Most specs tolerate the leak and need no action.
+**Solution**: Tag count-sensitive example groups `:isolate_pinned_models` — a `spec_helper.rb` hook clears the registry before each such example. See `spec/unit/adapters/abstract_adapter_spec.rb` for the reference pattern. Most specs tolerate the leak and need no action.
 
 ## Test Coverage
 
