@@ -6,7 +6,4 @@ Apartment.configure do |config|
   config.default_tenant = 'public'
   config.elevator = :subdomain
   config.schema_load_strategy = nil # dummy app manages its own schema
-  config.configure_postgres do |pg|
-    pg.persistent_schemas = %w[public]
-  end
 end
