@@ -36,8 +36,9 @@ RSpec.describe(
   # spec_helper.rb clears Apartment.config after every example. The dummy app
   # configures Apartment once, at boot — so each example must re-establish the
   # full state the railtie's after_initialize path sets up: configure (via the
-  # app's own initializer), activate!, and Tenant.init. Configuring alone is
-  # not enough — clear_config also drops the adapter and unsets @activated.
+  # app's own initializer), then activate! and Tenant.init. clear_config tears
+  # down everything (config, adapter, pool manager, @activated), so re-running
+  # the initializer's Apartment.configure alone would leave the suite half-booted.
   def establish_apartment!
     load(Rails.root.join('config/initializers/apartment.rb'))
     Apartment.activate!
@@ -69,12 +70,29 @@ RSpec.describe(
   after { Apartment::Current.reset }
 
   after(:all) do
-    establish_apartment! unless Apartment.config
+    # The per-example `after` cleared config; re-establish to drop the test
+    # tenants and the default tenant's users table, then clear config so this
+    # spec leaves no Apartment state (config, pools, a running reaper) behind
+    # for whatever spec file runs next.
+    establish_apartment!
     test_tenants.each do |tenant|
       Apartment.adapter.drop(tenant)
     rescue StandardError
       nil
     end
+    Apartment::Tenant.switch(Apartment.config.default_tenant) do
+      ActiveRecord::Base.connection.drop_table(:users, if_exists: true)
+    end
+  ensure
+    Apartment.clear_config
+    Apartment::Current.reset
+  end
+
+  it 'inserts the elevator middleware into the application stack' do
+    # Directly pins the railtie's elevator insertion — a future initializer-
+    # ordering regression fails here, not via a downstream routing symptom.
+    expect(Rails.application.middleware.map(&:name))
+      .to(include('Apartment::Elevators::Subdomain'))
   end
 
   it 'elevator switches tenant based on subdomain' do
@@ -95,13 +113,21 @@ RSpec.describe(
     header 'Host', 'widgets.example.com'
     get '/tenant_info'
     expect(JSON.parse(last_response.body)['user_count']).to(eq(0))
+
+    # Switching back must still see acme's row — a pool-leak regression
+    # (the failure mode v4's pool-per-tenant model exists to prevent) would
+    # drop the count or cross tenants.
+    header 'Host', 'acme.example.com'
+    get '/tenant_info'
+    expect(JSON.parse(last_response.body)['user_count']).to(eq(1))
   end
 
   it 'tenant context is cleaned up after request' do
     header 'Host', 'acme.example.com'
     get '/tenant_info'
-    # The executor resets Apartment::Current after the request; Tenant.current
-    # then falls back to default_tenant.
+    # Rails' executor resets all CurrentAttributes (Apartment::Current
+    # included) after the request; Tenant.current then falls back to
+    # default_tenant.
     expect(Apartment::Tenant.current).to(eq('public'))
   end
 
