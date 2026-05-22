@@ -35,8 +35,7 @@ Two pieces meant to address this already exist but are inert:
   `tenant_not_found_handler` "an adapter-level hook, not a middleware-level one."
   The handler's own shape — `->(tenant, request) { [status, headers, body] }`,
   taking a request and returning a Rack response — settles it: this is
-  middleware-level. This design treats `v4-elevators.md`'s line as the error and
-  resolves it (see [Resolving the doc contradiction](#resolving-the-doc-contradiction)).
+  middleware-level, and `v4-elevators.md`'s contradicting line is corrected.
 
 Apartment has never validated tenants in the elevator, in v3 or v4. Consumers
 hand-roll "rescued tenant elevator" subclasses that override `call` and rescue.
@@ -75,8 +74,7 @@ request → parse_tenant_name
 
 `tenant_valid?` consults `config.tenant_validator`: `false` disables validation
 (every name passes — today's behavior); a callable is invoked; the default
-built-in validator is used when unset. The default tenant is always treated as
-valid — it is not an isolated tenant subject to the registry.
+built-in validator is used when unset.
 
 A `TenantNotFound` raised *during tenant resolution itself* — `HostHash` raises
 it from `parse_tenant_name` on an unmapped host — is caught **narrowly around the
@@ -106,9 +104,6 @@ a database query.
   caller that loses the lock uses the still-valid current set and rechecks on its
   next request. A tenant created out of band — by another process, or direct
   SQL — heals on the first request that names it, within the rebuild interval.
-  There is **no negative cache**: the rate limit already bounds source calls, and
-  a cache of arbitrary unknown names is an unbounded-memory / DoS vector for no
-  benefit.
 - **Positive-set TTL** — the set is also rebuilt after a TTL even absent a miss;
   the backstop for out-of-band *drops* (a dropped name stays valid until the next
   rebuild — rebuild-on-miss only heals creates, not drops).
@@ -131,15 +126,13 @@ a database query.
   that took it. Timestamps use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
   consistent with `PoolManager`/`PoolReaper`.
 - **Fail-open on source error** — if `tenants_provider` raises during a build,
-  the validator allows the request (today's behavior) rather than blanket-404ing
-  the app. Correct at boot (the tenant table may not exist yet during
-  `db:migrate`); in a running app a raising provider means validation silently
-  degrades, so it is logged at `error` outside the setup phase, and operators
-  should alert on it. A *successful* provider call that simply does not contain
-  the name is a real miss → 404.
+  the validator allows the request rather than blanket-404ing the app (also
+  correct at boot, before the tenant table exists). A raising provider means
+  validation has silently degraded, so it is logged at `error` for operators to
+  alert on. A *successful* provider call that simply does not contain the name is
+  a real miss → 404.
 
-Defaults: positive-set TTL ~5 minutes (only the drop / out-of-band backstop —
-rebuild-on-miss handles creates); rebuild interval ~5–10s. Both configurable.
+Defaults: positive-set TTL ~5 minutes, rebuild interval ~5–10s; both configurable.
 
 ### Multi-process deployments
 
@@ -150,17 +143,14 @@ process rebuilds that process's set. A *dropped* tenant lingers in other
 processes' sets until their TTL; a request to it in that window degrades to the
 pre-existing behavior (a database error), not a data leak.
 
-The gem ships **no cache backend** and stores nothing globally. An app needing
-strict cross-process consistency plugs a custom `tenant_validator` — backed by a
-**dedicated, un-namespaced store**. Tenant validity is *global* data; multi-tenant
-apps commonly namespace `Rails.cache` per tenant (so one tenant's cached values
-cannot be read in another's context), and routing global registry data through
-such a cache fragments it across tenant namespaces — a category error. A shared
-validator should use a dedicated keyspace keyed purely by tenant name:
-`Rails.cache` only if it is *not* tenant-namespaced, otherwise a separate cache
-instance or store. If strict, immediate cross-process *drop* enforcement is a
-requirement, that custom validator (with its own pub/sub or version key) is the
-mechanism — the in-process default does not guarantee it.
+The gem ships **no cache backend**. An app needing strict cross-process
+consistency plugs a custom `tenant_validator` backed by a **dedicated,
+un-namespaced store**. Tenant validity is *global* data, so it must not go
+through a `Rails.cache` that is namespaced per tenant (a common multi-tenant
+setup) — that fragments one global registry across tenant namespaces. Use a
+keyspace keyed purely by tenant name. Strict, immediate cross-process *drop*
+enforcement specifically needs that custom validator (with its own pub/sub or
+version key); the in-process default does not guarantee it.
 
 ### Configuration
 
@@ -180,9 +170,6 @@ Apartment.configure do |config|
 end
 ```
 
-`tenant_validator`: `nil` (unset) → built-in validator; `false` → validation
-disabled; a callable (or any object responding to `call`) → used as-is.
-
 ### Railtie
 
 The railtie registers:
@@ -199,10 +186,10 @@ handler for a custom response.
 
 ### Scope
 
-The check lives in `Generic`, so every name-resolving elevator inherits it:
-`Subdomain`, `FirstSubdomain`, `Domain`, `Host`, `Header`. `HostHash` already
-raises `TenantNotFound` on an unmapped host; it is routed through the same
-handler (above) rather than left as a parallel path.
+The check lives in `Generic`, so all six elevators inherit it: `Subdomain`,
+`FirstSubdomain`, `Domain`, `Host`, `Header`, `HostHash`. `HostHash`'s
+resolution-time `TenantNotFound` routes through the same handler (see the flow
+above).
 
 ## Edge cases
 
@@ -220,20 +207,13 @@ handler (above) rather than left as a parallel path.
   tenant; it does **not** establish trust. Header trust remains infrastructure's
   responsibility (`trusted:` option).
 
-## Resolving the doc contradiction
-
-`docs/designs/v4-elevators.md` and `docs/designs/apartment-v4.md` are updated so
-both describe the elevator-level handler consistently. `v4-elevators.md`'s "Error
-Handling" section — currently stating Generic does not rescue and the handler is
-adapter-level — is rewritten to describe the `tenant_validator` /
-`tenant_not_found_handler` seams.
-
 ## Breaking change
 
 On-by-default validation changes observable behavior: an unknown subdomain that
 previously produced a deep 500 now produces `TenantNotFound` → 404. v4 is in the
-alpha line, where behavior changes are expected; this ships with a CHANGELOG
-entry. Apps depending on the old behavior set `config.tenant_validator = false`.
+alpha line, where behavior changes are expected; it ships with a breaking-change
+note in `docs/upgrading-to-v4.md`. Apps depending on the old behavior set
+`config.tenant_validator = false`.
 
 ## Testing
 
@@ -254,8 +234,8 @@ entry. Apps depending on the old behavior set `config.tenant_validator = false`.
 
 ## Out of scope
 
-- **Multi-source tenant resolution** (header / custom domain / SSO param) — that
-  is `parse_tenant_name`'s job and already customizable by subclassing.
+- **Multi-source tenant resolution** (header, custom domain, SSO param) — already
+  `parse_tenant_name`'s job; customize by subclassing.
 - **Validating programmatic `Tenant.switch('typo')`** — `switch` stays a thin
   context-setter usable from jobs, console, rake, and migrations; it is not made
   HTTP-aware or globally-validating. This feature is request-path only.
@@ -281,25 +261,19 @@ entry. Apps depending on the old behavior set `config.tenant_validator = false`.
   `rescue_responses` mapping, so the app's own 404 page renders instead of a
   gem-rendered body.
 - **`Rails.cache`-backed validator as the built-in default** — rejected (a
-  four-model panel review was unanimous). It puts a network round-trip on every
-  request, couples each request to cache availability, `Rails.cache` is not
-  guaranteed to be a shared store, and — most concretely — multi-tenant apps
-  commonly namespace `Rails.cache` per tenant, which is the wrong home for global
-  registry data. A shared cache stays available through the `tenant_validator`
-  seam for apps that opt in; see [Multi-process deployments](#multi-process-deployments).
+  four-model panel review was unanimous): a network round-trip on every request,
+  each request coupled to cache availability, and `Rails.cache` is not guaranteed
+  to be a shared store. It stays available for opt-in via the `tenant_validator`
+  seam — see [Multi-process deployments](#multi-process-deployments) for how to
+  back one correctly.
 - **A negative cache of confirmed-invalid names** — rejected. Once rebuild-on-miss
   is rate-limited, the rate limit alone bounds `tenants_provider` calls; a cache
   keyed by arbitrary unknown names adds no protection and is itself an
   unbounded-memory / DoS vector.
-- **The positive set in `ActiveSupport::CurrentAttributes` (a `Current` bag)** —
-  rejected as a category error. `CurrentAttributes` is *request-scoped*: Rails
-  resets it before and after every request and job. The registry is the
-  opposite — long-lived process infrastructure, and that persistence across
-  requests is exactly what lets it avoid re-querying `tenants_provider` each
-  time. A `Current` bag would wipe the set every request, collapsing the
-  memoized cache back into a per-request DB query — the failure mode the design
-  exists to remove. `CurrentAttributes` is the right home for the *current
-  tenant* (`Apartment::Current` — per-request execution context); the *set of
-  all valid tenants* is shared global data. Process-global state behind a
-  `Mutex` and `concurrent-ruby` structures is the correct shape, matching
-  `PoolManager`'s `Concurrent::Map` and the `pinned_models` `Concurrent::Set`.
+- **The positive set in `ActiveSupport::CurrentAttributes`** — rejected as a
+  category error. `CurrentAttributes` is request-scoped: Rails resets it before
+  and after every request, so the set would be wiped each request, collapsing the
+  cache into a per-request query. `CurrentAttributes` is for the *current tenant*
+  (`Apartment::Current`, per-request context); the *set of all valid tenants* is
+  shared global data. The correct shape is process-global state behind a `Mutex`
+  plus `concurrent-ruby` structures, as in `PoolManager` and `pinned_models`.
