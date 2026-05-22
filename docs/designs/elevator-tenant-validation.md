@@ -87,47 +87,79 @@ own reasons is never swallowed.
 
 ### Built-in validator
 
-`Apartment::TenantValidator` — a memoized registry, not a per-request
-`tenants_provider` call. `tenants_provider` is the *source* of tenant names; it
-may be a database query and must never run on every request.
+`Apartment::TenantValidator` — a process-local memoized registry. It never calls
+`tenants_provider` per request; that callable is the *source* of names and may be
+a database query.
 
-- **Positive set** — a `Set` of valid tenant names, built lazily from
-  `Apartment.tenant_names` on first use.
-- **Negative cache** — names recently found invalid, with a short TTL. Without
-  it, an attacker looping `random1.example.com`, `random2…` misses the positive
-  set every time and hits the tenant source per junk request; the negative cache
-  bounds that to one lookup per name per TTL window.
-- **Positive-set TTL** — the positive set is rebuilt after a TTL elapses, a
-  safety net for tenants created or dropped out of band (another process, direct
-  SQL) that the in-process callbacks below never observed.
-- **Lifecycle invalidation** — the validator updates its set when a tenant is
-  created or dropped through `Apartment::Tenant`, via the adapter's lifecycle
-  callbacks. A create/drop *in this process* updates the set immediately;
-  out-of-band changes heal on the TTL. (`:create` is an existing adapter
-  callback; a `:drop` hook is added if one does not already exist.)
+- **Positive set** — a thread-safe `Set` of valid tenant names, built lazily on
+  first use from `config.tenants_provider` directly. Not via
+  `Apartment.tenant_names`, which honors the per-block `with_tenants` override —
+  the process-global registry must reflect the configured provider, not a
+  block-scoped (test) override.
+- **Rebuild-on-miss — rate-limited and single-flight.** A name absent from the
+  set triggers a rebuild from the source, *at most once per rebuild interval* (a
+  flood of distinct unknown names cannot hammer `tenants_provider`) and
+  *single-flight* (a mutex; one thread rebuilds, concurrent callers use the
+  current set rather than piling on). A tenant created out of band — by another
+  process, or direct SQL — heals on the first request that names it, within the
+  rebuild interval. There is **no negative cache**: the rate limit already bounds
+  source calls, and a cache of arbitrary unknown names is an unbounded-memory /
+  DoS vector for no benefit.
+- **Positive-set TTL** — the set is also rebuilt after a TTL even absent a miss;
+  the backstop for out-of-band *drops* (a dropped name stays valid until the next
+  rebuild — rebuild-on-miss only heals creates, not drops).
+- **Lifecycle invalidation** — the set is updated when a tenant is created or
+  dropped through `Apartment::Tenant`, *after* the operation succeeds: created
+  names added, dropped names removed. `:create` is an existing adapter callback;
+  `drop` is hooked via a new `:drop` callback or the existing `drop.apartment`
+  `ActiveSupport::Notifications` event. In-process create/drop is immediate;
+  cross-process changes heal via rebuild-on-miss (creates) or the TTL (drops).
 - **Thread-safety** — the registry is process-global and read on every request
-  across threads; backed by `concurrent-ruby` structures. Timestamps use
-  `Process.clock_gettime(Process::CLOCK_MONOTONIC)`, consistent with
-  `PoolManager`/`PoolReaper`.
-- **Fail-open on source error** — if `tenants_provider` raises while the set is
-  being built (e.g. the tenant table does not exist yet during initial setup),
-  the validator logs a warning and treats the request as valid (the switch
-  proceeds — today's behavior). Validation is a UX improvement; a flaky tenant
-  source must not brick the whole application with blanket 404s. A *successful*
-  provider call that simply does not contain the name is a real miss → 404.
+  across threads; backed by `concurrent-ruby` (or an atomic whole-set swap on
+  rebuild). Timestamps use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
+  consistent with `PoolManager`/`PoolReaper`.
+- **Fail-open on source error** — if `tenants_provider` raises during a build,
+  the validator allows the request (today's behavior) rather than blanket-404ing
+  the app. Correct at boot (the tenant table may not exist yet during
+  `db:migrate`); in a running app a raising provider means validation silently
+  degrades, so it is logged at `error` outside the setup phase, and operators
+  should alert on it. A *successful* provider call that simply does not contain
+  the name is a real miss → 404.
 
-TTL defaults: positive set 60s, negative cache 10s (negative kept short so a
-genuinely new tenant is not rejected for long). Both configurable on the
-validator.
+Defaults: positive-set TTL ~5 minutes (only the drop / out-of-band backstop —
+rebuild-on-miss handles creates); rebuild interval ~5–10s. Both configurable.
+
+### Multi-process deployments
+
+The registry is per-process. With several app processes or containers, a
+`Tenant.create` in one process does not reach the others' registries directly —
+but rebuild-on-miss heals it: the first request naming the new tenant on any
+process rebuilds that process's set. A *dropped* tenant lingers in other
+processes' sets until their TTL; a request to it in that window degrades to the
+pre-existing behavior (a database error), not a data leak.
+
+The gem ships **no cache backend** and stores nothing globally. An app needing
+strict cross-process consistency plugs a custom `tenant_validator` — backed by a
+**dedicated, un-namespaced store**. Tenant validity is *global* data; multi-tenant
+apps commonly namespace `Rails.cache` per tenant (so one tenant's cached values
+cannot be read in another's context), and routing global registry data through
+such a cache fragments it across tenant namespaces — a category error. A shared
+validator should use a dedicated keyspace keyed purely by tenant name:
+`Rails.cache` only if it is *not* tenant-namespaced, otherwise a separate cache
+instance or store. If strict, immediate cross-process *drop* enforcement is a
+requirement, that custom validator (with its own pub/sub or version key) is the
+mechanism — the in-process default does not guarantee it.
 
 ### Configuration
 
 ```ruby
 Apartment.configure do |config|
   # Validation (on by default — uses the built-in TenantValidator):
-  #   config.tenant_validator = false                      # disable entirely
-  #   config.tenant_validator = ->(name) { Account.exists?(subdomain: name) }  # custom
-  #   config.tenant_validator = Apartment::TenantValidator.new(positive_ttl: 300)
+  #   config.tenant_validator = false   # disable entirely
+  #   config.tenant_validator = Apartment::TenantValidator.new(positive_ttl: 600)
+  #   # custom — note a bare callable runs on EVERY request, so it must do its
+  #   # own memoizing / caching; do not put an unmemoized DB query here:
+  #   config.tenant_validator = MyTenantValidator.new
 
   # Response on a miss (default: raise Apartment::TenantNotFound):
   #   config.tenant_not_found_handler = ->(tenant, request) {
@@ -193,12 +225,13 @@ entry. Apps depending on the old behavior set `config.tenant_validator = false`.
 
 ## Testing
 
-- **Unit — `TenantValidator`**: positive-set hit, negative-cache hit, lazy build,
-  positive-set TTL refresh, negative-cache TTL expiry, `Tenant.create`/`drop`
-  lifecycle invalidation, fail-open when `tenants_provider` raises,
-  thread-safety smoke. The validator's registry is process-global, so its specs
-  reset it per example (mirroring the pinned-model registry pattern documented
-  in `spec/CLAUDE.md`).
+- **Unit — `TenantValidator`**: positive-set hit, lazy build, rebuild-on-miss
+  heals a name added to the source, rebuild-on-miss is rate-limited (a second
+  miss inside the interval does not re-hit the source), single-flight (concurrent
+  misses trigger one rebuild), positive-set TTL refresh, `Tenant.create`/`drop`
+  lifecycle invalidation, fail-open when `tenants_provider` raises. The
+  validator's registry is process-global, so its specs reset it per example
+  (mirroring the pinned-model registry pattern documented in `spec/CLAUDE.md`).
 - **Unit — `Generic`/elevators**: valid name → `switch`; invalid → handler called
   with `(name, request)`; invalid + no handler → raises `TenantNotFound`; `nil`
   name → no switch; `default_tenant` → valid; `HostHash` miss → handler path.
@@ -235,3 +268,14 @@ entry. Apps depending on the old behavior set `config.tenant_validator = false`.
 - **Bare `[404, {}, …]` from the gem** — rejected in favor of raise +
   `rescue_responses` mapping, so the app's own 404 page renders instead of a
   gem-rendered body.
+- **`Rails.cache`-backed validator as the built-in default** — rejected (a
+  four-model panel review was unanimous). It puts a network round-trip on every
+  request, couples each request to cache availability, `Rails.cache` is not
+  guaranteed to be a shared store, and — most concretely — multi-tenant apps
+  commonly namespace `Rails.cache` per tenant, which is the wrong home for global
+  registry data. A shared cache stays available through the `tenant_validator`
+  seam for apps that opt in; see [Multi-process deployments](#multi-process-deployments).
+- **A negative cache of confirmed-invalid names** — rejected. Once rebuild-on-miss
+  is rate-limited, the rate limit alone bounds `tenants_provider` calls; a cache
+  keyed by arbitrary unknown names adds no protection and is itself an
+  unbounded-memory / DoS vector.
