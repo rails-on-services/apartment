@@ -76,4 +76,37 @@ RSpec.describe(Apartment::TenantValidator) do
       expect(validator.call('acme')).to(be(false))
     end
   end
+
+  describe 'lifecycle invalidation' do
+    it 'adds a tenant on a create.apartment notification' do
+      configure(-> { %w[acme] })
+      validator = build_validator
+      expect(validator.call('newco')).to(be(false))
+      ActiveSupport::Notifications.instrument('create.apartment', tenant: 'newco') {}
+      expect(validator.call('newco')).to(be(true))
+    end
+
+    it 'removes a tenant on a drop.apartment notification' do
+      configure(-> { %w[acme widgets] })
+      validator = build_validator
+      expect(validator.call('widgets')).to(be(true))
+      ActiveSupport::Notifications.instrument('drop.apartment', tenant: 'widgets') {}
+      expect(validator.call('widgets')).to(be(false))
+    end
+
+    it 'stops responding to notifications after #shutdown' do
+      configure(-> { %w[acme] })
+      validator = build_validator
+      validator.shutdown
+      ActiveSupport::Notifications.instrument('create.apartment', tenant: 'newco') {}
+      expect(validator.call('newco')).to(be(false))
+    end
+  end
+
+  describe 'fail-open on source error' do
+    it 'allows any name when tenants_provider raises' do
+      configure(-> { raise(StandardError, 'provider down') })
+      expect(build_validator.call('anything')).to(be(true))
+    end
+  end
 end
