@@ -117,6 +117,21 @@ RSpec.describe(Apartment::TenantValidator) do
 
       expect(build_validator.call('anything')).to(be(true))
     end
+
+    it 'fails open when tenants_provider returns nil' do
+      configure(-> {}) # an empty lambda returns nil
+      expect(build_validator.call('anything')).to(be(true))
+    end
+
+    it 'fails open when tenants_provider returns a non-Enumerable' do
+      configure(-> { 'acme' }) # a stray scalar, not a list of names
+      expect(build_validator.call('widgets')).to(be(true))
+    end
+
+    it 'treats an empty list as zero tenants (404s unknown names), not a source error' do
+      configure(-> { [] })
+      expect(build_validator.call('anything')).to(be(false))
+    end
   end
 
   describe 'concurrency' do

@@ -125,12 +125,14 @@ a database query.
   scheduler as well as under threads, and every lock is released by the fiber
   that took it. Timestamps use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
   consistent with `PoolManager`/`PoolReaper`.
-- **Fail-open on source error** — if `tenants_provider` raises during a build,
-  the validator allows the request rather than blanket-404ing the app (also
-  correct at boot, before the tenant table exists). A raising provider means
-  validation has silently degraded, so it is logged at `error` for operators to
-  alert on. A *successful* provider call that simply does not contain the name is
-  a real miss → 404.
+- **Fail-open on source error** — if `tenants_provider` raises, *or returns a
+  non-Enumerable* (e.g. `nil` from a misconfigured provider), the validator
+  degrades: it allows every request rather than blanket-404ing the app, logged
+  at `error` for operators to alert on. (Also correct at boot, before the tenant
+  table exists.) A *successful* call returning an Enumerable that does not list
+  the name is a real miss → 404 — including an empty `[]`, the right answer for a
+  fresh install with no tenants. The `nil`-vs-`[]` distinction is deliberate:
+  `[]` is "zero tenants," `nil` is "the provider didn't answer."
 
 Defaults: positive-set TTL ~5 minutes, rebuild interval ~5–10s; both configurable.
 
@@ -221,7 +223,8 @@ note in `docs/upgrading-to-v4.md`. Apps depending on the old behavior set
   heals a name added to the source, rebuild-on-miss is rate-limited (a second
   miss inside the interval does not re-hit the source), single-flight (concurrent
   misses trigger one rebuild), positive-set TTL refresh, `Tenant.create`/`drop`
-  lifecycle invalidation, fail-open when `tenants_provider` raises. The
+  lifecycle invalidation, fail-open when `tenants_provider` raises or returns a
+  non-Enumerable (and an empty `[]` is *not* a failure — it 404s). The
   validator's registry is process-global, so its specs reset it per example
   (mirroring the pinned-model registry pattern documented in `spec/CLAUDE.md`).
 - **Unit — `Generic`/elevators**: valid name → `switch`; invalid → handler called

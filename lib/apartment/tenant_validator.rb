@@ -91,8 +91,7 @@ module Apartment
     def perform_rebuild
       @last_rebuild_at = monotonic
       @state_mutex.synchronize { @pending_deltas = [] }
-      fresh = Array(Apartment.config.tenants_provider.call).map(&:to_s)
-      commit_rebuild(Concurrent::Set.new(fresh))
+      commit_rebuild(Concurrent::Set.new(fetch_tenant_names))
     rescue StandardError => e
       # Fail open: a broken tenants_provider must not blanket-404 the app.
       mark_degraded
@@ -117,6 +116,20 @@ module Apartment
         @degraded = true
         @built_at = monotonic
       end
+    end
+
+    # Reads the configured tenant source. A non-Enumerable return — nil from a
+    # misconfigured provider, or a stray scalar — is a provider failure, not
+    # "zero tenants": it raises, so perform_rebuild's rescue fails open and logs,
+    # the same as a provider that raised. An empty Enumerable is legitimate (a
+    # fresh install with no tenants) and is left to 404 unknown names.
+    def fetch_tenant_names
+      raw = Apartment.config.tenants_provider.call
+      unless raw.respond_to?(:each)
+        raise(ConfigurationError, "tenants_provider must return an Enumerable, got #{raw.class}")
+      end
+
+      Array(raw).map(&:to_s)
     end
 
     # Apply a lifecycle change to the live set. While a rebuild is in flight
@@ -148,7 +161,7 @@ module Apartment
     end
 
     def warn_degraded(error)
-      message = '[Apartment] tenant validation degraded: tenants_provider raised ' \
+      message = '[Apartment] tenant validation degraded: ' \
                 "#{error.class}: #{error.message}. Allowing all tenants until it recovers."
       if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
         Rails.logger.error(message)
