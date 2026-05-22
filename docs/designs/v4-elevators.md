@@ -199,13 +199,18 @@ Symbols are the canonical form for built-in elevators. Classes are for custom el
 
 ## Error Handling
 
-Generic's `call` method does not rescue exceptions. If `Apartment::Tenant.switch` raises `TenantNotFound` (e.g., from HostHash), the exception propagates through the Rack stack. This is intentional:
+`Generic#call` validates the resolved tenant name before switching, via
+`config.tenant_validator` (a built-in in-process validator by default). An
+unknown tenant is routed through `config.tenant_not_found_handler` if one is
+configured (it returns a Rack response), otherwise `Apartment::TenantNotFound`
+is raised. The railtie maps that exception to `:not_found`.
 
-- Custom elevators handle errors by wrapping `super` in their own `call` override (as DynamicElevator does with rescue -> redirect).
-- The `tenant_not_found_handler` config is an adapter-level hook, not a middleware-level one.
-- Generic adding rescue logic would interfere with custom error handling in subclasses.
+A `TenantNotFound` raised during resolution itself — e.g. `HostHash` on an
+unmapped host — is caught narrowly around the processor call and routed through
+the same handler. The rescue does not wrap `@app.call`, so an application's own
+`TenantNotFound` is never swallowed.
 
-Users who want middleware-level error handling should subclass Generic and override `call`.
+See `docs/designs/elevator-tenant-validation.md` for the full design.
 
 ## Configuration Examples
 

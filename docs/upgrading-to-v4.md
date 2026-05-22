@@ -129,6 +129,21 @@ end
 
 Available elevators: `:subdomain`, `:first_subdomain`, `:domain`, `:host`, `:host_hash`, `:header`, `:generic`.
 
+### Elevator Tenant Validation
+
+Elevators now validate the resolved tenant before switching. An unknown subdomain (or any other unresolved tenant) raises `Apartment::TenantNotFound` — which the Railtie maps to a 404 — instead of failing deep in the first query with an opaque 500.
+
+Validation runs by default via a built-in in-process validator. To disable it, or to supply your own:
+
+```ruby
+Apartment.configure do |config|
+  config.tenant_validator = false              # disable validation
+  # config.tenant_validator = ->(name) { ... } # or supply a custom callable
+end
+```
+
+Configure `config.tenant_not_found_handler` for a custom not-found response instead of the default 404. See `docs/designs/elevator-tenant-validation.md` for the full design.
+
 ### Connection Model
 
 v4 uses pool-per-tenant instead of thread-local switching. Each tenant gets a dedicated `ActiveRecord::ConnectionAdapters::ConnectionPool` managed by `Apartment::PoolManager`.
