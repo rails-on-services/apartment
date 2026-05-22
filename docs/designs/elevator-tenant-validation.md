@@ -120,12 +120,15 @@ a database query.
   cross-process changes heal via rebuild-on-miss (creates) or the TTL (drops).
   A create/drop that lands *during* a rebuild is captured and re-applied to the
   freshly built set, so the whole-set swap never silently discards it.
-- **Thread-safety** — the registry is process-global and read on every request
-  across threads. The positive set is a `concurrent-ruby` set; a rebuild swaps
-  in a whole new set under a state mutex, re-applying lifecycle deltas captured
-  during the (unlocked) provider call. The built-in validator is itself memoized
-  behind a mutex, so concurrent first access cannot construct (and leak) more
-  than one. Timestamps use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
+- **Thread- and fiber-safety** — the registry is process-global and read on
+  every request across threads and fibers. The positive set is a
+  `concurrent-ruby` set; a rebuild swaps in a whole new set under a state mutex,
+  re-applying lifecycle deltas captured during the (unlocked) provider call. The
+  built-in validator is itself memoized behind a mutex, so concurrent first
+  access cannot construct (and leak) more than one. `Mutex` is owned per-fiber
+  (Ruby 3.0+; apartment requires ≥ 3.3), so single-flight holds under a fiber
+  scheduler as well as under threads, and every lock is released by the fiber
+  that took it. Timestamps use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
   consistent with `PoolManager`/`PoolReaper`.
 - **Fail-open on source error** — if `tenants_provider` raises during a build,
   the validator allows the request (today's behavior) rather than blanket-404ing
@@ -288,3 +291,15 @@ entry. Apps depending on the old behavior set `config.tenant_validator = false`.
   is rate-limited, the rate limit alone bounds `tenants_provider` calls; a cache
   keyed by arbitrary unknown names adds no protection and is itself an
   unbounded-memory / DoS vector.
+- **The positive set in `ActiveSupport::CurrentAttributes` (a `Current` bag)** —
+  rejected as a category error. `CurrentAttributes` is *request-scoped*: Rails
+  resets it before and after every request and job. The registry is the
+  opposite — long-lived process infrastructure, and that persistence across
+  requests is exactly what lets it avoid re-querying `tenants_provider` each
+  time. A `Current` bag would wipe the set every request, collapsing the
+  memoized cache back into a per-request DB query — the failure mode the design
+  exists to remove. `CurrentAttributes` is the right home for the *current
+  tenant* (`Apartment::Current` — per-request execution context); the *set of
+  all valid tenants* is shared global data. Process-global state behind a
+  `Mutex` and `concurrent-ruby` structures is the correct shape, matching
+  `PoolManager`'s `Concurrent::Map` and the `pinned_models` `Concurrent::Set`.
