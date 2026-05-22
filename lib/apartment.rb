@@ -49,13 +49,17 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # An always-valid validator, used when config.tenant_validator is false.
     ALWAYS_VALID_TENANT = ->(_name) { true }
 
+    # Guards lazy construction of the built-in validator. A constant (not an
+    # ivar) so it survives clear_config, which nils @built_in_tenant_validator.
+    BUILT_IN_VALIDATOR_MUTEX = Mutex.new
+
     # Resolves config.tenant_validator to a callable: false -> always valid,
     # nil -> the process's built-in TenantValidator (memoized), a callable ->
     # itself.
     def tenant_validator
       case (configured = @config&.tenant_validator)
       when false then ALWAYS_VALID_TENANT
-      when nil then (@built_in_tenant_validator ||= TenantValidator.new)
+      when nil then built_in_tenant_validator
       else configured
       end
     end
@@ -243,6 +247,15 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     end
 
     private
+
+    # Double-checked locking: the common path (already built) skips the mutex;
+    # concurrent first callers serialize so exactly one validator is built.
+    # TenantValidator.new subscribes to ActiveSupport::Notifications, so a
+    # discarded duplicate would leak its subscription.
+    def built_in_tenant_validator
+      @built_in_tenant_validator ||
+        BUILT_IN_VALIDATOR_MUTEX.synchronize { @built_in_tenant_validator ||= TenantValidator.new }
+    end
 
     # Safely tear down old state. Stops the reaper first (so it doesn't
     # evict mid-cleanup), then deregisters tenant pools from AR's

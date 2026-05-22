@@ -108,5 +108,55 @@ RSpec.describe(Apartment::TenantValidator) do
       configure(-> { raise(StandardError, 'provider down') })
       expect(build_validator.call('anything')).to(be(true))
     end
+
+    it 'does not let a logging failure escape into the request path' do
+      configure(-> { raise(StandardError, 'provider down') })
+      broken_logger = double('logger')
+      allow(broken_logger).to(receive(:error).and_raise(IOError, 'log stream closed'))
+      stub_const('Rails', double(logger: broken_logger))
+
+      expect(build_validator.call('anything')).to(be(true))
+    end
+  end
+
+  describe 'concurrency' do
+    it 'does not false-404 a valid tenant while the first build is in progress' do
+      provider_running = Queue.new
+      finish_provider = Queue.new
+      configure(lambda {
+        provider_running << true
+        finish_provider.pop
+        %w[acme]
+      })
+      validator = build_validator
+      results = Concurrent::Hash.new
+
+      t1 = Thread.new { results[:t1] = validator.call('acme') }
+      provider_running.pop          # t1 is blocked inside the first build's provider call
+      t2 = Thread.new { results[:t2] = validator.call('acme') }
+      sleep(0.05)                   # give t2 time to reach the (blocking) rebuild
+      finish_provider << true       # release the provider
+      [t1, t2].each(&:join)
+
+      expect(results).to(eq(t1: true, t2: true))
+    end
+
+    it 'preserves a create.apartment notification that lands mid-rebuild' do
+      provider_running = Queue.new
+      finish_provider = Queue.new
+      configure(lambda {
+        provider_running << true
+        finish_provider.pop
+        %w[acme]                    # the provider snapshot excludes newco
+      })
+      validator = build_validator
+      builder = Thread.new { validator.call('acme') }
+      provider_running.pop          # the rebuild is inside provider.call
+      ActiveSupport::Notifications.instrument('create.apartment', tenant: 'newco') {}
+      finish_provider << true
+      builder.join
+
+      expect(validator.call('newco')).to(be(true))
+    end
   end
 end

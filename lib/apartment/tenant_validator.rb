@@ -18,7 +18,9 @@ module Apartment
       @positive_ttl = positive_ttl
       @rebuild_interval = rebuild_interval
       @names = Concurrent::Set.new
-      @mutex = Mutex.new
+      @rebuild_mutex = Mutex.new # single-flight guard: one rebuild at a time
+      @state_mutex = Mutex.new   # guards the @names swap vs lifecycle deltas
+      @pending_deltas = nil      # non-nil Array while a rebuild is in flight
       @built_at = nil
       @last_rebuild_at = nil
       @degraded = false
@@ -36,7 +38,11 @@ module Apartment
     # @return [Boolean] whether `name` is a known tenant.
     def call(name)
       name = name.to_s
-      rebuild if @built_at.nil? || stale?
+      if @built_at.nil?
+        rebuild(blocking: true) # cold start: every caller waits for the first build
+      elsif stale?
+        rebuild                 # refresh: single-flight, non-blocking
+      end
       return true if @degraded
       return true if @names.include?(name)
 
@@ -60,24 +66,69 @@ module Apartment
       rebuild
     end
 
-    # Single-flight: one thread rebuilds at a time; others skip and use the
-    # current set, rechecking on their next request.
-    def rebuild
-      return unless @mutex.try_lock
+    # Single-flight. The first build is +blocking+ — concurrent callers wait
+    # for it rather than evaluating against the empty initial set, which would
+    # 404 a valid tenant. Refreshes are non-blocking: a caller that loses the
+    # lock uses the still-valid current set and rechecks on its next request.
+    def rebuild(blocking: false)
+      if blocking
+        @rebuild_mutex.synchronize { perform_rebuild if @built_at.nil? }
+      else
+        return unless @rebuild_mutex.try_lock
 
-      begin
-        @last_rebuild_at = monotonic
-        names = Array(Apartment.config.tenants_provider.call).map(&:to_s)
-        @names = Concurrent::Set.new(names)
+        begin
+          perform_rebuild
+        ensure
+          @rebuild_mutex.unlock
+        end
+      end
+    end
+
+    # Rebuilds the positive set from the source. The slow provider call runs
+    # without @state_mutex held, so lifecycle notifications never block on it;
+    # deltas that arrive during the call are captured and re-applied to the
+    # new set, so the whole-set swap cannot lose a concurrent create/drop.
+    def perform_rebuild
+      @last_rebuild_at = monotonic
+      @state_mutex.synchronize { @pending_deltas = [] }
+      fresh = Array(Apartment.config.tenants_provider.call).map(&:to_s)
+      commit_rebuild(Concurrent::Set.new(fresh))
+    rescue StandardError => e
+      # Fail open: a broken tenants_provider must not blanket-404 the app.
+      mark_degraded
+      warn_degraded(e)
+    end
+
+    # Swap in the freshly built set, re-applying any lifecycle deltas that
+    # arrived during the (unlocked) provider call so the swap loses nothing.
+    def commit_rebuild(new_set)
+      @state_mutex.synchronize do
+        @pending_deltas.each { |op, name| op == :add ? new_set.add(name) : new_set.delete(name) }
+        @pending_deltas = nil
+        @names = new_set
         @degraded = false
         @built_at = monotonic
-      rescue StandardError => e
-        # Fail open: a broken tenants_provider must not blanket-404 the app.
+      end
+    end
+
+    def mark_degraded
+      @state_mutex.synchronize do
+        @pending_deltas = nil
         @degraded = true
         @built_at = monotonic
-        warn_degraded(e)
-      ensure
-        @mutex.unlock
+      end
+    end
+
+    # Apply a lifecycle change to the live set. While a rebuild is in flight
+    # the delta is also recorded, so perform_rebuild re-applies it after the
+    # whole-set swap rather than discarding it.
+    def apply_lifecycle(operation, name)
+      return unless name
+
+      name = name.to_s
+      @state_mutex.synchronize do
+        operation == :add ? @names.add(name) : @names.delete(name)
+        @pending_deltas << [operation, name] if @pending_deltas
       end
     end
 
@@ -88,12 +139,10 @@ module Apartment
     def subscribe_to_lifecycle
       [
         ActiveSupport::Notifications.subscribe('create.apartment') do |*args|
-          name = args.last[:tenant]
-          @names.add(name.to_s) if name
+          apply_lifecycle(:add, args.last[:tenant])
         end,
         ActiveSupport::Notifications.subscribe('drop.apartment') do |*args|
-          name = args.last[:tenant]
-          @names.delete(name.to_s) if name
+          apply_lifecycle(:remove, args.last[:tenant])
         end,
       ]
     end
@@ -106,6 +155,9 @@ module Apartment
       else
         warn(message)
       end
+    rescue StandardError
+      # Logging must never break the request path.
+      nil
     end
   end
 end

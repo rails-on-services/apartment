@@ -99,12 +99,16 @@ a database query.
 - **Rebuild-on-miss — rate-limited and single-flight.** A name absent from the
   set triggers a rebuild from the source, *at most once per rebuild interval* (a
   flood of distinct unknown names cannot hammer `tenants_provider`) and
-  *single-flight* (a mutex; one thread rebuilds, concurrent callers use the
-  current set rather than piling on). A tenant created out of band — by another
-  process, or direct SQL — heals on the first request that names it, within the
-  rebuild interval. There is **no negative cache**: the rate limit already bounds
-  source calls, and a cache of arbitrary unknown names is an unbounded-memory /
-  DoS vector for no benefit.
+  *single-flight* (a mutex; one thread rebuilds). The **first build is
+  blocking** — concurrent callers wait for it, since there is no usable current
+  set to fall back on yet; a non-blocking first build would evaluate against the
+  empty initial set and 404 a valid tenant. Later refreshes are non-blocking: a
+  caller that loses the lock uses the still-valid current set and rechecks on its
+  next request. A tenant created out of band — by another process, or direct
+  SQL — heals on the first request that names it, within the rebuild interval.
+  There is **no negative cache**: the rate limit already bounds source calls, and
+  a cache of arbitrary unknown names is an unbounded-memory / DoS vector for no
+  benefit.
 - **Positive-set TTL** — the set is also rebuilt after a TTL even absent a miss;
   the backstop for out-of-band *drops* (a dropped name stays valid until the next
   rebuild — rebuild-on-miss only heals creates, not drops).
@@ -114,9 +118,14 @@ a database query.
   `drop` is hooked via a new `:drop` callback or the existing `drop.apartment`
   `ActiveSupport::Notifications` event. In-process create/drop is immediate;
   cross-process changes heal via rebuild-on-miss (creates) or the TTL (drops).
+  A create/drop that lands *during* a rebuild is captured and re-applied to the
+  freshly built set, so the whole-set swap never silently discards it.
 - **Thread-safety** — the registry is process-global and read on every request
-  across threads; backed by `concurrent-ruby` (or an atomic whole-set swap on
-  rebuild). Timestamps use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
+  across threads. The positive set is a `concurrent-ruby` set; a rebuild swaps
+  in a whole new set under a state mutex, re-applying lifecycle deltas captured
+  during the (unlocked) provider call. The built-in validator is itself memoized
+  behind a mutex, so concurrent first access cannot construct (and leak) more
+  than one. Timestamps use `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
   consistent with `PoolManager`/`PoolReaper`.
 - **Fail-open on source error** — if `tenants_provider` raises during a build,
   the validator allows the request (today's behavior) rather than blanket-404ing

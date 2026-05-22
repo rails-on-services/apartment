@@ -18,11 +18,12 @@ module Apartment
 
         begin
           database = @processor.call(request)
-        rescue Apartment::TenantNotFound
+        rescue Apartment::TenantNotFound => e
           # HostHash and similar raise during resolution; route through the
           # same handler. The rescue is narrow — it does NOT wrap @app.call,
           # so a TenantNotFound raised by the application is never swallowed.
-          return handle_tenant_not_found(request.host, request)
+          # Prefer the exception's own tenant; fall back to the host.
+          return handle_tenant_not_found(e.tenant || request.host, request)
         end
 
         return @app.call(env) if database.nil?
@@ -54,7 +55,9 @@ module Apartment
         handler = Apartment.config&.tenant_not_found_handler
         return handler.call(tenant, request) if handler
 
-        raise(Apartment::TenantNotFound, "No tenant found for #{tenant.inspect}")
+        # TenantNotFound.new's argument is the tenant name — it builds its own
+        # message. Pass the bare name so #tenant and #message stay correct.
+        raise(Apartment::TenantNotFound, tenant)
       end
     end
   end

@@ -141,5 +141,29 @@ RSpec.describe(Apartment::Elevators::Generic) do
       elevator = described_class.new(app, processor)
       expect(elevator.call(env)).to(eq([404, {}, ['routed']]))
     end
+
+    it 'raises TenantNotFound with the tenant name intact, not a nested message' do
+      elevator = described_class.new(app, ->(_req) { 'ghost' })
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound) do |error|
+        expect(error.tenant).to(eq('ghost'))
+        expect(error.message).to(eq("Tenant 'ghost' not found"))
+      end)
+    end
+
+    it 'passes the resolved tenant, not the host, when resolution raises TenantNotFound' do
+      received = nil
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = lambda { |tenant, _request|
+          received = tenant
+          [404, {}, []]
+        }
+      end
+      processor = ->(_req) { raise(Apartment::TenantNotFound, 'resolved-name') }
+      described_class.new(app, processor).call(env)
+      expect(received).to(eq('resolved-name'))
+    end
   end
 end
