@@ -102,24 +102,24 @@ RSpec.describe(Apartment::TestFixtures) do
   end
 
   describe 'without the patch' do
-    it 'raises ArgumentError from setup_shared_connection_pool when a tenant pool exists under :reading only' do
-      # Use a fresh anonymous host class to avoid contamination from the 'with the patch'
-      # tests (prepend is irreversible on a class; FixtureHost may already be patched).
-      fresh_host_class = Class.new do
-        include ActiveRecord::TestFixtures
-
-        def initialize
-          @saved_pool_configs = Hash.new { |hash, key| hash[key] = {} }
-        end
-
-        def call_setup
-          setup_shared_connection_pool
-        end
-      end
-
+    # `include ActiveRecord::TestFixtures` triggers the module's `included do`
+    # block, which runs `ActiveSupport.run_load_hooks(:active_record_fixtures,
+    # self)` with `self` set to the *including class*. Apartment's Railtie
+    # listens for that hook and prepends Apartment::TestFixtures onto the
+    # including class -- so ANY class that includes AR::TestFixtures (fresh
+    # anonymous ones included) inherits the patch once the Railtie is loaded.
+    # The "fresh class" trick can't dodge the prepend; the patch is per-class
+    # but the on_load fires for *every* class that ever includes the module.
+    #
+    # To test AR's original behavior directly we bypass the prepend chain
+    # via UnboundMethod#bind_call on AR's own definition of the method. This
+    # is what "without the patch" actually means: AR's method as defined,
+    # ignoring whatever's prepended above it.
+    it 'AR setup_shared_connection_pool raises ArgumentError when a tenant pool exists under :reading only' do
+      ar_setup = ActiveRecord::TestFixtures.instance_method(:setup_shared_connection_pool)
+      host = FixtureHost.new
       register_tenant_pool('acme', :reading)
-      host = fresh_host_class.new
-      expect { host.call_setup }.to(raise_error(ArgumentError, /pool_config.*nil/i))
+      expect { ar_setup.bind_call(host) }.to(raise_error(ArgumentError, /pool_config.*nil/i))
     end
   end
 
