@@ -111,6 +111,40 @@ if railtie_loaded
       end
     end
 
+    # End-to-end coverage of the warning path: the predicate's return value is
+    # tested above, but those tests would still pass if the middleware
+    # initializer stopped calling the predicate or stopped emitting the
+    # warning. Run the initializer directly and assert on stderr.
+    describe 'apartment.middleware initializer Header trust warning' do
+      let(:middleware_stack) { double('MiddlewareStack', insert_after: nil) }
+      let(:app) { double('App', middleware: middleware_stack) }
+      let(:initializer) { Apartment::Railtie.initializers.find { |i| i.name == 'apartment.middleware' } }
+
+      def configure_with(elevator:, elevator_options: {})
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { [] }
+          config.elevator = elevator
+          config.elevator_options = elevator_options
+        end
+      end
+
+      it 'emits the warning for :header without trusted: true' do
+        configure_with(elevator: :header)
+        expect { initializer.run(app) }.to(output(/Header elevator with trusted: false/).to_stderr)
+      end
+
+      it 'does not emit the warning for :header with trusted: true' do
+        configure_with(elevator: :header, elevator_options: { trusted: true })
+        expect { initializer.run(app) }.not_to(output(/Header elevator/).to_stderr)
+      end
+
+      it 'does not emit the warning for a non-Header elevator' do
+        configure_with(elevator: :subdomain)
+        expect { initializer.run(app) }.not_to(output(/Header elevator/).to_stderr)
+      end
+    end
+
     describe '.deactivate_pool_reaper_in_test_env!' do
       it 'stops Apartment.pool_reaper when Rails.env.test? is true' do
         reaper = instance_double(Apartment::PoolReaper, stop: nil)
