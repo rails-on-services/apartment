@@ -1,5 +1,12 @@
 # frozen_string_literal: true
 
+# Default RAILS_ENV to 'test' before any spec loads. The rails_stub hardcodes
+# Rails.env to 'test' (see spec/support/rails_stub.rb); specs that load real
+# Rails (railtie_spec.rb) would otherwise get Rails' own default of
+# 'development', diverging from the stubbed contract and breaking adapter
+# specs that compute environmentified names from Rails.env.
+ENV['RAILS_ENV'] ||= 'test'
+
 if ENV['COVERAGE']
   require 'simplecov'
   SimpleCov.start do

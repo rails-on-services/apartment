@@ -30,9 +30,12 @@ on:
 
 jobs:
   # ── Unit tests (no database required) ──────────────────────────────
-  # Also runs spec/unit/rspec_rails_lifecycle_spec.rb across the full matrix —
-  # it needs rspec-rails, which the appraisal gemfiles carry. RSPEC_RAILS_REQUIRED
-  # turns a missing rspec-rails into a hard failure rather than a silent skip.
+  # Also runs spec/unit/rspec_rails_lifecycle_spec.rb and spec/unit/railtie_spec.rb
+  # across the full matrix — both self-require heavy deps (rspec-rails, rails)
+  # because spec_helper.rb stays Rails-free. The appraisal gemfiles carry the
+  # deps. {RSPEC_RAILS,RAILTIE_SPEC}_REQUIRED turn a missing dep into a hard
+  # failure rather than a silent skip (railtie_spec silently pended for months
+  # without it, masking a real bug in header_trust_warning?).
   unit:
     name: Unit · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
@@ -44,6 +47,7 @@ jobs:
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_sqlite3.gemfile
       RSPEC_RAILS_REQUIRED: '1'
+      RAILTIE_SPEC_REQUIRED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
