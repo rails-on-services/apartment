@@ -74,4 +74,96 @@ RSpec.describe(Apartment::Elevators::Generic) do
         .to(raise_error(NotImplementedError, /parse_tenant_name must be implemented/))
     end
   end
+
+  describe 'tenant validation' do
+    let(:app) { ->(_env) { [200, {}, ['ok']] } }
+    let(:env) { Rack::MockRequest.env_for('http://acme.example.com/') }
+
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+      end
+    end
+
+    it 'switches when the resolved tenant is valid' do
+      switched = nil
+      allow(Apartment::Tenant).to(receive(:switch)) do |name, &blk|
+        switched = name
+        blk.call
+      end
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+      elevator.call(env)
+      expect(switched).to(eq('acme'))
+    end
+
+    it 'raises TenantNotFound when the resolved tenant is invalid and no handler is set' do
+      elevator = described_class.new(app, ->(_req) { 'ghost' })
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound, /ghost/))
+    end
+
+    it 'calls tenant_not_found_handler when configured, returning its Rack response' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = ->(tenant, _request) { [404, {}, ["no #{tenant}"]] }
+      end
+      elevator = described_class.new(app, ->(_req) { 'ghost' })
+      expect(elevator.call(env)).to(eq([404, {}, ['no ghost']]))
+    end
+
+    it 'does not validate when the processor returns nil (default tenant)' do
+      elevator = described_class.new(app, ->(_req) {})
+      expect(elevator.call(env)).to(eq([200, {}, ['ok']]))
+    end
+
+    it 'treats the default tenant as always valid' do
+      switched = nil
+      allow(Apartment::Tenant).to(receive(:switch)) do |name, &blk|
+        switched = name
+        blk.call
+      end
+      elevator = described_class.new(app, ->(_req) { 'public' })
+      elevator.call(env)
+      expect(switched).to(eq('public'))
+    end
+
+    it 'routes a TenantNotFound raised during resolution through the handler' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = ->(_tenant, _request) { [404, {}, ['routed']] }
+      end
+      processor = ->(_req) { raise(Apartment::TenantNotFound, 'unmapped host') }
+      elevator = described_class.new(app, processor)
+      expect(elevator.call(env)).to(eq([404, {}, ['routed']]))
+    end
+
+    it 'raises TenantNotFound with the tenant name intact, not a nested message' do
+      elevator = described_class.new(app, ->(_req) { 'ghost' })
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound) do |error|
+        expect(error.tenant).to(eq('ghost'))
+        expect(error.message).to(eq("Tenant 'ghost' not found"))
+      end)
+    end
+
+    it 'passes the resolved tenant, not the host, when resolution raises TenantNotFound' do
+      received = nil
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = lambda { |tenant, _request|
+          received = tenant
+          [404, {}, []]
+        }
+      end
+      processor = ->(_req) { raise(Apartment::TenantNotFound, 'resolved-name') }
+      described_class.new(app, processor).call(env)
+      expect(received).to(eq('resolved-name'))
+    end
+  end
 end

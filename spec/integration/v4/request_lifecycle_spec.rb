@@ -144,4 +144,17 @@ RSpec.describe(
     body = JSON.parse(last_response.body)
     expect(body['tenant']).to(eq('public'))
   end
+
+  it 'returns 404 for an unknown subdomain instead of a 500' do
+    header 'Host', 'ghost.example.com'
+    get '/tenant_info'
+    expect(last_response.status).to(eq(404))
+  end
+
+  it 'switches normally for a known tenant (validation does not block valid tenants)' do
+    header 'Host', 'acme.example.com'
+    get '/tenant_info'
+    expect(last_response).to(be_ok)
+    expect(JSON.parse(last_response.body)['tenant']).to(eq('acme'))
+  end
 end

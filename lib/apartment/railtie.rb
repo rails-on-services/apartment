@@ -58,6 +58,16 @@ module Apartment
       Apartment::Railtie.insert_elevator_middleware(app.middleware, elevator_class, **opts)
     end
 
+    # Map Apartment::TenantNotFound to a 404 so an unknown tenant renders the
+    # application's own 404 page when no tenant_not_found_handler is configured.
+    # rescue_responses has a non-nil default (:internal_server_error), so a
+    # key? check — not ||= — is what skips an app's own explicit mapping.
+    initializer 'apartment.rescue_responses' do
+      require 'action_dispatch'
+      responses = ActionDispatch::ExceptionWrapper.rescue_responses
+      responses['Apartment::TenantNotFound'] = :not_found unless responses.key?('Apartment::TenantNotFound')
+    end
+
     # In test environments, clean up apartment's tenant pools before Rails'
     # fixture setup iterates shards. See docs/designs/v4-test-fixtures-compatibility.md.
     if Rails.env.test?

@@ -139,4 +139,19 @@ RSpec.describe('Apartment::Railtie') do
       expect { Apartment::Railtie.deactivate_pool_reaper_in_test_env! }.not_to(raise_error)
     end
   end
+
+  describe 'TenantNotFound rescue_responses mapping' do
+    # Unit specs do not boot a Rails::Application, so railtie initializers
+    # never run on their own — invoke the initializer block directly.
+    it 'maps Apartment::TenantNotFound to :not_found' do
+      require 'action_dispatch'
+      initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.rescue_responses' }
+      expect(initializer).not_to(be_nil)
+
+      initializer.run
+
+      expect(ActionDispatch::ExceptionWrapper.rescue_responses['Apartment::TenantNotFound'])
+        .to(eq(:not_found))
+    end
+  end
 end

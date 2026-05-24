@@ -558,6 +558,48 @@ RSpec.describe(Apartment::Config) do
       expect(config.rails_env_name).to(eq('default_env'))
     end
   end
+
+  describe '#tenant_validator' do
+    it 'defaults to nil' do
+      expect(described_class.new.tenant_validator).to(be_nil)
+    end
+
+    it 'accepts false (validation disabled)' do
+      config = described_class.new
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_validator = false
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts a callable' do
+      config = described_class.new
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_validator = ->(name) { name == 'acme' }
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'rejects a non-callable, non-false value' do
+      config = described_class.new
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_validator = 'nope'
+      expect { config.validate! }
+        .to(raise_error(Apartment::ConfigurationError, /tenant_validator/))
+    end
+  end
+
+  describe '#tenant_not_found_handler' do
+    it 'rejects a non-callable value' do
+      config = described_class.new
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_not_found_handler = 'nope'
+      expect { config.validate! }
+        .to(raise_error(Apartment::ConfigurationError, /tenant_not_found_handler/))
+    end
+  end
 end
 
 RSpec.describe('Apartment.configure') do

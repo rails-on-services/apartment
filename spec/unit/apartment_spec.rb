@@ -477,4 +477,67 @@ RSpec.describe(Apartment) do
       expect(result).to(eq('postgresql'))
     end
   end
+
+  describe '.tenant_validator' do
+    it 'returns an always-true callable when config.tenant_validator is false' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.tenant_validator = false
+      end
+      expect(described_class.tenant_validator.call('anything')).to(be(true))
+    end
+
+    it 'returns the configured callable when one is set' do
+      custom = ->(name) { name == 'acme' }
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.tenant_validator = custom
+      end
+      expect(described_class.tenant_validator).to(equal(custom))
+    end
+
+    it 'returns a built-in TenantValidator when unset, memoized per process' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      first = described_class.tenant_validator
+      expect(first).to(be_a(Apartment::TenantValidator))
+      expect(described_class.tenant_validator).to(equal(first))
+    end
+
+    it 'discards the built-in validator on clear_config' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      first = described_class.tenant_validator
+      described_class.clear_config
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      expect(described_class.tenant_validator).not_to(equal(first))
+    end
+
+    it 'builds the built-in validator once under concurrent first access' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      call_count = Concurrent::AtomicFixnum.new(0)
+      original = Apartment::TenantValidator.method(:new)
+      allow(Apartment::TenantValidator).to(receive(:new)) do
+        call_count.increment
+        sleep(0.02) # widen the race window so an unsynchronized ||= is caught
+        original.call
+      end
+
+      Array.new(20) { Thread.new { described_class.tenant_validator } }.each(&:join)
+
+      expect(call_count.value).to(eq(1))
+    end
+  end
 end

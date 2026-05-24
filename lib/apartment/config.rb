@@ -7,7 +7,7 @@ require_relative 'configs/mysql_config'
 module Apartment
   # Configuration object for Apartment v4.
   # Created via Apartment.configure block; validated after the block yields.
-  class Config
+  class Config # rubocop:disable Metrics/ClassLength
     VALID_STRATEGIES = %i[schema database_name shard database_config].freeze
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
@@ -21,7 +21,8 @@ module Apartment
                   :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
                   :elevator, :elevator_options,
-                  :tenant_not_found_handler, :active_record_log, :sql_query_tags,
+                  :tenant_not_found_handler, :tenant_validator,
+                  :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
                   :force_separate_pinned_pool, :test_fixture_cleanup
@@ -44,6 +45,7 @@ module Apartment
       @elevator = nil
       @elevator_options = {}
       @tenant_not_found_handler = nil
+      @tenant_validator = nil
       @active_record_log = false
       @sql_query_tags = false
       @postgres_config = nil
@@ -186,6 +188,18 @@ module Apartment
       unless [true, false].include?(@test_fixture_cleanup)
         raise(ConfigurationError,
               "test_fixture_cleanup must be true or false, got: #{@test_fixture_cleanup.inspect}")
+      end
+
+      unless @tenant_validator.nil? || @tenant_validator == false || @tenant_validator.respond_to?(:call)
+        raise(ConfigurationError,
+              'tenant_validator must be nil, false, or a callable, ' \
+              "got: #{@tenant_validator.inspect}")
+      end
+
+      if @tenant_not_found_handler && !@tenant_not_found_handler.respond_to?(:call)
+        raise(ConfigurationError,
+              'tenant_not_found_handler must be nil or a callable, ' \
+              "got: #{@tenant_not_found_handler.inspect}")
       end
 
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)

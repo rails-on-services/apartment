@@ -33,6 +33,7 @@ loader.collapse("#{__dir__}/apartment/concerns")
 loader.setup
 
 require_relative 'apartment/errors'
+require_relative 'apartment/tenant_validator'
 
 module Apartment # rubocop:disable Metrics/ModuleLength
   class << self # rubocop:disable Metrics/ClassLength
@@ -43,6 +44,24 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # Can be set manually (e.g., in tests) via Apartment.adapter=.
     def adapter
       @adapter ||= build_adapter
+    end
+
+    # An always-valid validator, used when config.tenant_validator is false.
+    ALWAYS_VALID_TENANT = ->(_name) { true }
+
+    # Guards lazy construction of the built-in validator. A constant (not an
+    # ivar) so it survives clear_config, which nils @built_in_tenant_validator.
+    BUILT_IN_VALIDATOR_MUTEX = Mutex.new
+
+    # Resolves config.tenant_validator to a callable: false -> always valid,
+    # nil -> the process's built-in TenantValidator (memoized), a callable ->
+    # itself.
+    def tenant_validator
+      case (configured = @config&.tenant_validator)
+      when false then ALWAYS_VALID_TENANT
+      when nil then built_in_tenant_validator
+      else configured
+      end
     end
 
     # Registry of models that declared pin_tenant.
@@ -130,6 +149,8 @@ module Apartment # rubocop:disable Metrics/ModuleLength
 
       # Validation passed — tear down old state and swap in new.
       teardown_old_state
+      @built_in_tenant_validator&.shutdown
+      @built_in_tenant_validator = nil
       @config = new_config
       @pool_manager = PoolManager.new
       @pool_reaper = PoolReaper.new(
@@ -155,6 +176,8 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       # constants); a test process that pins anonymous classes accumulates them
       # here — acceptable, but count-sensitive specs must isolate it themselves.
       @pinned_models&.each { |klass| klass.apartment_restore! if klass.respond_to?(:apartment_restore!) }
+      @built_in_tenant_validator&.shutdown
+      @built_in_tenant_validator = nil
       @config = nil
       @pool_manager = nil
       @pool_reaper = nil
@@ -224,6 +247,15 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     end
 
     private
+
+    # Double-checked locking: the common path (already built) skips the mutex;
+    # concurrent first callers serialize so exactly one validator is built.
+    # TenantValidator.new subscribes to ActiveSupport::Notifications, so a
+    # discarded duplicate would leak its subscription.
+    def built_in_tenant_validator
+      @built_in_tenant_validator ||
+        BUILT_IN_VALIDATOR_MUTEX.synchronize { @built_in_tenant_validator ||= TenantValidator.new }
+    end
 
     # Safely tear down old state. Stops the reaper first (so it doesn't
     # evict mid-cleanup), then deregisters tenant pools from AR's

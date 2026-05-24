@@ -305,7 +305,7 @@ Apartment.configure do |config|
   # config.elevator = Apartment::Elevators::Header
   # config.elevator_options = { header: "X-Tenant-Id", trusted: true }
 
-  # Tenant-not-found handling
+  # Tenant-not-found handling — see docs/designs/elevator-tenant-validation.md
   config.tenant_not_found_handler = ->(tenant, request) {
     [404, {}, ["Tenant not found"]]
   }
@@ -694,7 +694,7 @@ Apartment::ApartmentError               # Base class
 
 ### Elevator Error Handling
 
-- **Tenant not found** (elevator resolves a tenant name that doesn't exist): Calls `config.tenant_not_found_handler` if configured. Default behavior: raises `Apartment::TenantNotFound`.
+- **Tenant not found** (elevator resolves a tenant name that is not a real tenant): the elevator validates the resolved name via `config.tenant_validator` (a built-in in-process validator by default) before switching. An unknown tenant is routed through `config.tenant_not_found_handler` if configured, otherwise `Apartment::TenantNotFound` is raised and the railtie maps it to a 404. See `docs/designs/elevator-tenant-validation.md`.
 - **Elevator raises**: Exception propagates to Rack error handling. No tenant context is set.
 
 ## Generator
