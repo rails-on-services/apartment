@@ -101,25 +101,34 @@ RSpec.describe(Apartment::TestFixtures) do
     Apartment.pool_manager.fetch_or_create(pool_key) { pool }
   end
 
-  describe 'without the patch' do
-    it 'raises ArgumentError from setup_shared_connection_pool when a tenant pool exists under :reading only' do
-      # Use a fresh anonymous host class to avoid contamination from the 'with the patch'
-      # tests (prepend is irreversible on a class; FixtureHost may already be patched).
-      fresh_host_class = Class.new do
-        include ActiveRecord::TestFixtures
+  # Documents AR's baseline behavior: setup_shared_connection_pool raises
+  # ArgumentError when a tenant pool exists under :reading without :writing.
+  # That bug is why Apartment::TestFixtures exists; this group is a
+  # regression guard against Rails fixing it (in which case the patch can
+  # be retired). The describe wording deliberately avoids "without the
+  # patch" -- under #412 the Railtie is now loaded in CI, the
+  # `:active_record_fixtures` on_load callback fires for every class that
+  # includes AR::TestFixtures (FixtureHost may already be prepended in
+  # full-suite order), and a fresh anonymous host can no longer dodge the
+  # prepend. The example below intentionally bypasses the prepend chain
+  # via UnboundMethod#bind_call to invoke AR's own definition directly.
+  describe 'AR baseline (unpatched method, invoked via bind_call)' do
+    it 'AR setup_shared_connection_pool raises ArgumentError when a tenant pool exists under :reading only' do
+      ar_setup = ActiveRecord::TestFixtures.instance_method(:setup_shared_connection_pool)
 
-        def initialize
-          @saved_pool_configs = Hash.new { |hash, key| hash[key] = {} }
-        end
+      # Robustness guard: bind_call bypasses prepend ONLY when the prepend
+      # lands on the including class (per-class), not on AR::TestFixtures
+      # itself. The current design (ActiveSupport::Concern's `included do`
+      # block fires the on_load hook with `self == including class`) keeps
+      # the prepend per-class. If a future Rails or Apartment change shifts
+      # the prepend onto AR::TestFixtures itself, instance_method would
+      # return the prepended version and this test would silently test the
+      # wrong thing. The owner check fails loudly in that scenario.
+      expect(ar_setup.owner).to(eq(ActiveRecord::TestFixtures))
 
-        def call_setup
-          setup_shared_connection_pool
-        end
-      end
-
+      host = FixtureHost.new
       register_tenant_pool('acme', :reading)
-      host = fresh_host_class.new
-      expect { host.call_setup }.to(raise_error(ArgumentError, /pool_config.*nil/i))
+      expect { ar_setup.bind_call(host) }.to(raise_error(ArgumentError, /pool_config.*nil/i))
     end
   end
 
