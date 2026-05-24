@@ -101,6 +101,22 @@ RSpec.describe(Apartment::TenantValidator) do
       ActiveSupport::Notifications.instrument('create.apartment', tenant: 'newco') {}
       expect(validator.call('newco')).to(be(false))
     end
+
+    it 'evicts a tenant added via Apartment::Lifecycle.notify_created' do
+      configure(-> { %w[acme] })
+      validator = build_validator
+      expect(validator.call('newco')).to(be(false))
+      Apartment::Lifecycle.notify_created('newco')
+      expect(validator.call('newco')).to(be(true))
+    end
+
+    it 'evicts a tenant removed via Apartment::Lifecycle.notify_dropped' do
+      configure(-> { %w[acme widgets] })
+      validator = build_validator
+      expect(validator.call('widgets')).to(be(true))
+      Apartment::Lifecycle.notify_dropped('widgets')
+      expect(validator.call('widgets')).to(be(false))
+    end
   end
 
   describe 'fail-open on source error' do

@@ -136,6 +136,29 @@ a database query.
 
 Defaults: positive-set TTL ~5 minutes, rebuild interval ~5–10s; both configurable.
 
+### External schema provisioning
+
+`Apartment::Tenant.create` / `.drop` publish `create.apartment` / `drop.apartment`
+themselves, so the in-process validator picks them up for free. Apps that
+provision tenants through some other path — raw `psql`, `pg_restore`, a separate
+schema-cloning job, an out-of-band migration tool — bypass that publication and
+fall back to rebuild-on-miss latency (one extra `tenants_provider` call per
+process on the new tenant's first hit; *drops* linger until the TTL).
+
+For zero-delay propagation in that case, instrument the matching event after
+the schema is live:
+
+```ruby
+Apartment::Lifecycle.notify_created('acme')   # after the schema/db exists
+Apartment::Lifecycle.notify_dropped('acme')   # after it's gone
+```
+
+These are thin wrappers over `ActiveSupport::Notifications.instrument` with the
+event names the validator already subscribes to; calling them when the
+lifecycle *did* go through `Apartment::Tenant` is redundant but harmless. They
+are in-process only — multi-process propagation is still the next section's
+problem.
+
 ### Multi-process deployments
 
 The registry is per-process. With several app processes or containers, a
