@@ -6,6 +6,7 @@ gem "appraisal", "~> 2.5"
 gem "rack-test", require: false
 gem "rspec", "~> 3.10"
 gem "rspec-rails", "~> 8.0", require: false
+gem "async", "~> 2.0", require: false
 gem "rails", "~> 8.1.0"
 gem "mysql2", "~> 0.5"
 
