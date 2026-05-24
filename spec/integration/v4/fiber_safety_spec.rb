@@ -104,6 +104,11 @@ RSpec.describe('v4 Fiber safety integration', :integration,
   # provides one (Async::Scheduler) and is declared as a dev dep for exactly
   # this spec. Without it, this context skips — that path is reached only in
   # degraded local setups; CI's appraisal gemfiles all carry async.
+  #
+  # Depends on the outer `before` setting `isolation_level = :fiber`.
+  # CurrentAttributes' per-fiber store is what makes Tenant.current and
+  # connection_pool routing survive task.sleep yields. The test would
+  # silently degrade (looking like a "tenant leak" bug) under :thread.
   context 'Fiber.scheduler integration' do
     before do
       require('async')
@@ -111,21 +116,42 @@ RSpec.describe('v4 Fiber safety integration', :integration,
       skip("requires async gem: #{e.message}")
     end
 
-    it 'tenant state does not leak across scheduled fibers' do
+    it 'tenant state and pool routing do not leak across scheduled fibers' do
       results = []
       mutex = Mutex.new
 
       Async do |task|
         task.async do
           Apartment::Tenant.switch('fiber_a') do
+            Widget.create!(name: 'a_widget')
             task.sleep(0.01) # yield to scheduler so fiber_b interleaves
-            mutex.synchronize { results << { fiber: :a, tenant: Apartment::Tenant.current } }
+            # The Widget.count + .first reads route through Apartment's
+            # ConnectionHandling prepend AFTER the yield. They prove the
+            # connection_pool lookup honors per-fiber Current.tenant, not
+            # just that the Current attribute is preserved (which the .tenant
+            # read below already covers).
+            mutex.synchronize do
+              results << {
+                fiber: :a,
+                tenant: Apartment::Tenant.current,
+                count: Widget.count,
+                name: Widget.first&.name,
+              }
+            end
           end
         end
         task.async do
           Apartment::Tenant.switch('fiber_b') do
+            Widget.create!(name: 'b_widget')
             task.sleep(0.01)
-            mutex.synchronize { results << { fiber: :b, tenant: Apartment::Tenant.current } }
+            mutex.synchronize do
+              results << {
+                fiber: :b,
+                tenant: Apartment::Tenant.current,
+                count: Widget.count,
+                name: Widget.first&.name,
+              }
+            end
           end
         end
       end.wait
@@ -137,6 +163,13 @@ RSpec.describe('v4 Fiber safety integration', :integration,
       expect(b_result).not_to(be_nil, 'Fiber B did not produce a result')
       expect(a_result[:tenant]).to(eq('fiber_a'))
       expect(b_result[:tenant]).to(eq('fiber_b'))
+      # Pool-routing contract: each fiber sees ONLY its own tenant's data
+      # (SQLite gives us file-per-tenant isolation, so a routing leak would
+      # surface as wrong-count or wrong-name).
+      expect(a_result[:count]).to(eq(1))
+      expect(b_result[:count]).to(eq(1))
+      expect(a_result[:name]).to(eq('a_widget'))
+      expect(b_result[:name]).to(eq('b_widget'))
     end
   end
 

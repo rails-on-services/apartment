@@ -4,6 +4,11 @@ source 'https://rubygems.org'
 
 gemspec
 
+# Per-Rails gemfiles in gemfiles/ are regenerated from THIS file by
+# `bundle exec appraisal install` (Appraisals declares only the
+# rails-version-specific gems). Add new dev/test deps here, not by hand
+# in gemfiles/ — they'd be silently dropped on next regen.
+
 gem 'appraisal', '~> 2.5'
 gem 'rack-test', require: false
 gem 'rspec', '~> 3.10'
