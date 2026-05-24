@@ -99,35 +99,36 @@ RSpec.describe('v4 Fiber safety integration', :integration,
     end
   end
 
-  # Exercises scheduled fibers under a real Fiber::Scheduler implementation
-  # (e.g., async gem). Standard MRI does not define Fiber::Scheduler as a
-  # concrete class, so this skips when the constant is absent.
+  # Exercises scheduled fibers under a real Fiber::Scheduler. MRI ships the
+  # Fiber::Scheduler *interface* but no concrete implementation; the async gem
+  # provides one (Async::Scheduler) and is declared as a dev dep for exactly
+  # this spec. Without it, this context skips — that path is reached only in
+  # degraded local setups; CI's appraisal gemfiles all carry async.
   context 'Fiber.scheduler integration' do
+    before do
+      require('async')
+    rescue LoadError => e
+      skip("requires async gem: #{e.message}")
+    end
+
     it 'tenant state does not leak across scheduled fibers' do
       results = []
       mutex = Mutex.new
 
-      scheduler = Fiber::Scheduler.new if defined?(Fiber::Scheduler)
-      skip 'no built-in Fiber::Scheduler available' unless scheduler
-
-      Fiber.set_scheduler(scheduler)
-
-      Fiber.schedule do
-        Apartment::Tenant.switch('fiber_a') do
-          sleep(0.01) # yield to scheduler
-          mutex.synchronize { results << { fiber: :a, tenant: Apartment::Tenant.current } }
+      Async do |task|
+        task.async do
+          Apartment::Tenant.switch('fiber_a') do
+            task.sleep(0.01) # yield to scheduler so fiber_b interleaves
+            mutex.synchronize { results << { fiber: :a, tenant: Apartment::Tenant.current } }
+          end
         end
-      end
-
-      Fiber.schedule do
-        Apartment::Tenant.switch('fiber_b') do
-          sleep(0.01) # yield to scheduler
-          mutex.synchronize { results << { fiber: :b, tenant: Apartment::Tenant.current } }
+        task.async do
+          Apartment::Tenant.switch('fiber_b') do
+            task.sleep(0.01)
+            mutex.synchronize { results << { fiber: :b, tenant: Apartment::Tenant.current } }
+          end
         end
-      end
-
-      Fiber.scheduler.close
-      Fiber.set_scheduler(nil)
+      end.wait
 
       a_result = results.find { |r| r[:fiber] == :a }
       b_result = results.find { |r| r[:fiber] == :b }
