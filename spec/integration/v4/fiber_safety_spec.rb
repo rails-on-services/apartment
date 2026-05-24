@@ -99,16 +99,26 @@ RSpec.describe('v4 Fiber safety integration', :integration,
     end
   end
 
-  # Exercises scheduled fibers under a real Fiber::Scheduler. MRI ships the
-  # Fiber::Scheduler *interface* but no concrete implementation; the async gem
-  # provides one (Async::Scheduler) and is declared as a dev dep for exactly
-  # this spec. Without it, this context skips — that path is reached only in
-  # degraded local setups; CI's appraisal gemfiles all carry async.
+  # Exercises Apartment under a real Fiber::Scheduler. MRI ships the
+  # Fiber::Scheduler *interface* but no concrete implementation; the async
+  # gem provides one (Async::Scheduler) and is declared as a dev dep for
+  # exactly this spec. Without it, this context skips — that path is reached
+  # only in degraded local setups; CI's appraisal gemfiles all carry async.
   #
   # Depends on the outer `before` setting `isolation_level = :fiber`.
   # CurrentAttributes' per-fiber store is what makes Tenant.current and
-  # connection_pool routing survive task.sleep yields. The test would
-  # silently degrade (looking like a "tenant leak" bug) under :thread.
+  # connection_pool routing fiber-local. Under :thread the test would
+  # silently degrade and look like a tenant-leak bug.
+  #
+  # SCOPE NOTE: this test verifies per-fiber storage and pool routing while
+  # both fibers are scheduled by Async. It does NOT force interleaving —
+  # `task.sleep(0.01)` is the conventional Async yield point but assertions
+  # would also pass under sequential execution (each scheduled fiber holds
+  # its own context regardless of yield order). A Queue-handoff barrier was
+  # considered and rejected as over-engineering: it would only catch a
+  # narrow regression class (task.sleep silently failing to yield AND fiber
+  # isolation simultaneously regressing) and the AR-query assertions below
+  # already catch the apartment-relevant failure modes.
   context 'Fiber.scheduler integration' do
     before do
       require('async')
@@ -116,7 +126,7 @@ RSpec.describe('v4 Fiber safety integration', :integration,
       skip("requires async gem: #{e.message}")
     end
 
-    it 'tenant state and pool routing do not leak across scheduled fibers' do
+    it 'Apartment::Current and connection_pool routing are per-fiber under Async::Scheduler' do
       results = []
       mutex = Mutex.new
 
@@ -124,12 +134,12 @@ RSpec.describe('v4 Fiber safety integration', :integration,
         task.async do
           Apartment::Tenant.switch('fiber_a') do
             Widget.create!(name: 'a_widget')
-            task.sleep(0.01) # yield to scheduler so fiber_b interleaves
-            # The Widget.count + .first reads route through Apartment's
-            # ConnectionHandling prepend AFTER the yield. They prove the
-            # connection_pool lookup honors per-fiber Current.tenant, not
-            # just that the Current attribute is preserved (which the .tenant
-            # read below already covers).
+            task.sleep(0.01) # conventional Async yield point
+            # Widget.count + .first route through Apartment's
+            # ConnectionHandling prepend, which reads Current.tenant. A
+            # CurrentAttributes or routing leak across fibers would surface
+            # here as wrong-count or wrong-name (SQLite file-per-tenant
+            # isolation makes the failure mode observable).
             mutex.synchronize do
               results << {
                 fiber: :a,
@@ -163,9 +173,6 @@ RSpec.describe('v4 Fiber safety integration', :integration,
       expect(b_result).not_to(be_nil, 'Fiber B did not produce a result')
       expect(a_result[:tenant]).to(eq('fiber_a'))
       expect(b_result[:tenant]).to(eq('fiber_b'))
-      # Pool-routing contract: each fiber sees ONLY its own tenant's data
-      # (SQLite gives us file-per-tenant isolation, so a routing leak would
-      # surface as wrong-count or wrong-name).
       expect(a_result[:count]).to(eq(1))
       expect(b_result[:count]).to(eq(1))
       expect(a_result[:name]).to(eq('a_widget'))
