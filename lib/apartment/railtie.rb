@@ -107,7 +107,12 @@ module Apartment
 
     # Whether the Header elevator trust warning should fire. Class method for testability.
     def self.header_trust_warning?(elevator_class, opts)
-      elevator_class <= Apartment::Elevators::Header && !opts[:trusted]
+      # Module#<= returns nil (not false) for unrelated classes, so a bare
+      # `&&` would let unrelated elevators slip through as nil — coerce via
+      # an explicit guard so non-Header elevators report false.
+      return false unless elevator_class <= Apartment::Elevators::Header
+
+      !opts[:trusted]
     end
 
     # In test environments the reaper is more liability than asset: suites
