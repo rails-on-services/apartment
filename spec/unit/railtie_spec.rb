@@ -145,6 +145,23 @@ if railtie_loaded
       end
     end
 
+    describe '.apply_live_tenant_propagation!' do
+      it 'prepends LiveTenantPropagation on ActionController::Live when defined' do
+        live_module = Module.new
+        stub_const('ActionController::Live', live_module)
+
+        Apartment::Railtie.apply_live_tenant_propagation!
+
+        expect(live_module.ancestors).to(include(Apartment::Patches::LiveTenantPropagation))
+      end
+
+      it 'is a no-op when ActionController::Live is not defined' do
+        hide_const('ActionController::Live') if defined?(ActionController::Live)
+
+        expect { Apartment::Railtie.apply_live_tenant_propagation! }.not_to(raise_error)
+      end
+    end
+
     describe '.deactivate_pool_reaper_in_test_env!' do
       it 'stops Apartment.pool_reaper when Rails.env.test? is true' do
         reaper = instance_double(Apartment::PoolReaper, stop: nil)

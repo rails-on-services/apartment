@@ -180,6 +180,22 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       end
     end
 
+    context 'when Current.tenant is nil (e.g. child fiber in ActionController::Live thread)' do
+      after { Thread.current.thread_variable_set(:apartment_current_tenant, nil) }
+
+      it 'falls back to thread variable for tenant resolution' do
+        Apartment::Current.tenant = nil
+        role = ActiveRecord::Base.current_role
+
+        ActiveRecord::Base.connection_pool
+        expect(Apartment.pool_manager.tracked?("acme:#{role}")).to(be(false))
+
+        Thread.current.thread_variable_set(:apartment_current_tenant, 'acme')
+        ActiveRecord::Base.connection_pool
+        expect(Apartment.pool_manager.tracked?("acme:#{role}")).to(be(true))
+      end
+    end
+
     context 'when pool_manager is nil (unconfigured)' do
       it 'returns the default pool without raising' do
         Apartment.clear_config

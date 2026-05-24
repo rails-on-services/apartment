@@ -28,6 +28,7 @@ module Apartment
         warn '[Apartment] Database not found during init — skipping. Run db:create first.'
       end
 
+      Apartment::Railtie.apply_live_tenant_propagation!
       Apartment::Railtie.deactivate_pool_reaper_in_test_env!
     end
 
@@ -128,6 +129,15 @@ module Apartment
 
       Apartment.pool_reaper.stop
       Apartment::Instrumentation.instrument(:reaper_stopped, reason: :test_env)
+    end
+
+    # Prepend LiveTenantPropagation on ActionController::Live so tenant
+    # context is automatically copied into the streaming thread.
+    def self.apply_live_tenant_propagation!
+      return unless defined?(ActionController::Live)
+
+      require('apartment/patches/live_tenant_propagation')
+      ActionController::Live.prepend(Apartment::Patches::LiveTenantPropagation)
     end
 
     # Resolve an elevator symbol/string to its class. Class method for testability.

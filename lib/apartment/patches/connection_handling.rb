@@ -10,7 +10,7 @@ module Apartment
     # resolved by the adapter using the current role's base config.
     module ConnectionHandling
       def connection_pool # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
-        tenant = Apartment::Current.tenant
+        tenant = Apartment::Current.tenant || Thread.current.thread_variable_get(:apartment_current_tenant)
         cfg = Apartment.config
 
         return super if tenant.nil? || cfg.nil?
