@@ -16,8 +16,10 @@ module Apartment
   #   Apartment::Lifecycle.notify_created('acme')
   #   Apartment::Lifecycle.notify_dropped('acme')
   #
-  # Cross-process propagation is not in scope here — see
-  # docs/designs/elevator-tenant-validation.md (Multi-process deployments).
+  # Updates only the calling Ruby process's validator. A worker-tier job that
+  # provisions a schema and notifies here will not reach a separate web-tier
+  # process — see docs/designs/elevator-tenant-validation.md (Multi-process
+  # deployments) and the cross-process invalidation tracking issue.
   module Lifecycle
     def self.notify_created(tenant)
       Instrumentation.instrument(:create, tenant: tenant)

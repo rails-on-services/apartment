@@ -144,6 +144,8 @@ end
 
 Configure `config.tenant_not_found_handler` for a custom not-found response instead of the default 404. See `docs/designs/elevator-tenant-validation.md` for the full design.
 
+If your elevator subclass already rejects unknown tenants in `parse_tenant_name` (e.g., filtering against a shared cache of valid names), the validator is structurally redundant — set `config.tenant_validator = false`. See the design doc's *When to disable validation* section.
+
 If you provision tenants outside `Apartment::Tenant.create` / `.drop` (raw `psql`, `pg_restore`, a separate schema-cloning job), call `Apartment::Lifecycle.notify_created(name)` / `notify_dropped(name)` after the schema is live. The lifecycle calls publish the `create.apartment` / `drop.apartment` notifications the validator subscribes to, so the new tenant is valid on the very next request instead of waiting for rebuild-on-miss. In-process only — multi-process propagation needs a custom validator (see the design doc's *Multi-process deployments* section).
 
 ### Connection Model

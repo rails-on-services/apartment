@@ -177,6 +177,27 @@ keyspace keyed purely by tenant name. Strict, immediate cross-process *drop*
 enforcement specifically needs that custom validator (with its own pub/sub or
 version key); the in-process default does not guarantee it.
 
+### When to disable validation
+
+Set `config.tenant_validator = false` when your elevator already rejects unknown
+tenants against the same source the validator would query. The common shape:
+a `Generic` / `Subdomain` / `FirstSubdomain` subclass whose `parse_tenant_name`
+filters against a shared cache of valid names (e.g., a Redis-backed lookup
+invalidated by the app's own model lifecycle hooks). In that setup, the
+validator only rubber-stamps what the parser already accepted, and the
+rebuild-on-miss / TTL machinery costs a `tenants_provider` call the parser
+already made.
+
+The same shape often pairs with a custom `tenant_not_found_handler` (or a
+direct rescue inside the elevator subclass) that returns a redirect or a
+branded page instead of a 404 — so the railtie's `TenantNotFound -> :not_found`
+mapping is also unused. Both seams are independent: an app can keep validation
+and override only the handler, or vice versa.
+
+Keep the defaults when the elevator does *not* pre-filter (stock `Generic` /
+`Subdomain` and friends) — the validator is the only thing standing between an
+unknown subdomain and an opaque 500.
+
 ### Configuration
 
 ```ruby
