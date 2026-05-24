@@ -90,11 +90,11 @@ end
 
 `ConnectionPool#schedule_query` then posts `future_result.execute_or_skip` to the async executor — the worker thread uses the captured `@pool` and never re-enters Apartment's `connection_pool` prepend. Routing happened before the thread switch, so the captured pool *is* the tenant pool.
 
-What this does **not** cover, and what consumers must scope explicitly:
+What this does **not** cover, and what consumers must scope explicitly (citations are against `activerecord-8.1.3`):
 
-- **Record materialization.** `instantiate_records` (and any `after_find` / `after_initialize` callbacks) runs on the *consumer* thread when `future.result` is read. Queries issued by those callbacks resolve `connection_pool` against the consumer's `Apartment::Current.tenant`.
-- **Lazy associations.** `posts = Post.load_async; posts.first.user` re-resolves `User.connection_pool` at access time, on the consumer fiber.
-- **Preload.** `preload_associations(records)` runs during relation consumption, not on the worker.
+- **Record materialization.** `instantiate_records` and `preload_associations(records)` run inline on the *consumer* thread when `future.result` returns rows — see `lib/active_record/relation.rb#exec_queries` (around line 1430). `after_find` / `after_initialize` callbacks therefore fire on the consumer.
+- **Lazy associations.** `posts = Post.load_async; posts.first.user` re-resolves `User.connection_pool` at access time via `klass.with_connection do |c|` in `lib/active_record/associations/association.rb` (line 268). On the consumer fiber.
+- **Preload.** Runs during relation consumption (same `exec_queries` line), not on the worker.
 
 If the consumer is outside the original `Tenant.switch` block when any of the above happens, `Current.tenant` is nil, the prepend falls through to `super`, and the query silently runs against the **default-tenant pool** with no error. This is the dangerous failure mode.
 
