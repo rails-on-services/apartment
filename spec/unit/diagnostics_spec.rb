@@ -98,18 +98,53 @@ RSpec.describe(Apartment::Diagnostics) do
       expect(log_io.string.scan('[Apartment] tenant=nil').size).to(eq(2))
     end
 
-    it 'skips gem-internal frames (apartment + Rails ecosystem) to reach user code' do
+    it 'skips gem-internal frames (apartment + Rails core) to reach user code' do
       frames = [
-        frame(path: '/gems/apartment/lib/apartment/patches/connection_handling.rb', lineno: 22),
-        frame(path: '/gems/activerecord/lib/active_record/relation.rb', lineno: 1437),
-        frame(path: '/gems/activesupport/lib/active_support/callbacks.rb', lineno: 99),
+        frame(path: '/gems/apartment-4.0.0/lib/apartment/patches/connection_handling.rb', lineno: 22),
+        frame(path: '/gems/activerecord-8.1.3/lib/active_record/relation.rb', lineno: 1437),
+        frame(path: '/gems/activesupport-8.1.3/lib/active_support/callbacks.rb', lineno: 99),
         frame(path: '/app/controllers/posts_controller.rb', lineno: 17, label: 'show'),
       ]
       described_class.record_default_tenant_fallback(fake_model_class, frames)
-      # Filter skips apartment, activerecord, activesupport -> resolves to
-      # the user controller. That's the actionable line; deep AR frames
-      # would just be noise.
       expect(log_io.string).to(match(%r{Caller=/app/controllers/posts_controller\.rb:17}))
+    end
+
+    # Regression: panel review of #417 caught that a substring match on
+    # "apartment" would filter user apps whose path contains that word --
+    # e.g., an app called "my-apartment-service". The fix uses the gem's
+    # own __dir__ as the prefix for source paths and an anchored
+    # `/gems/apartment-<digit>` pattern for installed gem paths, so
+    # adopter app paths cannot collide.
+    it 'does NOT filter user app paths that happen to contain the word "apartment"' do
+      frames = [
+        frame(path: '/gems/activerecord-8.1.3/lib/active_record/relation.rb', lineno: 1437),
+        frame(path: '/Users/dev/my-apartment-service/app/models/post.rb', lineno: 12, label: 'recent'),
+      ]
+      described_class.record_default_tenant_fallback(fake_model_class, frames)
+      expect(log_io.string).to(match(%r{Caller=/Users/dev/my-apartment-service/app/models/post\.rb:12}))
+    end
+
+    # Regression: don't over-filter non-core gems with Rails-sounding
+    # names. If a leak comes from active_model_serializers or activeadmin,
+    # the user wants to see that line, not have it hidden behind AR.
+    it 'does NOT filter non-core Rails-ecosystem gems' do
+      frames = [
+        frame(path: '/gems/activerecord-8.1.3/lib/active_record/relation.rb', lineno: 1437),
+        frame(path: '/gems/active_model_serializers-0.10.14/lib/active_model/serializer.rb', lineno: 89),
+        frame(path: '/app/controllers/posts_controller.rb', lineno: 17),
+      ]
+      described_class.record_default_tenant_fallback(fake_model_class, frames)
+      # First non-core, non-apartment frame is the serializer.
+      expect(log_io.string).to(match(%r{Caller=/gems/active_model_serializers-0\.10\.14/lib/active_model/serializer\.rb:89}))
+    end
+
+    it 'falls back to the topmost frame when every frame is internal' do
+      frames = [
+        frame(path: '/gems/apartment-4.0.0/lib/apartment/patches/connection_handling.rb', lineno: 22),
+        frame(path: '/gems/activerecord-8.1.3/lib/active_record/relation.rb', lineno: 1437),
+      ]
+      described_class.record_default_tenant_fallback(fake_model_class, frames)
+      expect(log_io.string).to(match(%r{Caller=/gems/apartment-4\.0\.0/lib/apartment/patches/connection_handling\.rb:22}))
     end
   end
 

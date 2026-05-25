@@ -106,7 +106,10 @@ RSpec.describe('log_default_tenant_fallback integration', :integration,
       Apartment::Tenant.switch('acme') { Widget.all }.pluck(:name)
       expect(log_io.string).to(match(/DEBUG/))
       expect(log_io.string).to(match(/\[Apartment\] tenant=nil/))
-      expect(log_io.string).to(match(/Caller=/))
+      # Caller should resolve to THIS spec file, not to an AR internal
+      # frame. Verifies the GEM_ROOT / Rails-core filter is doing the
+      # right thing under realistic AR call stacks.
+      expect(log_io.string).to(match(%r{Caller=.*log_default_tenant_fallback_spec\.rb:\d+}))
     end
 
     it 'dedupes per call site: repeated access at the same line logs once' do

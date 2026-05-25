@@ -132,7 +132,7 @@ Apartment::Tenant.switch('acme') do
 end
 ```
 
-An optional `Apartment.config.strict_tenant_lookup` flag will turn the silent default-pool fallback into a raised `Apartment::ImplicitDefaultTenant` so this contract is enforceable in development/test. See its config docs for usage.
+An optional `Apartment.config.log_default_tenant_fallback` flag emits a debug log line (tagged `[Apartment] tenant=nil`) on every silent default-pool fallthrough, with the user's caller site and a stack chain. Per-process deduped by call site so the suite logs each leak once. Grep the log after a dev/test session to surface every leak. Diagnostic only, never raises -- it coexists with legitimate gem-internal default-pool paths instead of breaking them. See its config docs for usage.
 
 ### Core: Immutable Connection Pool Per Tenant
 

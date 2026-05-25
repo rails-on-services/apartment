@@ -62,25 +62,54 @@ module Apartment
 
       private
 
-      # Skip frames inside this gem and inside common Rails-ecosystem gems
-      # so the caller resolves to the user's code, not the deep AR internals
-      # that issue the connection_pool call. Without this filter, dedup
-      # keys would vary by AR internal call site (one query can touch
-      # connection_pool from columns_hash, schema_load, query exec, etc.)
-      # and the same user line would log multiple times.
-      #
-      # Combined into one regex so the negation reads as a single
-      # `!match?` -- rubocop-rails' NegateInclude cop would otherwise push
-      # a `!include?` toward `String#exclude?`, which is an ActiveSupport
-      # extension this module shouldn't depend on.
-      INTERNAL_FRAME_PATTERN = %r{
-        /apartment(?:[/-])           # this gem (worktree path or installed gem dir)
-        | /gems/(?:apartment|active|action|rail)   # Rails ecosystem gems
-      }x
-      private_constant :INTERNAL_FRAME_PATTERN
+      # Path prefix for *this* gem's source, captured from __dir__ at load
+      # time. Covers local development / worktrees / source-installed gems.
+      # Using an exact prefix avoids the false positives that a substring
+      # match on "apartment" would cause -- e.g., an adopter app under
+      # `/Users/dev/my-apartment-service/` would otherwise have all its
+      # user frames filtered as "internal" and the diagnostic would
+      # resolve to deep AR frames.
+      GEM_ROOT = __dir__.freeze
+      private_constant :GEM_ROOT
 
+      # Anchor on `/gems/(name)-<digit>` so a gem installed via Bundler
+      # (where the path is `.../gems/<gem>-<version>/...`) is filtered
+      # without also matching adopter app paths that happen to contain
+      # the gem's name as a substring. Mirrors how Rails core gems are
+      # filtered below.
+      INSTALLED_GEM_FRAME_PATTERN = %r{/gems/apartment-\d}.freeze
+      private_constant :INSTALLED_GEM_FRAME_PATTERN
+
+      # Concrete Rails core gem directory name prefixes. Explicit list
+      # (instead of a `/(active|action|rail)/` prefix sweep) so non-core
+      # gems with similar names -- active_model_serializers, activeadmin,
+      # action_policy, rails_admin -- stay visible. If a leak originates
+      # from one of those, the user wants to see it, not have it hidden
+      # behind AR internals.
+      RAILS_CORE_GEMS = %w[
+        activerecord activesupport activemodel activejob
+        actionpack actionview actionmailer actioncable
+        actionmailbox actiontext railties rails
+      ].freeze
+      private_constant :RAILS_CORE_GEMS
+
+      RAILS_CORE_FRAME_PATTERN = %r{/gems/(?:#{RAILS_CORE_GEMS.join('|')})-\d}.freeze
+      private_constant :RAILS_CORE_FRAME_PATTERN
+
+      # First frame outside this gem (source or installed) and outside
+      # Rails core. That's the user's code (or a non-core gem like an
+      # engine or serializer where a leak is still actionable).
+      #
+      # Without this filter, one query can hit connection_pool from
+      # multiple AR internal sites (columns_hash, schema_load, query exec)
+      # at different file:line each -- dedup would treat them as distinct
+      # "leaks" and log multiple times for one user mistake.
       def first_user_site(frames)
-        user = frames.find { |f| !f.path.match?(INTERNAL_FRAME_PATTERN) }
+        user = frames.find do |f|
+          !f.path.start_with?(GEM_ROOT) &&
+            !f.path.match?(INSTALLED_GEM_FRAME_PATTERN) &&
+            !f.path.match?(RAILS_CORE_FRAME_PATTERN)
+        end
         f = user || frames.first
         f ? "#{f.path}:#{f.lineno}" : '(unknown)'
       end
