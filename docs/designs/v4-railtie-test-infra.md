@@ -18,7 +18,7 @@ Three hooks, in Rails boot order:
 
 1. **`config.after_initialize`** — After all initializers have run:
    - Guard: skip if `Apartment.config.nil?` (the `@config` ivar is nil until `Apartment.configure` is called — this is the correct predicate)
-   - Warn if `ActiveSupport::IsolatedExecutionState.isolation_level` is `:thread` instead of `:fiber` — v4 requires fiber isolation for correct `CurrentAttributes` propagation to `load_async` threads (per v4 design doc)
+   - Warn if `ActiveSupport::IsolatedExecutionState.isolation_level` is `:thread` instead of `:fiber` — v4 recommends fiber isolation for fiber-aware concurrency (Falcon-style executors, manually scheduled fibers). The warning is NOT about `load_async`: `load_async` is opt-in (`ActiveRecord.async_query_executor` defaults to `nil`), and when enabled the SQL path stays correct via `FutureResult`'s captured `@pool`, not via `CurrentAttributes` propagation. See `docs/designs/apartment-v4.md` → "Async query correctness" for details.
    - Call `Apartment.activate!` (prepends ConnectionHandling on AR::Base)
    - Call `Apartment::Tenant.init` (processes excluded models)
    - Rescue `ActiveRecord::NoDatabaseError` for `db:create` compatibility (database may not exist yet)

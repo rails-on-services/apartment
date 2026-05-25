@@ -64,12 +64,75 @@ end
 ```
 
 Replaces `Thread.current[:apartment_adapter]`. Benefits:
-- Fiber-safe (each fiber gets its own attribute store)
+- Per-fiber store under `:fiber` isolation (each fiber gets its own attribute slot — required for fiber-aware servers like Falcon)
 - Auto-reset between requests by Rails
-- Natively propagated by Sidekiq 7+ and SolidQueue
-- Propagated to `load_async` threads and `ActionController::Live` threads
+- Natively propagated by Sidekiq 7+ and SolidQueue (job-runtime serialization, not in-process thread/fiber sharing)
 
-**Important caveat:** `CurrentAttributes` propagation to `load_async` threads depends on `config.active_support.isolation_level`. In Rails 7.2+, the default is `:fiber`, which provides proper isolation. If a user has explicitly set `isolation_level: :thread`, `load_async` spawns a new thread without propagating attributes. v4's Railtie should validate that `isolation_level` is `:fiber` (or warn if it's `:thread`) to ensure correct behavior. This is documented in the upgrade guide.
+**Caveats on isolation level and threads:**
+
+- `ActiveSupport::IsolatedExecutionState.isolation_level` defaults to `:thread` (`activesupport-8.1.3/lib/active_support/isolated_execution_state.rb:74`). No `load_defaults` flips it; users opt into `:fiber` via `config.active_support.isolation_level = :fiber`. v4 recommends `:fiber` for fiber-aware servers; the Railtie warns when it observes `:thread`.
+- `:fiber` does not cross OS threads. Worker threads (Rails' opt-in `load_async` executor — see "Async query correctness" — or any `Thread.new`) start with `Apartment::Current.tenant == nil` regardless of isolation level. `CurrentAttributes` provides no cross-thread propagation by itself.
+- `ActionController::Live` (`actionpack-8.1.3/lib/action_controller/metal/live.rb:308-323`) spawns a child thread and calls `IsolatedExecutionState.share_with(t1, ...)` to copy state. Under `:thread`, `t1.active_support_execution_state` holds the state and the copy works. Under `:fiber` it doesn't, because the parent's state lives on `Fiber.current`, not on the Thread — Live's propagation breaks. Apps that need both Live and v4 must wrap the Live action in an explicit `Apartment::Tenant.switch` rather than relying on inheritance.
+
+### Async query correctness: pool capture vs. consumer re-resolution
+
+**The async executor itself is opt-in.** `ActiveRecord.async_query_executor` defaults to `nil` (`activerecord-8.1.3/lib/active_record.rb:289`), and in that mode `Relation#load_async` returns `load` synchronously (`relation.rb:1158-1170` — `return load if !c.async_enabled?`). Apps that want true off-thread execution set `config.active_record.async_query_executor = :global_thread_pool` or `:multi_thread_pool`; both build a `Concurrent::ThreadPoolExecutor` (`connection_pool.rb:906-924`). The remainder of this section assumes the user has opted in — in the default configuration the worker-vs-consumer distinction collapses (everything runs on the calling fiber) and pool routing reduces to the ordinary `Tenant.switch` contract.
+
+Once the executor is enabled, the worker path is safe under v4 because `FutureResult` captures the connection pool reference at schedule time:
+
+```ruby
+# activerecord/lib/active_record/future_result.rb
+def initialize(pool, *args, **kwargs)
+  ...
+  @pool = pool
+end
+
+def execute_or_skip
+  ...
+  @pool.with_connection do |connection| ... end
+end
+```
+
+`ConnectionPool#schedule_query` (`connection_pool.rb:878-879`) posts `future.execute_or_skip` to `@async_executor` — the worker thread uses the captured `@pool` and never re-enters Apartment's `connection_pool` prepend. Routing happened before the thread switch, so the captured pool *is* the tenant pool.
+
+What this does **not** cover, and what consumers must scope explicitly (citations are against `activerecord-8.1.3`):
+
+- **Base rows are worker-routed.** `future.result` returns the captured-pool rows, so the *base* relation materializes correctly. What runs on the consumer fiber, however, may not.
+- **Record callbacks.** `instantiate_records(rows)` runs inline on the consumer fiber (`lib/active_record/relation.rb#exec_queries` line 1437); any DB access from `after_find` / `after_initialize` callbacks re-enters Apartment's `connection_pool` prepend with the consumer-fiber's `Current.tenant`.
+- **Preload (and `includes` when it picks preload).** `preload_associations(records)` (`relation.rb:1438`) issues secondary `SELECT` queries on the consumer fiber. `eager_load` is different — it folds into the main query as a `LEFT OUTER JOIN`, executes on the worker via the captured pool, and is safe.
+- **Lazy associations.** `posts = Post.load_async; posts.first.user` re-resolves `User.connection_pool` at access time via `klass.with_connection do |c|` in `lib/active_record/associations/association.rb` line 268. On the consumer fiber.
+- **Nested async on associations.** A loaded association may itself dispatch `scope.load_async.then(&:to_a)` (`association.rb:255-260`); the inner schedule re-reads `Current.tenant` on the consumer fiber.
+
+If the consumer fiber is outside the original `Tenant.switch` block when any of the above happens, `Current.tenant` is nil, the prepend falls through to `super`, and the query silently runs against the **default-tenant pool** with no error. This is the dangerous failure mode.
+
+**Contract for consumers:** scope `Tenant.switch` around the entire schedule-await-traverse region, not just the `load_async` call. The most common failure is exiting the switch block before the relation is materialized:
+
+```ruby
+# WRONG #1 — relation consumed *after* switch block exits.
+# Subtle: base rows ARE tenant-correct because the worker uses the
+# pool captured at schedule time. The leaks happen on the consumer fiber:
+# preload (and `after_find`/`after_initialize` callbacks that query) and
+# any lazy association resolve `connection_pool` against a nil tenant
+# and hit the default pool.
+relation = Apartment::Tenant.switch('acme') { Post.where(published: true).includes(:comments).load_async }
+relation.to_a              # base posts: tenant rows. :comments preload: default pool. Mixed/wrong.
+relation.first.comments    # already preloaded above → memoized; otherwise default pool
+
+# WRONG #2 — load_async called outside switch entirely.
+# Even the worker captures the wrong pool because routing happens at
+# schedule time (before the executor.post).
+relation = Post.load_async
+Apartment::Tenant.switch('acme') { relation.to_a }  # already routed to default
+
+# RIGHT — schedule and consume inside the same switch block.
+Apartment::Tenant.switch('acme') do
+  relation = Post.where(published: true).includes(:comments).load_async
+  relation.to_a              # both the main query and preload run with tenant context
+  relation.first.comments    # memoized from the preload
+end
+```
+
+An optional `Apartment.config.strict_tenant_lookup` flag will turn the silent default-pool fallback into a raised `Apartment::ImplicitDefaultTenant` so this contract is enforceable in development/test. See its config docs for usage.
 
 ### Core: Immutable Connection Pool Per Tenant
 
@@ -595,14 +658,38 @@ end
 
 ```ruby
 class Apartment::Railtie < Rails::Railtie
-  initializer "apartment.configure" do
+  # NOTE on hook choice: this runs as `config.after_initialize`, NOT as a
+  # named `initializer`. The predicate below reads the live
+  # `ActiveSupport::IsolatedExecutionState.isolation_level`, which is only
+  # set after AS's `active_support.isolation_level` initializer copies
+  # `app.config.active_support.isolation_level` into it. Reading it from a
+  # peer `initializer` block would race that ordering and false-warn for
+  # apps that opted into :fiber via config. `after_initialize` runs after
+  # all initializers, so the read is unambiguous.
+  config.after_initialize do
+    next unless Apartment.config
+
     Apartment.validate_config!  # Fail fast: tenant_strategy required, tenants_provider must be callable
 
-    # Warn if isolation_level is :thread — CurrentAttributes won't propagate to load_async
-    if Rails.application.config.active_support.isolation_level == :thread
-      Rails.logger.warn "[Apartment] active_support.isolation_level is :thread. " \
-        "Apartment requires :fiber (Rails 7.2+ default) for correct tenant propagation " \
-        "to load_async and ActionController::Live threads."
+    # Warn if isolation_level is :thread — v4's fiber-safety design assumes
+    # :fiber. Note that Rails' actual default is :thread (no load_defaults
+    # flips it; `activesupport-8.1.3/lib/active_support/isolated_execution_state.rb:74`),
+    # so this warning fires for unconfigured apps; users opt in explicitly via
+    # `config.active_support.isolation_level = :fiber`. The warning is about
+    # fiber-aware servers (Falcon-style) and manually scheduled fibers within
+    # one thread; it does NOT make thread-based load_async tenant-aware.
+    # Worker threads in an opt-in async-query executor never see Current.tenant
+    # regardless of isolation_level — the SQL path stays correct via
+    # FutureResult's captured pool. See "Async query correctness" above.
+    #
+    # Trade-off note: under :fiber, ActionController::Live's own propagation
+    # (Thread-to-Thread `IsolatedExecutionState.share_with`) breaks, because
+    # the parent's state lives on Fiber, not Thread. Apps using both Live and
+    # v4 must wrap the Live action in an explicit Apartment::Tenant.switch.
+    if ActiveSupport::IsolatedExecutionState.isolation_level == :thread
+      Rails.logger.warn "[Apartment] ActiveSupport::IsolatedExecutionState.isolation_level " \
+        "is :thread. v4 recommends :fiber for fiber-aware concurrency. Set " \
+        "`config.active_support.isolation_level = :fiber` in your application config."
     end
   end
 
@@ -836,9 +923,9 @@ No compatibility shims in v4 — clean break.
 | Issue | Status in v4 |
 |-------|-------------|
 | #302 PgBouncer/RDS Proxy session pinning | Improved: per-switch `SET` eliminated; connection-level config with libpq `options` avoids session pinning. See PgBouncer section for details. |
-| #239 Concurrency in specs | Solved: `CurrentAttributes` provides thread/fiber isolation |
-| #199 `load_async` ignores tenant | Solved: `CurrentAttributes` propagates to async threads |
-| #304 ActionController::Live | Solved: `CurrentAttributes` propagates to spawned threads |
+| #239 Concurrency in specs | Solved: `CurrentAttributes` provides fiber isolation; per-tenant pools eliminate the shared `Thread.current` slot the v3 design depended on |
+| #199 `load_async` ignores tenant | Improved: when the user opts into `async_query_executor`, `FutureResult` captures the tenant pool at schedule time. Default config runs `load_async` synchronously. Consumer-fiber access (preload, `after_find` callbacks, lazy assoc, nested-async) must stay inside the same `Tenant.switch`. `eager_load` is worker-safe (folds into main query). See "Async query correctness" |
+| #304 ActionController::Live | Partially addressed and isolation-level dependent. Under `:thread` (Rails default), Live's `IsolatedExecutionState.share_with` copies `CurrentAttributes` from parent to spawned thread, and tenant context propagates. Under `:fiber` (v4-recommended) the share_with copy is empty because state lives on `Fiber.current`, not on the parent Thread — Live actions must wrap themselves in `Apartment::Tenant.switch` explicitly. Pinned to the issue for a permanent resolution. |
 | #323 Connection leaks under load | Solved: pools cached in `Concurrent::Map`, lazy creation, eviction |
 | #341 Rails 8.1 `public.` prefix | Solved: schema dumper patch strips prefix for tenant loading |
 | #303 Missing `create_schema` in schema.rb | Solved: `include_schemas_in_dump` config option |
