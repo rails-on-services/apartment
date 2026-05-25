@@ -97,10 +97,11 @@ end
 
 What this does **not** cover, and what consumers must scope explicitly (citations are against `activerecord-8.1.3`):
 
-- **Record materialization.** `instantiate_records(rows)` and `preload_associations(records)` run inline on the *consumer* fiber when `future.result` returns rows — `lib/active_record/relation.rb#exec_queries` lines 1437-1438. `after_find` / `after_initialize` callbacks therefore fire on the consumer.
+- **Base rows are worker-routed.** `future.result` returns the captured-pool rows, so the *base* relation materializes correctly. What runs on the consumer fiber, however, may not.
+- **Record callbacks.** `instantiate_records(rows)` runs inline on the consumer fiber (`lib/active_record/relation.rb#exec_queries` line 1437); any DB access from `after_find` / `after_initialize` callbacks re-enters Apartment's `connection_pool` prepend with the consumer-fiber's `Current.tenant`.
+- **Preload (and `includes` when it picks preload).** `preload_associations(records)` (`relation.rb:1438`) issues secondary `SELECT` queries on the consumer fiber. `eager_load` is different — it folds into the main query as a `LEFT OUTER JOIN`, executes on the worker via the captured pool, and is safe.
 - **Lazy associations.** `posts = Post.load_async; posts.first.user` re-resolves `User.connection_pool` at access time via `klass.with_connection do |c|` in `lib/active_record/associations/association.rb` line 268. On the consumer fiber.
-- **Preload.** Runs during relation consumption (same `exec_queries:1438`), not on the worker.
-- **Eager-loaded / nested-async paths.** `eager_load` / `includes` build secondary queries during consumer-side scope merging, and an association can itself call `scope.load_async.then(&:to_a)` (`association.rb:255-260`). Both re-enter Apartment's `connection_pool` prepend on the consumer and re-read `Current.tenant`.
+- **Nested async on associations.** A loaded association may itself dispatch `scope.load_async.then(&:to_a)` (`association.rb:255-260`); the inner schedule re-reads `Current.tenant` on the consumer fiber.
 
 If the consumer fiber is outside the original `Tenant.switch` block when any of the above happens, `Current.tenant` is nil, the prepend falls through to `super`, and the query silently runs against the **default-tenant pool** with no error. This is the dangerous failure mode.
 
@@ -108,11 +109,14 @@ If the consumer fiber is outside the original `Tenant.switch` block when any of 
 
 ```ruby
 # WRONG #1 — relation consumed *after* switch block exits.
-# Future result materializes on the consumer fiber, Current.tenant is nil,
-# instantiate_records + preload + lazy assoc all hit the default-tenant pool.
-relation = Apartment::Tenant.switch('acme') { Post.where(published: true).load_async }
-relation.to_a              # default tenant — wrong rows
-relation.first.comments    # default tenant — wrong rows
+# Subtle: base rows ARE tenant-correct because the worker uses the
+# pool captured at schedule time. The leaks happen on the consumer fiber:
+# preload (and `after_find`/`after_initialize` callbacks that query) and
+# any lazy association resolve `connection_pool` against a nil tenant
+# and hit the default pool.
+relation = Apartment::Tenant.switch('acme') { Post.where(published: true).includes(:comments).load_async }
+relation.to_a              # base posts: tenant rows. :comments preload: default pool. Mixed/wrong.
+relation.first.comments    # already preloaded above → memoized; otherwise default pool
 
 # WRONG #2 — load_async called outside switch entirely.
 # Even the worker captures the wrong pool because routing happens at
@@ -122,9 +126,9 @@ Apartment::Tenant.switch('acme') { relation.to_a }  # already routed to default
 
 # RIGHT — schedule and consume inside the same switch block.
 Apartment::Tenant.switch('acme') do
-  relation = Post.where(published: true).load_async
-  relation.to_a
-  relation.first.comments
+  relation = Post.where(published: true).includes(:comments).load_async
+  relation.to_a              # both the main query and preload run with tenant context
+  relation.first.comments    # memoized from the preload
 end
 ```
 
@@ -654,7 +658,17 @@ end
 
 ```ruby
 class Apartment::Railtie < Rails::Railtie
-  initializer "apartment.configure" do
+  # NOTE on hook choice: this runs as `config.after_initialize`, NOT as a
+  # named `initializer`. The predicate below reads the live
+  # `ActiveSupport::IsolatedExecutionState.isolation_level`, which is only
+  # set after AS's `active_support.isolation_level` initializer copies
+  # `app.config.active_support.isolation_level` into it. Reading it from a
+  # peer `initializer` block would race that ordering and false-warn for
+  # apps that opted into :fiber via config. `after_initialize` runs after
+  # all initializers, so the read is unambiguous.
+  config.after_initialize do
+    next unless Apartment.config
+
     Apartment.validate_config!  # Fail fast: tenant_strategy required, tenants_provider must be callable
 
     # Warn if isolation_level is :thread — v4's fiber-safety design assumes
