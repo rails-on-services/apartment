@@ -72,12 +72,16 @@ module Apartment
       GEM_ROOT = __dir__.freeze
       private_constant :GEM_ROOT
 
-      # Anchor on `/gems/(name)-<digit>` so a gem installed via Bundler
-      # (where the path is `.../gems/<gem>-<version>/...`) is filtered
-      # without also matching adopter app paths that happen to contain
-      # the gem's name as a substring. Mirrors how Rails core gems are
-      # filtered below.
-      INSTALLED_GEM_FRAME_PATTERN = %r{/gems/apartment-\d}.freeze
+      # Anchor on `/gems/(name)-<version-or-sha>` to cover both flavors
+      # of Bundler installation:
+      #   * Rubygems install:   `/gems/<name>-<version>/`  (version starts with a digit)
+      #   * Git install:        `/bundler/gems/<name>-<sha>/` (SHA is hex; ~5/8 start with a letter)
+      # The `[a-f0-9]` class matches both digits (version) and lowercase
+      # hex (SHA). Won't match a hypothetical sibling gem like
+      # `apartment-foo` -- which is fine for our heuristic; no such gem
+      # exists and an ecosystem gem with this name should arguably be
+      # filtered too.
+      INSTALLED_GEM_FRAME_PATTERN = %r{/gems/apartment-[a-f0-9]}.freeze
       private_constant :INSTALLED_GEM_FRAME_PATTERN
 
       # Concrete Rails core gem directory name prefixes. Explicit list
@@ -87,13 +91,13 @@ module Apartment
       # from one of those, the user wants to see it, not have it hidden
       # behind AR internals.
       RAILS_CORE_GEMS = %w[
-        activerecord activesupport activemodel activejob
+        activerecord activesupport activemodel activejob activestorage
         actionpack actionview actionmailer actioncable
         actionmailbox actiontext railties rails
       ].freeze
       private_constant :RAILS_CORE_GEMS
 
-      RAILS_CORE_FRAME_PATTERN = %r{/gems/(?:#{RAILS_CORE_GEMS.join('|')})-\d}.freeze
+      RAILS_CORE_FRAME_PATTERN = %r{/gems/(?:#{RAILS_CORE_GEMS.join('|')})-[a-f0-9]}.freeze
       private_constant :RAILS_CORE_FRAME_PATTERN
 
       # First frame outside this gem (source or installed) and outside

@@ -146,6 +146,34 @@ RSpec.describe(Apartment::Diagnostics) do
       described_class.record_default_tenant_fallback(fake_model_class, frames)
       expect(log_io.string).to(match(%r{Caller=/gems/apartment-4\.0\.0/lib/apartment/patches/connection_handling\.rb:22}))
     end
+
+    # Regression: panel round 2 caught that `-\d` only matched version
+    # paths (always start with a digit) but missed Bundler git installs
+    # whose path is `/bundler/gems/<gem>-<sha>` and SHAs frequently start
+    # with a letter (~5/8 of git refs). Hex class `[a-f0-9]` covers both.
+    it 'filters this gem when installed via Bundler git (SHA-suffixed path)' do
+      frames = [
+        frame(path: '/Users/dev/.bundle/ruby/3.4.0/bundler/gems/apartment-a1b2c3d4e5f6/lib/apartment/patches/connection_handling.rb', lineno: 22),
+        frame(path: '/Users/dev/.bundle/ruby/3.4.0/bundler/gems/apartment-a1b2c3d4e5f6/lib/apartment.rb', lineno: 100),
+        frame(path: '/app/controllers/posts_controller.rb', lineno: 17),
+      ]
+      described_class.record_default_tenant_fallback(fake_model_class, frames)
+      expect(log_io.string).to(match(%r{Caller=/app/controllers/posts_controller\.rb:17}))
+    end
+
+    # Regression: panel round 2 caught that the original `(active|action|rail)`
+    # substring sweep accidentally filtered activestorage too; the
+    # explicit RAILS_CORE_GEMS list initially omitted it, which would
+    # have leaked Active Storage internals into Caller=.
+    it 'filters activestorage as Rails core' do
+      frames = [
+        frame(path: '/gems/activestorage-8.1.3/lib/active_storage/attachment.rb', lineno: 50),
+        frame(path: '/gems/activerecord-8.1.3/lib/active_record/relation.rb', lineno: 1437),
+        frame(path: '/app/controllers/uploads_controller.rb', lineno: 8),
+      ]
+      described_class.record_default_tenant_fallback(fake_model_class, frames)
+      expect(log_io.string).to(match(%r{Caller=/app/controllers/uploads_controller\.rb:8}))
+    end
   end
 
   describe '.reset!' do
