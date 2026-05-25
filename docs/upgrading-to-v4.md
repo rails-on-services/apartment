@@ -10,7 +10,7 @@
 
 ## What Changed and Why
 
-v4 replaces the thread-local tenant switching model with pool-per-tenant architecture: each tenant gets a dedicated connection pool, eliminating cross-thread tenant leakage (a persistent problem in ActionCable, Sidekiq, and fiber-based servers). Tenant context is tracked via `ActiveSupport::CurrentAttributes`, making it fiber-safe by default. Configuration is immutable after boot (`Config#freeze!` runs after `Apartment.configure`). Global models use a declarative `pin_tenant` call on each class instead of a centralized config list.
+v4 replaces the thread-local tenant switching model with pool-per-tenant architecture: each tenant gets a dedicated connection pool, eliminating cross-thread tenant leakage (a persistent problem in ActionCable, Sidekiq, and fiber-based servers). Tenant context is tracked via `ActiveSupport::CurrentAttributes`, fiber-safe under `:fiber` isolation (Rails' default is `:thread`; see Connection Model below). Configuration is immutable after boot (`Config#freeze!` runs after `Apartment.configure`). Global models use a declarative `pin_tenant` call on each class instead of a centralized config list.
 
 ## Breaking Changes
 
@@ -152,14 +152,19 @@ If you provision tenants outside `Apartment::Tenant.create` / `.drop` (raw `psql
 
 v4 uses pool-per-tenant instead of thread-local switching. Each tenant gets a dedicated `ActiveRecord::ConnectionAdapters::ConnectionPool` managed by `Apartment::PoolManager`.
 
-Tenant context is stored in `Apartment::Current` (an `ActiveSupport::CurrentAttributes` subclass), which is fiber-safe by default. If your app uses fibers (e.g., Falcon server), ensure your Rails config sets:
+Tenant context is stored in `Apartment::Current` (an `ActiveSupport::CurrentAttributes` subclass). Rails' default `ActiveSupport::IsolatedExecutionState.isolation_level` is `:thread`; v4 recommends `:fiber` for any fiber-aware concurrency. Set it in your Rails config:
 
 ```ruby
 # config/application.rb
 config.active_support.isolation_level = :fiber
 ```
 
-The Railtie emits a boot-time warning if `isolation_level` is `:thread`.
+The Railtie emits a boot-time warning when `isolation_level` is `:thread`.
+
+Two caveats apply at `:fiber`:
+
+- `ActionController::Live` spawns a child OS thread and copies execution state via `IsolatedExecutionState.share_with`. The copy reads the parent's `Thread#active_support_execution_state`, which is empty under `:fiber` (state lives on `Fiber.current`). Live actions that depend on tenant inheritance must wrap themselves in an explicit `Apartment::Tenant.switch`.
+- Child fibers spawned inside a request (`Fiber.new { ... }.resume`) get their own attribute store and do not inherit the parent fiber's `CurrentAttributes` — see [rails/rails#48279](https://github.com/rails/rails/issues/48279) (closed as "not planned"). Use `Apartment::Tenant.switch` inside the child fiber, not before it.
 
 ### Pinned Model Connections
 
