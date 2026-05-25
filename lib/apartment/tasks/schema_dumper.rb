@@ -99,9 +99,9 @@ module Apartment
         # Checks Rails' global schema dump setting. Older Rails versions
         # may not have this method, so we default to enabled.
         def rails_dump_schema_enabled?
-          return true unless ActiveRecord::Base.respond_to?(:dump_schema_after_migration)
+          return true unless ActiveRecord.respond_to?(:dump_schema_after_migration)
 
-          ActiveRecord::Base.dump_schema_after_migration
+          ActiveRecord.dump_schema_after_migration
         end
       end
     end
