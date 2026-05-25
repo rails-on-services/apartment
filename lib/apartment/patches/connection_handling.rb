@@ -26,7 +26,11 @@ module Apartment
           pinned = self != ActiveRecord::Base && Apartment.pinned_model?(self)
           if cfg.log_default_tenant_fallback && Apartment.pool_manager &&
              !pinned && !Apartment::Current.migrating
-            Apartment::Diagnostics.record_default_tenant_fallback(self, caller_locations(1, 12))
+            # 20 frames covers deep engine/concern/service stacks where the
+            # user's call site sits behind several layers of indirection.
+            # first_user_site filters internals; emit_log_line caps the
+            # printed chain at 8, so this only affects the search depth.
+            Apartment::Diagnostics.record_default_tenant_fallback(self, caller_locations(1, 20))
           end
           return super
         end
@@ -97,7 +101,7 @@ module Apartment
 
       def check_pending_migrations?(pool)
         return false unless Apartment.config.check_pending_migrations
-        return false unless defined?(Rails) && Rails.env.local?
+        return false unless defined?(Rails) && Rails.env.local? # rubocop:disable Rails/UnknownEnv
         return false if Apartment::Current.migrating
 
         pool.migration_context.needs_migration?

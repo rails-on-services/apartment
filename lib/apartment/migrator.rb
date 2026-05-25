@@ -93,9 +93,17 @@ module Apartment
 
     # Migrate the primary (default) tenant using AR::Base's existing pool.
     # No tenant switch needed — the default connection is already correct.
+    #
+    # Sets Apartment::Current.migrating around the connection_pool access
+    # so the log_default_tenant_fallback diagnostic (opt-in dev/test
+    # flag in ConnectionHandling) doesn't fire on legitimate primary
+    # migration. Without this, every `apartment:migrate` run with the
+    # diagnostic enabled would emit a deduped log line pointing at this
+    # method. Mirrors the pattern in migrate_tenant.
     def migrate_primary # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       tenant_name = Apartment.config.default_tenant
       start = monotonic_now
+      Apartment::Current.migrating = true
 
       context = ActiveRecord::Base.connection_pool.migration_context
 
@@ -120,6 +128,8 @@ module Apartment
         tenant: tenant_name, status: :failed,
         duration: monotonic_now - start, error: e, versions_run: []
       )
+    ensure
+      Apartment::Current.migrating = false
     end
 
     # Migrate a single tenant by switching via Apartment::Tenant.switch.

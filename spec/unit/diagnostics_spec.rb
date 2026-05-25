@@ -65,6 +65,31 @@ RSpec.describe(Apartment::Diagnostics) do
       expect(described_class.seen_sites).to(be_empty)
     end
 
+    # Regression: panel round 3 caught that first_seen? used to run
+    # BEFORE the debug-level check, so a logger at INFO would suppress
+    # the log but still mark the site seen -- if the level later
+    # dropped to debug, the leak would never log. The gate now runs
+    # first; dedup is untouched when debug is off.
+    it 'does NOT pollute the dedup set when the logger level is above debug' do
+      logger.level = Logger::INFO
+      described_class.record_default_tenant_fallback(
+        fake_model_class,
+        [frame(path: '/app/models/widget.rb', lineno: 42)]
+      )
+      expect(described_class.seen_sites).to(be_empty)
+    end
+
+    it 'logs when the logger level later drops to debug' do
+      f = [frame(path: '/app/models/widget.rb', lineno: 42)]
+      logger.level = Logger::INFO
+      described_class.record_default_tenant_fallback(fake_model_class, f)
+      expect(log_io.string).to(be_empty)
+
+      logger.level = Logger::DEBUG
+      described_class.record_default_tenant_fallback(fake_model_class, f)
+      expect(log_io.string).to(match(/\[Apartment\] tenant=nil/))
+    end
+
     it 'logs at debug level with the model class and caller site' do
       described_class.record_default_tenant_fallback(
         fake_model_class,
@@ -128,23 +153,25 @@ RSpec.describe(Apartment::Diagnostics) do
     # names. If a leak comes from active_model_serializers or activeadmin,
     # the user wants to see that line, not have it hidden behind AR.
     it 'does NOT filter non-core Rails-ecosystem gems' do
+      ams_path = '/gems/active_model_serializers-0.10.14/lib/active_model/serializer.rb'
       frames = [
         frame(path: '/gems/activerecord-8.1.3/lib/active_record/relation.rb', lineno: 1437),
-        frame(path: '/gems/active_model_serializers-0.10.14/lib/active_model/serializer.rb', lineno: 89),
+        frame(path: ams_path, lineno: 89),
         frame(path: '/app/controllers/posts_controller.rb', lineno: 17),
       ]
       described_class.record_default_tenant_fallback(fake_model_class, frames)
       # First non-core, non-apartment frame is the serializer.
-      expect(log_io.string).to(match(%r{Caller=/gems/active_model_serializers-0\.10\.14/lib/active_model/serializer\.rb:89}))
+      expect(log_io.string).to(match(/Caller=#{Regexp.escape(ams_path)}:89/))
     end
 
     it 'falls back to the topmost frame when every frame is internal' do
+      apartment_path = '/gems/apartment-4.0.0/lib/apartment/patches/connection_handling.rb'
       frames = [
-        frame(path: '/gems/apartment-4.0.0/lib/apartment/patches/connection_handling.rb', lineno: 22),
+        frame(path: apartment_path, lineno: 22),
         frame(path: '/gems/activerecord-8.1.3/lib/active_record/relation.rb', lineno: 1437),
       ]
       described_class.record_default_tenant_fallback(fake_model_class, frames)
-      expect(log_io.string).to(match(%r{Caller=/gems/apartment-4\.0\.0/lib/apartment/patches/connection_handling\.rb:22}))
+      expect(log_io.string).to(match(/Caller=#{Regexp.escape(apartment_path)}:22/))
     end
 
     # Regression: panel round 2 caught that `-\d` only matched version
@@ -152,9 +179,10 @@ RSpec.describe(Apartment::Diagnostics) do
     # whose path is `/bundler/gems/<gem>-<sha>` and SHAs frequently start
     # with a letter (~5/8 of git refs). Hex class `[a-f0-9]` covers both.
     it 'filters this gem when installed via Bundler git (SHA-suffixed path)' do
+      git_root = '/Users/dev/.bundle/ruby/3.4.0/bundler/gems/apartment-a1b2c3d4e5f6'
       frames = [
-        frame(path: '/Users/dev/.bundle/ruby/3.4.0/bundler/gems/apartment-a1b2c3d4e5f6/lib/apartment/patches/connection_handling.rb', lineno: 22),
-        frame(path: '/Users/dev/.bundle/ruby/3.4.0/bundler/gems/apartment-a1b2c3d4e5f6/lib/apartment.rb', lineno: 100),
+        frame(path: "#{git_root}/lib/apartment/patches/connection_handling.rb", lineno: 22),
+        frame(path: "#{git_root}/lib/apartment.rb", lineno: 100),
         frame(path: '/app/controllers/posts_controller.rb', lineno: 17),
       ]
       described_class.record_default_tenant_fallback(fake_model_class, frames)

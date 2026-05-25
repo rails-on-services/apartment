@@ -285,6 +285,43 @@ RSpec.describe(Apartment::Migrator) do
     end
   end
 
+  # Mirrors the migrate_tenant lifecycle above. migrate_primary is the
+  # one Migrator method that accesses AR::Base.connection_pool with
+  # Current.tenant nil by design; the migrating flag is what tells the
+  # ConnectionHandling diagnostic to treat this as gem-internal and
+  # skip the log_default_tenant_fallback emission.
+  describe '#migrate_primary Current.migrating lifecycle' do
+    let(:mock_pool) { double('pool', migration_context: double(needs_migration?: false)) }
+
+    it 'sets Current.migrating = true before accessing connection_pool' do
+      migrating_value_during_access = nil
+      allow(ActiveRecord::Base).to(receive(:connection_pool)) do
+        migrating_value_during_access = Apartment::Current.migrating
+        mock_pool
+      end
+
+      described_class.new.send(:migrate_primary)
+
+      expect(migrating_value_during_access).to(be(true))
+    end
+
+    it 'clears Current.migrating after migrate_primary completes' do
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_return(mock_pool))
+
+      described_class.new.send(:migrate_primary)
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+
+    it 'clears Current.migrating even when migration_context raises' do
+      allow(ActiveRecord::Base).to(receive(:connection_pool).and_raise(StandardError, 'boom'))
+
+      described_class.new.send(:migrate_primary)
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+  end
+
   describe '.with_migration_role' do
     it 'yields without connected_to when migration_role is nil' do
       expect(ActiveRecord::Base).not_to(receive(:connected_to))

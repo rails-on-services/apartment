@@ -42,6 +42,13 @@ module Apartment
       def record_default_tenant_fallback(model_class, frames)
         return unless Apartment.config&.log_default_tenant_fallback
         return unless defined?(Rails) && Rails.logger
+        # Gate on debug level BEFORE first_seen? mutates the dedup set.
+        # Otherwise a logger at level > debug silently drops the log but
+        # still marks the site as seen -- if the level is later lowered
+        # to debug, the leak never logs because dedup already remembers
+        # it. Affects rake tasks, console sessions, and anywhere the
+        # default Rails.logger is configured above debug.
+        return unless Rails.logger.respond_to?(:debug?) && Rails.logger.debug?
 
         site = first_user_site(frames)
         return unless first_seen?(site)
@@ -81,7 +88,7 @@ module Apartment
       # `apartment-foo` -- which is fine for our heuristic; no such gem
       # exists and an ecosystem gem with this name should arguably be
       # filtered too.
-      INSTALLED_GEM_FRAME_PATTERN = %r{/gems/apartment-[a-f0-9]}.freeze
+      INSTALLED_GEM_FRAME_PATTERN = %r{/gems/apartment-[a-f0-9]}
       private_constant :INSTALLED_GEM_FRAME_PATTERN
 
       # Concrete Rails core gem directory name prefixes. Explicit list
@@ -97,7 +104,7 @@ module Apartment
       ].freeze
       private_constant :RAILS_CORE_GEMS
 
-      RAILS_CORE_FRAME_PATTERN = %r{/gems/(?:#{RAILS_CORE_GEMS.join('|')})-[a-f0-9]}.freeze
+      RAILS_CORE_FRAME_PATTERN = %r{/gems/(?:#{RAILS_CORE_GEMS.join('|')})-[a-f0-9]}
       private_constant :RAILS_CORE_FRAME_PATTERN
 
       # First frame outside this gem (source or installed) and outside
