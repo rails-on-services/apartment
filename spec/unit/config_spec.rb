@@ -600,6 +600,44 @@ RSpec.describe(Apartment::Config) do
         .to(raise_error(Apartment::ConfigurationError, /tenant_not_found_handler/))
     end
   end
+
+  describe '#strict_tenant_lookup' do
+    let(:config) do
+      described_class.new.tap do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+    end
+
+    it 'defaults to false (opt-in by user)' do
+      expect(described_class.new.strict_tenant_lookup).to(be(false))
+    end
+
+    it 'accepts true' do
+      config.strict_tenant_lookup = true
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts false' do
+      config.strict_tenant_lookup = false
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    # Codex's review of the original PR caught this: Ruby truthiness would
+    # silently turn strict ON for "false" (String), 0, "no", etc. Match the
+    # validate! pattern used by every other boolean flag in this file.
+    it 'rejects non-boolean truthy values' do
+      config.strict_tenant_lookup = 'true'
+      expect { config.validate! }
+        .to(raise_error(Apartment::ConfigurationError, /strict_tenant_lookup/))
+    end
+
+    it 'rejects nil' do
+      config.strict_tenant_lookup = nil
+      expect { config.validate! }
+        .to(raise_error(Apartment::ConfigurationError, /strict_tenant_lookup/))
+    end
+  end
 end
 
 RSpec.describe('Apartment.configure') do

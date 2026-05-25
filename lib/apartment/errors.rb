@@ -64,6 +64,39 @@ module Apartment
     end
   end
 
+  # Raised by the {Apartment::Patches::ConnectionHandling} prepend when
+  # {Apartment::Current.tenant} is nil AND {Apartment.config.strict_tenant_lookup}
+  # is enabled. Without strict mode, that call would silently return the
+  # default tenant's pool — fine for explicit no-tenant code, dangerous when
+  # it happens because tenant context was lost across a thread/fiber boundary
+  # (e.g., a lazy association accessed outside the original Tenant.switch
+  # block, or a load_async relation consumed after switch exited). Strict
+  # mode turns the silent fallback into a loud failure so the leak surfaces
+  # in dev/test.
+  #
+  # Explicit default-tenant access is still allowed: call
+  # +Apartment::Tenant.switch(Apartment.config.default_tenant) { ... }+.
+  #
+  # See docs/designs/apartment-v4.md "Async query correctness" for the
+  # failure mode this is designed to catch.
+  class ImplicitDefaultTenant < ApartmentError
+    def initialize(message: nil)
+      super(message || default_message)
+    end
+
+    private
+
+    def default_message
+      'Apartment::Current.tenant is nil and Apartment.config.strict_tenant_lookup is enabled. ' \
+        'Wrap the call in Apartment::Tenant.switch(tenant) { ... } (or call ' \
+        'Apartment::Tenant.switch!(tenant) at the top of the unit of work). For explicit ' \
+        'default-tenant access use Apartment::Tenant.switch(Apartment.config.default_tenant). ' \
+        'Common culprit: lazy associations or load_async results accessed outside the ' \
+        'original switch block. Note: Apartment::Tenant.current still falls back to ' \
+        'default_tenant when Current.tenant is nil; only connection_pool raises.'
+    end
+  end
+
   # Raised in development when a tenant has pending migrations.
   class PendingMigrationError < ApartmentError
     attr_reader :tenant

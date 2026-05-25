@@ -455,6 +455,68 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         expect(registered).to(be_nil)
       end
     end
+
+    context 'with strict_tenant_lookup enabled' do
+      # Reconfigure with the flag on. Config is frozen, so re-call configure;
+      # the after-hook in spec_helper.rb clears it between examples.
+      before do
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme widgets] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.strict_tenant_lookup = true
+        end
+        Apartment.adapter = mock_adapter
+      end
+
+      it 'raises ImplicitDefaultTenant when tenant is nil instead of falling back to the default pool' do
+        Apartment::Current.tenant = nil
+        expect { ActiveRecord::Base.connection_pool }.to(raise_error(Apartment::ImplicitDefaultTenant))
+      end
+
+      it 'includes actionable guidance in the error message' do
+        Apartment::Current.tenant = nil
+        expect { ActiveRecord::Base.connection_pool }.to(
+          raise_error(Apartment::ImplicitDefaultTenant, /Apartment::Tenant\.switch/)
+        )
+      end
+
+      it 'does not interfere with explicit default-tenant access' do
+        Apartment::Current.tenant = 'public'
+        expect { ActiveRecord::Base.connection_pool }.not_to(raise_error)
+      end
+
+      it 'does not interfere with an active tenant' do
+        Apartment::Current.tenant = 'acme'
+        expect { ActiveRecord::Base.connection_pool }.not_to(raise_error)
+      end
+
+      it 'does not raise for pinned models accessed without a switch (they legitimately use the default pool)' do
+        pinned_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('PinnedNoSwitchTest', pinned_class)
+        pinned_class.pin_tenant
+
+        Apartment::Current.tenant = nil
+        expect { pinned_class.connection_pool }.not_to(raise_error)
+      end
+
+      # Migrator#migrate_primary calls AR::Base.connection_pool with nil tenant
+      # by design. Without this bypass, strict-on would break apartment:migrate
+      # in user dev/test environments — exactly the regression that killed the
+      # auto-default attempt. The Migrator sets Current.migrating around its
+      # default-pool access; the prepend honors it the same way
+      # check_pending_migrations? does.
+      it 'does not raise during a Migrator-run (Apartment::Current.migrating is true)' do
+        Apartment::Current.tenant = nil
+        Apartment::Current.migrating = true
+        expect { ActiveRecord::Base.connection_pool }.not_to(raise_error)
+      ensure
+        Apartment::Current.migrating = false
+      end
+    end
   end
 
   describe 'pinned_model? registry check' do

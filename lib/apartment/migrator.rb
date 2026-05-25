@@ -93,9 +93,17 @@ module Apartment
 
     # Migrate the primary (default) tenant using AR::Base's existing pool.
     # No tenant switch needed — the default connection is already correct.
+    #
+    # Sets Apartment::Current.migrating around the AR::Base.connection_pool
+    # access so that strict_tenant_lookup (when enabled by the user) does
+    # not raise here. The migrator intentionally accesses the default pool
+    # with Current.tenant nil; the migrating flag is the gem's signal that
+    # this is a legitimate internal path. Mirrors the pattern in
+    # migrate_tenant below.
     def migrate_primary # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       tenant_name = Apartment.config.default_tenant
       start = monotonic_now
+      Apartment::Current.migrating = true
 
       context = ActiveRecord::Base.connection_pool.migration_context
 
@@ -120,6 +128,8 @@ module Apartment
         tenant: tenant_name, status: :failed,
         duration: monotonic_now - start, error: e, versions_run: []
       )
+    ensure
+      Apartment::Current.migrating = false
     end
 
     # Migrate a single tenant by switching via Apartment::Tenant.switch.

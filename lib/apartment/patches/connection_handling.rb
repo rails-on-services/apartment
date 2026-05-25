@@ -13,7 +13,35 @@ module Apartment
         tenant = Apartment::Current.tenant
         cfg = Apartment.config
 
-        return super if tenant.nil? || cfg.nil?
+        return super if cfg.nil?
+
+        # Strict mode: fail loud on the silent default-pool fallback. Without
+        # this, a lazy association accessed outside its switch block (or a
+        # load_async relation consumed after switch exited) would quietly run
+        # against the default tenant's data. Explicit default-tenant access
+        # via switch(default_tenant) bypasses this branch because tenant is
+        # then non-nil.
+        #
+        # Bypasses (in order):
+        #   * early-boot calls before pool_manager is wired (Apartment not
+        #     yet fully configured)
+        #   * pinned models (legitimately default-pool by design)
+        #   * migration paths (Migrator#migrate_primary, abstract_adapter,
+        #     CLI rollback) — these intentionally hit the default pool with
+        #     nil tenant. Apartment::Current.migrating is set by Migrator
+        #     and check_pending_migrations? already honors the same flag.
+        #
+        # See docs/designs/apartment-v4.md "Async query correctness".
+        if tenant.nil?
+          pinned = self != ActiveRecord::Base && Apartment.pinned_model?(self)
+          if cfg.strict_tenant_lookup && Apartment.pool_manager &&
+             !pinned && !Apartment::Current.migrating
+            raise(Apartment::ImplicitDefaultTenant)
+          end
+
+          return super
+        end
+
         return super if tenant.to_s == cfg.default_tenant.to_s
         return super unless Apartment.pool_manager
 
@@ -80,7 +108,7 @@ module Apartment
 
       def check_pending_migrations?(pool)
         return false unless Apartment.config.check_pending_migrations
-        return false unless defined?(Rails) && Rails.env.local? # rubocop:disable Rails/UnknownEnv
+        return false unless defined?(Rails) && Rails.env.local?
         return false if Apartment::Current.migrating
 
         pool.migration_context.needs_migration?

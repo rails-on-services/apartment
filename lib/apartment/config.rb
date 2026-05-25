@@ -25,7 +25,8 @@ module Apartment
                   :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
-                  :force_separate_pinned_pool, :test_fixture_cleanup
+                  :force_separate_pinned_pool, :test_fixture_cleanup,
+                  :strict_tenant_lookup
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
@@ -57,6 +58,40 @@ module Apartment
       @check_pending_migrations = true
       @force_separate_pinned_pool = false
       @test_fixture_cleanup = true
+      # When true, ConnectionHandling#connection_pool raises
+      # Apartment::ImplicitDefaultTenant instead of silently falling through
+      # to the default-tenant pool when Apartment::Current.tenant is nil --
+      # catches tenant leaks across thread/fiber boundaries (e.g., load_async
+      # results accessed outside the original switch block). Pinned models
+      # legitimately use the default pool by design and are bypassed.
+      #
+      # Default false. Recommended opt-in:
+      #
+      #   Apartment.configure do |config|
+      #     config.strict_tenant_lookup = Rails.env.local?
+      #   end
+      #
+      # Caveats adopters should know:
+      #
+      #   * Raises on ActiveRecord::Base.connection_pool itself when called
+      #     with no tenant, not only on tenant-aware model classes. Wrap
+      #     interactive sessions (rails console, one-off scripts) in
+      #     Apartment::Tenant.switch(default_tenant) { ... }.
+      #   * Only the *nil tenant* case is caught. Wrong-tenant pinned reads
+      #     on shared-pool adapters (PG schema, MySQL) still resolve through
+      #     the tenant pool silently -- this flag does not detect them.
+      #   * API mismatch: Apartment::Tenant.current still falls back to
+      #     default_tenant when Current.tenant is nil; only connection_pool
+      #     raises. A reader of Tenant.current sees the default name while a
+      #     concurrent write raises -- by design, but surprising at first.
+      #
+      # An auto-default tied to Rails.env was tried and reverted: it raised
+      # inside Migrator setup, edge_cases schema operations, and other
+      # legitimate gem-internal default-pool access, breaking
+      # `apartment:migrate` and similar in dev/test. Until those paths are
+      # explicitly wrapped in switch(default_tenant), strict mode stays
+      # opt-in per environment. See PR #416 for details.
+      @strict_tenant_lookup = false
     end
 
     def excluded_models=(list)
@@ -188,6 +223,11 @@ module Apartment
       unless [true, false].include?(@test_fixture_cleanup)
         raise(ConfigurationError,
               "test_fixture_cleanup must be true or false, got: #{@test_fixture_cleanup.inspect}")
+      end
+
+      unless [true, false].include?(@strict_tenant_lookup)
+        raise(ConfigurationError,
+              "strict_tenant_lookup must be true or false, got: #{@strict_tenant_lookup.inspect}")
       end
 
       unless @tenant_validator.nil? || @tenant_validator == false || @tenant_validator.respond_to?(:call)
