@@ -21,6 +21,25 @@ describe Apartment::Tasks::SchemaDumper do
       end
     end
 
+    context 'when ActiveRecord.dump_schema_after_migration is false (real attr, no stub)' do
+      # Mutates the real attribute instead of stubbing it. Stubbing the receiver
+      # makes RSpec add the method back, which is exactly what hid the original
+      # bug on Rails 7.1+ where ActiveRecord::Base.dump_schema_after_migration
+      # no longer exists.
+      around do |example|
+        original = ActiveRecord.dump_schema_after_migration
+        ActiveRecord.dump_schema_after_migration = false
+        example.run
+      ensure
+        ActiveRecord.dump_schema_after_migration = original
+      end
+
+      it 'does not dump schema' do
+        expect(described_class).not_to(receive(:find_schema_dump_config))
+        described_class.dump_if_enabled
+      end
+    end
+
     context 'when Rails dump_schema_after_migration is true' do
       let(:db_config) { double('DatabaseConfig', configuration_hash: { schema_dump: true }) }
 

@@ -96,8 +96,9 @@ module Apartment
           Rake::Task.task_defined?(task_name)
         end
 
-        # Checks Rails' global schema dump setting. Older Rails versions
-        # may not have this method, so we default to enabled.
+        # Reads Rails' global schema dump setting. ActiveRecord exposes this
+        # as a singleton accessor since 7.0; the respond_to? guard is a
+        # defensive fallback that defaults to enabled if the API is missing.
         def rails_dump_schema_enabled?
           return true unless ActiveRecord.respond_to?(:dump_schema_after_migration)
 
