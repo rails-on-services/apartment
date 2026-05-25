@@ -515,6 +515,27 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         Apartment::Current.tenant = nil
         ActiveRecord::Base.connection_pool
       end
+
+      it 'does not record during a Migrator run (Apartment::Current.migrating is true)' do
+        # Migrator#migrate_primary intentionally accesses AR::Base.connection_pool
+        # with nil tenant. Without this bypass, every migrated tenant would
+        # emit a log line pointing at the migrator -- false-alarm noise.
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.log_default_tenant_fallback = true
+        end
+        Apartment.adapter = mock_adapter
+
+        Apartment::Current.tenant = nil
+        Apartment::Current.migrating = true
+        expect(Apartment::Diagnostics).not_to(receive(:record_default_tenant_fallback))
+        ActiveRecord::Base.connection_pool
+      ensure
+        Apartment::Current.migrating = false
+      end
     end
   end
 
