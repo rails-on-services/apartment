@@ -13,7 +13,21 @@ module Apartment
         tenant = Apartment::Current.tenant
         cfg = Apartment.config
 
-        return super if tenant.nil? || cfg.nil?
+        return super if cfg.nil?
+
+        if tenant.nil?
+          # Opt-in diagnostic for the silent default-pool fallback. Skipped
+          # for pinned models (they legitimately use the default pool by
+          # design) and when pool_manager isn't wired (we're in early boot,
+          # not in user request/job code). The flag check sits first so
+          # the common (flag-off) path avoids the caller_locations capture.
+          if cfg.log_default_tenant_fallback && Apartment.pool_manager &&
+             !(self != ActiveRecord::Base && Apartment.pinned_model?(self))
+            Apartment::Diagnostics.record_default_tenant_fallback(self, caller_locations(1, 12))
+          end
+          return super
+        end
+
         return super if tenant.to_s == cfg.default_tenant.to_s
         return super unless Apartment.pool_manager
 
@@ -80,7 +94,7 @@ module Apartment
 
       def check_pending_migrations?(pool)
         return false unless Apartment.config.check_pending_migrations
-        return false unless defined?(Rails) && Rails.env.local? # rubocop:disable Rails/UnknownEnv
+        return false unless defined?(Rails) && Rails.env.local?
         return false if Apartment::Current.migrating
 
         pool.migration_context.needs_migration?

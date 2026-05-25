@@ -600,6 +600,41 @@ RSpec.describe(Apartment::Config) do
         .to(raise_error(Apartment::ConfigurationError, /tenant_not_found_handler/))
     end
   end
+
+  describe '#log_default_tenant_fallback' do
+    let(:config) do
+      described_class.new.tap do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+    end
+
+    it 'defaults to false (opt-in by user)' do
+      expect(described_class.new.log_default_tenant_fallback).to(be(false))
+    end
+
+    it 'accepts true' do
+      config.log_default_tenant_fallback = true
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'accepts false' do
+      config.log_default_tenant_fallback = false
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'rejects non-boolean truthy values (matches the pattern other flags use)' do
+      config.log_default_tenant_fallback = 'true'
+      expect { config.validate! }
+        .to(raise_error(Apartment::ConfigurationError, /log_default_tenant_fallback/))
+    end
+
+    it 'rejects nil' do
+      config.log_default_tenant_fallback = nil
+      expect { config.validate! }
+        .to(raise_error(Apartment::ConfigurationError, /log_default_tenant_fallback/))
+    end
+  end
 end
 
 RSpec.describe('Apartment.configure') do

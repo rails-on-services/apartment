@@ -455,6 +455,67 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         expect(registered).to(be_nil)
       end
     end
+
+    context 'diagnostic for nil-tenant default-pool fallback' do
+      # Test the *integration* point: that the prepend invokes
+      # Apartment::Diagnostics with the right context. The Diagnostics
+      # module's own behavior (dedup, log level, formatting) is covered
+      # by spec/unit/diagnostics_spec.rb.
+      before { Apartment::Diagnostics.reset! }
+      after  { Apartment::Diagnostics.reset! }
+
+      it 'records when log_default_tenant_fallback is true and tenant is nil' do
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.log_default_tenant_fallback = true
+        end
+        Apartment.adapter = mock_adapter
+
+        expect(Apartment::Diagnostics).to(
+          receive(:record_default_tenant_fallback).with(ActiveRecord::Base, kind_of(Array))
+        )
+        Apartment::Current.tenant = nil
+        ActiveRecord::Base.connection_pool
+      end
+
+      it 'does not record when the flag is off (default config)' do
+        # Outer before-block already configured without the flag (default false).
+        expect(Apartment::Diagnostics).not_to(receive(:record_default_tenant_fallback))
+        Apartment::Current.tenant = nil
+        ActiveRecord::Base.connection_pool
+      end
+
+      it 'does not record for pinned models (legitimately default-pool by design)' do
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.log_default_tenant_fallback = true
+        end
+        Apartment.adapter = mock_adapter
+
+        pinned_class = Class.new(ActiveRecord::Base) { include Apartment::Model }
+        stub_const('PinnedDiagModel', pinned_class)
+        pinned_class.pin_tenant
+
+        expect(Apartment::Diagnostics).not_to(receive(:record_default_tenant_fallback))
+        Apartment::Current.tenant = nil
+        pinned_class.connection_pool
+      end
+
+      it 'does not record when Apartment is not yet configured (early boot)' do
+        # Clear the outer before's configure; prepend returns super on cfg.nil?
+        # without ever reaching the diagnostic.
+        Apartment.clear_config
+        expect(Apartment::Diagnostics).not_to(receive(:record_default_tenant_fallback))
+        Apartment::Current.tenant = nil
+        ActiveRecord::Base.connection_pool
+      end
+    end
   end
 
   describe 'pinned_model? registry check' do

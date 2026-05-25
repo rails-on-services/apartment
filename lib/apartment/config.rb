@@ -25,7 +25,8 @@ module Apartment
                   :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
-                  :force_separate_pinned_pool, :test_fixture_cleanup
+                  :force_separate_pinned_pool, :test_fixture_cleanup,
+                  :log_default_tenant_fallback
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
@@ -57,6 +58,24 @@ module Apartment
       @check_pending_migrations = true
       @force_separate_pinned_pool = false
       @test_fixture_cleanup = true
+      # When true, every ConnectionHandling#connection_pool fallthrough to
+      # the default-tenant pool (Apartment::Current.tenant nil, after pinned
+      # and early-boot bypasses) emits a single Rails.logger.debug line
+      # tagged "[Apartment] tenant=nil" with the caller's file:line and a
+      # short stack chain. Per-process deduped by call site so a test suite
+      # logs each leak once.
+      #
+      # Default false. Opt-in pattern:
+      #
+      #   Apartment.configure do |config|
+      #     config.log_default_tenant_fallback = Rails.env.local?
+      #   end
+      #
+      # Then grep your dev/test log for "[Apartment] tenant=nil" after a
+      # session to find every silent default-pool access -- the same
+      # failure surface documented in docs/designs/apartment-v4.md
+      # "Async query correctness". Diagnostic only, never raises.
+      @log_default_tenant_fallback = false
     end
 
     def excluded_models=(list)
@@ -188,6 +207,12 @@ module Apartment
       unless [true, false].include?(@test_fixture_cleanup)
         raise(ConfigurationError,
               "test_fixture_cleanup must be true or false, got: #{@test_fixture_cleanup.inspect}")
+      end
+
+      unless [true, false].include?(@log_default_tenant_fallback)
+        raise(ConfigurationError,
+              'log_default_tenant_fallback must be true or false, got: ' \
+              "#{@log_default_tenant_fallback.inspect}")
       end
 
       unless @tenant_validator.nil? || @tenant_validator == false || @tenant_validator.respond_to?(:call)
