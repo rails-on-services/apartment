@@ -132,7 +132,7 @@ Apartment::Tenant.switch('acme') do
 end
 ```
 
-An optional `Apartment.config.strict_tenant_lookup` flag will turn the silent default-pool fallback into a raised `Apartment::ImplicitDefaultTenant` so this contract is enforceable in development/test. See its config docs for usage.
+There is no built-in runtime detection for violations of this contract. The gem deliberately does not raise or warn on nil-tenant default-pool fallthrough -- the same code path serves both legitimate no-tenant access (gem internals, default-tenant ops, `connects_to`-managed databases) and the leak case, so a centralized check produces either false positives or maintenance debt. See `spec/integration/v4/async_query_correctness_spec.rb` for an executable demonstration of the failure mode and the fix; if you need detection in your own app, a custom prepend over `ActiveRecord::Base.connection_pool` (~15 lines) gated on `Apartment::Current.tenant.nil?` is sufficient.
 
 ### Core: Immutable Connection Pool Per Tenant
 
