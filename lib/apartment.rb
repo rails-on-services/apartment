@@ -36,6 +36,11 @@ require_relative 'apartment/errors'
 require_relative 'apartment/tenant_validator'
 
 module Apartment # rubocop:disable Metrics/ModuleLength
+  # Rack env key used to carry the resolved tenant across execution boundaries
+  # (notably the OS thread spawned by ActionController::Live#process). The
+  # elevator writes this; Apartment::LiveTenancy reads it.
+  ENV_TENANT_KEY = 'apartment.tenant'
+
   class << self # rubocop:disable Metrics/ClassLength
     attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
