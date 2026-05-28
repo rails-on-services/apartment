@@ -121,7 +121,7 @@ RSpec.describe(
       ActiveSupport::IsolatedExecutionState.isolation_level = original
     end
 
-    include_examples 'propagates tenant into the Live stream'
+    it_behaves_like 'propagates tenant into the Live stream'
   end
 
   context 'under :fiber isolation' do
@@ -133,7 +133,7 @@ RSpec.describe(
       ActiveSupport::IsolatedExecutionState.isolation_level = original
     end
 
-    include_examples 'propagates tenant into the Live stream'
+    it_behaves_like 'propagates tenant into the Live stream'
 
     it '(negative control) reproduces the leak when the patch is bypassed' do
       # Temporarily replace the patch's #process with a pass-through. Rails'
@@ -145,8 +145,8 @@ RSpec.describe(
       patch.send(:define_method, :process) { |name| super(name) }
 
       begin
-        header 'Host', 'acme.example.com'
-        get '/stream'
+        header('Host', 'acme.example.com')
+        get('/stream')
         data = stream_payload(last_response)
 
         # Bypassing the patch reproduces the original bug: queries inside the
