@@ -163,7 +163,11 @@ The Railtie emits a boot-time warning when `isolation_level` is `:thread`.
 
 Two caveats apply at `:fiber`:
 
-- `ActionController::Live` spawns a child OS thread and copies execution state via `IsolatedExecutionState.share_with`. The copy reads the parent's `Thread#active_support_execution_state`, which is empty under `:fiber` (state lives on `Fiber.current`). Live actions that depend on tenant inheritance must wrap themselves in an explicit `Apartment::Tenant.switch`.
+- **`ActionController::Live`**: works out of the box under both `:thread` and `:fiber` isolation. Apartment v4 prepends `ActionController::Live#process` with `Apartment::Patches::LiveTenantPropagation`, which mirrors `Fiber.current.active_support_execution_state` onto `Thread.current`'s accessor for the duration of the request. Rails' own `share_with` then finds the right data and propagates *all* `CurrentAttributes` (apartment's tenant plus any app-defined ones) into the spawned streaming thread. No user code changes required for the standard case. This is a backport of [rails/rails#56902](https://github.com/rails/rails/pull/56902) and will become a redundant no-op once that change reaches a stable Rails release. Caveats:
+  - **User-spawned threads or fibers inside a Live action** (`Thread.new { ... }`, `Async {}`, raw `Fiber.new`) are not covered and still need explicit `Apartment::Tenant.switch` wrapping — same contract `:fiber` isolation imposes everywhere else.
+  - **`CurrentAttributes` mutations inside the streaming thread leak back to the parent fiber.** Rails' `share_with` performs a shallow `.dup` of the execution-state hash, so both the parent request fiber and the spawned streaming thread end up holding the same `Record` object by reference. If your Live action body mutates a `CurrentAttribute` (e.g., `Current.user = other_user`), that mutation is visible on the parent fiber after `process` returns. This is Rails' behavior, not introduced by the patch, but it's worth knowing about: prefer reading from `CurrentAttributes` inside the stream, not writing to them.
+
+  See [`docs/designs/rails-boundary-tenancy.md`](designs/rails-boundary-tenancy.md).
 - Child fibers spawned inside a request (`Fiber.new { ... }.resume`) get their own attribute store and do not inherit the parent fiber's `CurrentAttributes` — see [rails/rails#48279](https://github.com/rails/rails/issues/48279) (closed as "not planned"). Use `Apartment::Tenant.switch` inside the child fiber, not before it.
 
 ### Pinned Model Connections

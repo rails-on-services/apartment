@@ -2,5 +2,6 @@
 
 Dummy::Application.routes.draw do
   get '/tenant_info' => 'tenants#show'
+  get '/stream' => 'streaming#show'
   root to: 'tenants#show'
 end

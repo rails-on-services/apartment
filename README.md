@@ -311,6 +311,28 @@ Workaround: add `include Apartment::Model` and `pin_tenant` on the abstract clas
 
 The common pattern of `ApplicationRecord` using `connects_to` with multiple roles (writing/reading) on the same database works correctly; Apartment keys pools by `tenant:role` and respects Rails' role routing.
 
+## ActionController::Live Streaming
+
+Apartment v4 handles tenant propagation across `ActionController::Live`'s spawned streaming thread automatically, under both `:thread` and `:fiber` isolation. Including `ActionController::Live` in your controller is sufficient — no additional configuration:
+
+```ruby
+class StreamingController < ApplicationController
+  include ActionController::Live
+
+  def show
+    response.headers['Content-Type'] = 'text/event-stream'
+    # Apartment::Tenant.current returns the request's tenant here,
+    # even though we're now executing on the OS thread Rails spawned
+    # for streaming.
+    response.stream.write("data: #{{ tenant: Apartment::Tenant.current }.to_json}\n\n")
+  ensure
+    response.stream.close
+  end
+end
+```
+
+How it works: Apartment prepends `ActionController::Live#process` with a patch that backports [rails/rails#56902](https://github.com/rails/rails/pull/56902) to released Rails versions — it points `Thread.current.active_support_execution_state` at the request fiber's hash for the duration of the request, so Rails' own `share_with` carries all `CurrentAttributes` (apartment's tenant plus any app-defined ones) into the spawned streaming thread. User-spawned threads or fibers *inside* a Live action (`Thread.new`, `Async { }`, raw `Fiber.new`) escape the patch and need explicit `Apartment::Tenant.switch` wrapping. See the [upgrading guide](docs/upgrading-to-v4.md) and [`docs/designs/rails-boundary-tenancy.md`](docs/designs/rails-boundary-tenancy.md).
+
 ## Background Workers
 
 Use block-scoped switching in jobs:
