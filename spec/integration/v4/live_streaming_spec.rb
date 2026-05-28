@@ -120,4 +120,59 @@ RSpec.describe(
 
     include_examples 'propagates tenant into the Live stream'
   end
+
+  context 'under :fiber isolation' do
+    around do |example|
+      original = ActiveSupport::IsolatedExecutionState.isolation_level
+      ActiveSupport::IsolatedExecutionState.isolation_level = :fiber
+      example.run
+    ensure
+      ActiveSupport::IsolatedExecutionState.isolation_level = original
+    end
+
+    include_examples 'propagates tenant into the Live stream'
+
+    it '(negative control) leaks tenant when the elevator does not stash the env key' do
+      # Simulate a custom elevator that omits the env stash — alias-swap
+      # Generic#call to a variant that does not set Apartment::ENV_TENANT_KEY.
+      # The Subdomain elevator inherits Generic#call, so this hits both.
+      Apartment::Elevators::Generic.class_eval do
+        alias_method :_original_call_for_neg_ctrl, :call
+        define_method(:call) do |env|
+          request = Rack::Request.new(env)
+          begin
+            database = @processor.call(request)
+          rescue Apartment::TenantNotFound => e
+            return handle_tenant_not_found(e.tenant || request.host, request)
+          end
+          return @app.call(env) if database.nil?
+          return handle_tenant_not_found(database, request) unless send(:tenant_valid?, database)
+
+          # NOTE: deliberately omitting `env[Apartment::ENV_TENANT_KEY] = database`
+          # — this is what the test reproduces.
+          Apartment::Tenant.switch(database) { @app.call(env) }
+        end
+      end
+
+      begin
+        header 'Host', 'acme.example.com'
+        get '/stream'
+        data = stream_payload(last_response)
+
+        # Without the env stash, the around_action falls through to a plain
+        # yield and the spawned thread sees no captured tenant — on all
+        # currently-released Rails versions (7.2 through 8.1.3), share_with
+        # reads from Thread.current, which is empty under :fiber. The
+        # streamed tenant is NOT 'acme' — the original leak reproduces.
+        # Rails main has share_with(context) which reads Fiber.current, but
+        # that has not landed in a stable release yet.
+        expect(data['tenant']).not_to(eq('acme'))
+      ensure
+        Apartment::Elevators::Generic.class_eval do
+          alias_method :call, :_original_call_for_neg_ctrl
+          remove_method :_original_call_for_neg_ctrl
+        end
+      end
+    end
+  end
 end
