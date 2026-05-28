@@ -150,8 +150,19 @@ RSpec.describe(
         data = stream_payload(last_response)
 
         # Bypassing the patch reproduces the original bug: queries inside the
-        # streaming thread see the default tenant, not 'acme'.
+        # streaming thread route to the default-tenant pool. The streamed
+        # tenant identifier is not 'acme', AND user_count comes from the
+        # default tenant's `users` table (created empty in the `before` block),
+        # not from acme's three rows. Pinning user_count == 0 ties the
+        # assertion to the actual connection-pool routing, not just the
+        # symbolic Current.tenant value.
         expect(data['tenant']).not_to(eq('acme'))
+        expect(data['user_count']).to(eq(0))
+        # Canary: confirm the patch is still in the ancestor chain. If the
+        # restore in `ensure` ever fails, subsequent integration examples
+        # would silently exercise the unpatched path; this assertion fires
+        # immediately if the module disappeared from the chain entirely.
+        expect(ActionController::Live.include?(Apartment::Patches::LiveTenantPropagation)).to(be(true))
       ensure
         patch.send(:define_method, :process, original_process)
       end

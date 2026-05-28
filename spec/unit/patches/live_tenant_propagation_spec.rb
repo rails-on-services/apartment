@@ -48,14 +48,14 @@ RSpec.describe(Apartment::Patches::LiveTenantPropagation) do
       Thread.current.active_support_execution_state = nil
     end
 
-    it 'mirrors Fiber.current.active_support_execution_state onto Thread.current during super' do
-      controller_class.new.process(:show)
-    end
-
-    it "exposes the fiber's hash to Thread.current during the super call" do
+    it 'mirrors Fiber.current.active_support_execution_state onto Thread.current during super (identity, not eq)' do
       instance = controller_class.new
+      fiber_hash = Fiber.current.active_support_execution_state
       instance.process(:show)
-      expect(instance.captured_thread_state).to(eq({ tenant: 'acme' }))
+      # Identity check: the captured Thread state must be the SAME object the
+      # Fiber held, not just equal. That is what `share_with`'s shallow dup
+      # would read on the real Live spawn path.
+      expect(instance.captured_thread_state).to(equal(fiber_hash))
     end
 
     it "restores Thread.current's prior state after super" do
