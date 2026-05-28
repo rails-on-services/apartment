@@ -85,13 +85,13 @@ module Apartment
 
       # Parallel execution wrapper. Disables advisory locks for the duration,
       # then delegates to platform-appropriate parallelism strategy.
-      def each_tenant_parallel(&)
+      def each_tenant_parallel(&block)
         with_advisory_locks_disabled do
           case resolve_parallel_strategy
           when :processes
-            each_tenant_in_processes(&)
+            each_tenant_in_processes(&block)
           else
-            each_tenant_in_threads(&)
+            each_tenant_in_threads(&block)
           end
         end
       end
