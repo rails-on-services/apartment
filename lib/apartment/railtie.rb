@@ -68,6 +68,30 @@ module Apartment
       responses['Apartment::TenantNotFound'] = :not_found unless responses.key?('Apartment::TenantNotFound')
     end
 
+    # Auto-include Apartment::LiveTenancy into ActionController::Live so every
+    # controller that includes Live picks up the around_action that re-establishes
+    # the request's tenant inside the OS thread Live spawns for streaming.
+    #
+    # The :action_controller_live load hook only exists on Rails main (will ship
+    # in 8.2+); we force-require Live and include unconditionally so the fix
+    # lands on Rails 7.2 / 8.0 / 8.1 — exactly the versions where Rails' own
+    # share_with propagation is buggy under :fiber. On Rails 8.1.2+,
+    # share_with(context) already carries the tenant; the around_action runs as
+    # a redundant no-op same-tenant switch.
+    #
+    # See docs/designs/rails-boundary-tenancy.md.
+    initializer 'apartment.live_tenancy' do
+      next unless defined?(ActionController::Base) # non-ActionPack apps skip
+
+      require 'action_controller/metal/live'
+      # Concern-into-Concern composition: this queues Apartment::LiveTenancy's
+      # `included do around_action ... end` block to fire on every class that
+      # subsequently includes ActionController::Live. Module#include is
+      # idempotent at the Ruby level, so re-running this initializer (e.g., on
+      # test reload) does not double-queue the around_action.
+      ActionController::Live.include(Apartment::LiveTenancy)
+    end
+
     # In test environments, clean up apartment's tenant pools before Rails'
     # fixture setup iterates shards. See docs/designs/v4-test-fixtures-compatibility.md.
     if Rails.env.test?

@@ -189,6 +189,44 @@ if railtie_loaded
       end
     end
 
+    describe 'apartment.live_tenancy initializer' do
+      before do
+        require 'action_controller'
+        require 'action_controller/metal/live'
+      end
+
+      it 'is registered on the railtie by name' do
+        names = Apartment::Railtie.initializers.map(&:name)
+        expect(names).to(include('apartment.live_tenancy'))
+      end
+
+      it 'queues the around_action on classes that subsequently include ActionController::Live' do
+        # Concern-into-Concern composition: including Apartment::LiveTenancy
+        # into ActionController::Live (itself a Concern) queues the
+        # around_action to fire on every class that subsequently includes Live.
+        # Module#include? against a Module returns false here — the assertion
+        # has to be on a fresh class, not on Live itself.
+        initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.live_tenancy' }
+        initializer.run
+
+        fresh_controller = Class.new(ActionController::Base) { include ActionController::Live }
+        callbacks = fresh_controller._process_action_callbacks.map(&:filter)
+
+        expect(callbacks).to(include(:_apartment_with_live_tenant))
+      end
+
+      it 'is idempotent — re-running does not register the around_action twice' do
+        initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.live_tenancy' }
+        initializer.run
+        initializer.run
+
+        fresh_controller = Class.new(ActionController::Base) { include ActionController::Live }
+        callbacks = fresh_controller._process_action_callbacks.map(&:filter)
+
+        expect(callbacks.count(:_apartment_with_live_tenant)).to(eq(1))
+      end
+    end
+
     describe 'TenantNotFound rescue_responses mapping' do
       # Unit specs do not boot a Rails::Application, so railtie initializers
       # never run on their own — invoke the initializer block directly.
