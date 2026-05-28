@@ -163,7 +163,12 @@ The Railtie emits a boot-time warning when `isolation_level` is `:thread`.
 
 Two caveats apply at `:fiber`:
 
-- `ActionController::Live` spawns a child OS thread and copies execution state via `IsolatedExecutionState.share_with`. The copy reads the parent's `Thread#active_support_execution_state`, which is empty under `:fiber` (state lives on `Fiber.current`). Live actions that depend on tenant inheritance must wrap themselves in an explicit `Apartment::Tenant.switch`.
+- **`ActionController::Live`**: works out of the box. Apartment v4 auto-includes `Apartment::LiveTenancy` into `ActionController::Live`; every Live controller picks up an `around_action` that re-establishes the request's tenant inside the OS thread Rails spawns for streaming. No user code changes required for the standard case. Three caveats:
+  - **User-spawned threads or fibers inside a Live action** (`Thread.new { ... }`, `Async { ... }`, raw `Fiber.new`) are not covered by the around_action wrap. Wrap them in `Apartment::Tenant.switch(Apartment::Tenant.current) { ... }` explicitly — same contract `:fiber` isolation imposes everywhere else.
+  - **Custom elevator subclasses** that override `Apartment::Elevators::Generic#call` without calling `super` will not populate `request.env[Apartment::ENV_TENANT_KEY]`. The around_action falls through to a plain `yield` (no switch), and the Live action runs with the default tenant. Either call `super` from your override, or set `env[Apartment::ENV_TENANT_KEY] = tenant_name` yourself after resolving the tenant.
+  - **App-defined `around_action`s registered on `ApplicationController`** (or any superclass) run *before* `Apartment::LiveTenancy`'s wrap in the callback chain — they execute against the default tenant. If your app callback hits the DB, declare it on the Live controller itself (so it nests inside the Apartment wrap), or wrap its body in `Apartment::Tenant.switch(request.env[Apartment::ENV_TENANT_KEY]) { ... }`.
+
+  See [`docs/designs/rails-boundary-tenancy.md`](designs/rails-boundary-tenancy.md) for the mechanism.
 - Child fibers spawned inside a request (`Fiber.new { ... }.resume`) get their own attribute store and do not inherit the parent fiber's `CurrentAttributes` — see [rails/rails#48279](https://github.com/rails/rails/issues/48279) (closed as "not planned"). Use `Apartment::Tenant.switch` inside the child fiber, not before it.
 
 ### Pinned Model Connections

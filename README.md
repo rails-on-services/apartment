@@ -311,6 +311,28 @@ Workaround: add `include Apartment::Model` and `pin_tenant` on the abstract clas
 
 The common pattern of `ApplicationRecord` using `connects_to` with multiple roles (writing/reading) on the same database works correctly; Apartment keys pools by `tenant:role` and respects Rails' role routing.
 
+## ActionController::Live Streaming
+
+Apartment v4 auto-handles tenant propagation across `ActionController::Live`'s spawned streaming thread under both `:thread` and `:fiber` isolation. Including `ActionController::Live` in your controller is sufficient — no additional configuration:
+
+```ruby
+class StreamingController < ApplicationController
+  include ActionController::Live
+
+  def show
+    response.headers['Content-Type'] = 'text/event-stream'
+    # Apartment::Tenant.current returns the request's tenant here,
+    # even though we're now executing on the OS thread Rails spawned
+    # for streaming.
+    response.stream.write("data: #{{ tenant: Apartment::Tenant.current }.to_json}\n\n")
+  ensure
+    response.stream.close
+  end
+end
+```
+
+User-spawned threads or fibers inside a Live action (`Thread.new`, `Async { }`, raw `Fiber.new`) escape the auto-wrap and need explicit `Apartment::Tenant.switch` wrapping. See the [upgrading guide](docs/upgrading-to-v4.md) and [`docs/designs/rails-boundary-tenancy.md`](docs/designs/rails-boundary-tenancy.md) for the full caveat list (custom elevators that skip `super`, app-defined `around_action`s on `ApplicationController`).
+
 ## Background Workers
 
 Use block-scoped switching in jobs:
