@@ -72,7 +72,7 @@ Replaces `Thread.current[:apartment_adapter]`. Benefits:
 
 - `ActiveSupport::IsolatedExecutionState.isolation_level` defaults to `:thread` (`activesupport-8.1.3/lib/active_support/isolated_execution_state.rb:74`). No `load_defaults` flips it; users opt into `:fiber` via `config.active_support.isolation_level = :fiber`. v4 recommends `:fiber` for fiber-aware servers; the Railtie warns when it observes `:thread`.
 - `:fiber` does not cross OS threads. Worker threads (Rails' opt-in `load_async` executor — see "Async query correctness" — or any `Thread.new`) start with `Apartment::Current.tenant == nil` regardless of isolation level. `CurrentAttributes` provides no cross-thread propagation by itself.
-- `ActionController::Live` (`actionpack-8.1.3/lib/action_controller/metal/live.rb:308-323`) spawns a child thread and calls `IsolatedExecutionState.share_with(t1, ...)` to copy state. Under `:thread`, `t1.active_support_execution_state` holds the state and the copy works. Under `:fiber` it doesn't, because the parent's state lives on `Fiber.current`, not on the Thread — Live's propagation breaks. Apps that need both Live and v4 must wrap the Live action in an explicit `Apartment::Tenant.switch` rather than relying on inheritance.
+- `ActionController::Live` (`actionpack-8.1.3/lib/action_controller/metal/live.rb:308-323`) spawns a child thread and calls `IsolatedExecutionState.share_with(t1, ...)` to copy state. Under `:thread`, `t1.active_support_execution_state` holds the state and the copy works. Under `:fiber` it doesn't, because the parent's state lives on `Fiber.current`, not on the Thread — Live's propagation breaks. Apartment v4 resolves this by auto-including `Apartment::LiveTenancy` into `ActionController::Live` via `ActiveSupport::Concern` composition; the concern's `around_action` reads the tenant identifier the elevator stashes on `request.env` and re-enters `Apartment::Tenant.switch` from inside the spawned thread. See `docs/designs/rails-boundary-tenancy.md`. (Rails main has refactored `share_with(t1)` to `share_with(context)` which would propagate state correctly under `:fiber`; that fix has not landed in a stable Rails release as of 2026-05.)
 
 ### Async query correctness: pool capture vs. consumer re-resolution
 
@@ -682,10 +682,12 @@ class Apartment::Railtie < Rails::Railtie
     # regardless of isolation_level — the SQL path stays correct via
     # FutureResult's captured pool. See "Async query correctness" above.
     #
-    # Trade-off note: under :fiber, ActionController::Live's own propagation
-    # (Thread-to-Thread `IsolatedExecutionState.share_with`) breaks, because
-    # the parent's state lives on Fiber, not Thread. Apps using both Live and
-    # v4 must wrap the Live action in an explicit Apartment::Tenant.switch.
+    # ActionController::Live: Apartment v4 resolves the :fiber-vs-Thread
+    # share_with mismatch by auto-including Apartment::LiveTenancy into
+    # ActionController::Live (see docs/designs/rails-boundary-tenancy.md).
+    # The around_action re-establishes the tenant from request.env inside
+    # the spawned streaming thread; no user code changes are needed for
+    # the standard case.
     if ActiveSupport::IsolatedExecutionState.isolation_level == :thread
       Rails.logger.warn "[Apartment] ActiveSupport::IsolatedExecutionState.isolation_level " \
         "is :thread. v4 recommends :fiber for fiber-aware concurrency. Set " \
@@ -925,7 +927,7 @@ No compatibility shims in v4 — clean break.
 | #302 PgBouncer/RDS Proxy session pinning | Improved: per-switch `SET` eliminated; connection-level config with libpq `options` avoids session pinning. See PgBouncer section for details. |
 | #239 Concurrency in specs | Solved: `CurrentAttributes` provides fiber isolation; per-tenant pools eliminate the shared `Thread.current` slot the v3 design depended on |
 | #199 `load_async` ignores tenant | Improved: when the user opts into `async_query_executor`, `FutureResult` captures the tenant pool at schedule time. Default config runs `load_async` synchronously. Consumer-fiber access (preload, `after_find` callbacks, lazy assoc, nested-async) must stay inside the same `Tenant.switch`. `eager_load` is worker-safe (folds into main query). See "Async query correctness" |
-| #304 ActionController::Live | Partially addressed and isolation-level dependent. Under `:thread` (Rails default), Live's `IsolatedExecutionState.share_with` copies `CurrentAttributes` from parent to spawned thread, and tenant context propagates. Under `:fiber` (v4-recommended) the share_with copy is empty because state lives on `Fiber.current`, not on the parent Thread — Live actions must wrap themselves in `Apartment::Tenant.switch` explicitly. Pinned to the issue for a permanent resolution. |
+| #304 ActionController::Live | Resolved via Bucket 1 (auto-include `Apartment::LiveTenancy` into `ActionController::Live`). See `docs/designs/rails-boundary-tenancy.md` § Worked example: ActionController::Live. Works on all supported Rails versions under both `:thread` and `:fiber` isolation. |
 | #323 Connection leaks under load | Solved: pools cached in `Concurrent::Map`, lazy creation, eviction |
 | #341 Rails 8.1 `public.` prefix | Solved: schema dumper patch strips prefix for tenant loading |
 | #303 Missing `create_schema` in schema.rb | Solved: `include_schemas_in_dump` config option |

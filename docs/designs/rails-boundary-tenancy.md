@@ -83,12 +83,12 @@ The rubric exists in part to forbid these. They appear when it is bypassed.
 
 `ActionController::Live#process` spawns an OS thread per streaming response and calls `ActiveSupport::IsolatedExecutionState.share_with(...)` to copy execution state into it. The signature changed in Rails 8.1.2:
 
-- **Rails 7.2 – 8.1.1**: `share_with(Thread.current)`. Reads from the parent **Thread's** `active_support_execution_state` accessor and dup's the result into the spawned thread's root fiber. Under `:fiber` isolation, `CurrentAttributes` and other ExecutionContext data live on `Fiber.current`'s accessor, not `Thread.current`'s. The parent Thread's accessor is empty. `share_with` copies an empty hash. Inside the streaming block, `Apartment::Current.tenant` is `nil`; queries route to the default-tenant pool. Silent cross-tenant data exposure.
-- **Rails 8.1.2+**: `share_with(IsolatedExecutionState.context, except: live_streaming_excluded_keys)`. Reads from the **current isolation context** — `Fiber.current` under `:fiber`, `Thread.current` under `:thread`. Under `:fiber`, the parent fiber's state copies through to the spawned thread's root fiber. The bug is fixed at the framework level (rails/rails#56393).
+- **Rails 7.2 – 8.1 stable (verified through 8.1.3)**: `share_with(Thread.current, except: live_streaming_excluded_keys)`. Reads from the parent **Thread's** `active_support_execution_state` accessor and dup's the result into the spawned thread's root fiber. Under `:fiber` isolation, `CurrentAttributes` and other ExecutionContext data live on `Fiber.current`'s accessor, not `Thread.current`'s. The parent Thread's accessor is empty. `share_with` copies an empty hash. Inside the streaming block, `Apartment::Current.tenant` is `nil`; queries route to the default-tenant pool. Silent cross-tenant data exposure.
+- **Rails main (unreleased, future 8.2+)**: `share_with(IsolatedExecutionState.context, except: live_streaming_excluded_keys)`. Reads from the **current isolation context** — `Fiber.current` under `:fiber`. Under `:fiber`, the parent fiber's state copies through to the spawned thread's root fiber. The bug is fixed at the framework level once this refactor reaches a stable release.
 
-Rails' upstream stance on `:fiber`-to-thread propagation in general (rails/rails#48279, closed wontfix): fiber apps must explicitly forward state across thread boundaries. The 8.1.2 fix is narrow to `Live`, not a generalization.
+Rails' upstream stance on `:fiber`-to-thread propagation in general (rails/rails#48279, closed wontfix): fiber apps must explicitly forward state across thread boundaries. The `share_with(context)` refactor on main is narrow to `Live`, not a generalization.
 
-Apartment v4's supported Rails matrix is 7.2 through main. The bug exists on 7.2, 8.0, 8.1.0, 8.1.1 and must be fixed there. On 8.1.2+ Apartment's fix is redundant but harmless.
+Apartment v4's supported Rails matrix is 7.2 through main. The bug exists on every currently-released Rails version (7.2, 8.0, 8.1.0–8.1.3) and must be fixed there. On Rails main Apartment's fix is redundant but harmless; once the `share_with(context)` change reaches a stable release, the around_action will no-op into Rails' own propagation.
 
 ### Why direct prepends on the spawn site don't work
 
@@ -213,13 +213,12 @@ The elevator records which tenant the request belongs to in a place that crosses
 
 ### Behavior across Rails versions
 
-| Rails | Native `share_with` propagates tenant? | Apartment's around_action |
+| Rails | Native `share_with` propagates tenant under `:fiber`? | Apartment's around_action |
 |---|---|---|
-| 7.2 / 8.0 / 8.1.0 / 8.1.1 | No (reads `Thread.current` under `:fiber`) | Sets tenant from `env`; the only thing that works |
-| 8.1.2+ | Yes (reads `IsolatedExecutionState.context`) | Re-sets the same tenant; redundant no-op switch |
-| main (with `:action_controller_live` load hook) | Yes | Same as 8.1.2+ |
+| 7.2 / 8.0 / 8.1.x (incl. 8.1.3) — every currently-released stable | No (reads `Thread.current`, empty under `:fiber`) | Sets tenant from `env`; the only thing that works |
+| main (future 8.2+, when `share_with(context)` ships) | Yes (reads `Fiber.current` under `:fiber`) | Re-sets the same tenant; redundant no-op switch |
 
-No version branching. The around_action is unconditional; on Rails versions where Rails handles propagation, the switch is a same-tenant re-entry with `ensure` cleanup.
+No version branching in code. The around_action is unconditional; once Rails ships the `share_with(context)` refactor in a stable release, the switch becomes a same-tenant re-entry with `ensure` cleanup.
 
 ### Behavior across isolation levels
 
@@ -241,7 +240,7 @@ No isolation-level guard needed.
 
 - Unit spec for `Apartment::LiveTenancy`: included into a stub controller, the `around_action` reads `request.env`, calls `Apartment::Tenant.switch`, restores on raise.
 - Unit spec confirming `ActionController::Live.include(Apartment::LiveTenancy)` queues the `included do` block such that a fresh controller class including `ActionController::Live` picks up the `around_action`.
-- Integration spec in `spec/integration/v4/` against a real `ActionController::Live` controller in the dummy app. Exercised under both `:thread` and `:fiber` isolation. Asserts queries inside `response.stream.write` route to the captured tenant, on the appraised Rails versions (7.2 / 8.0 / 8.1 / main). The fix being effective on 7.2 and the same controller still passing on 8.1.2+ are both required; both confirm the around_action is invariant to Rails' own propagation.
+- Integration spec in `spec/integration/v4/live_streaming_spec.rb` against a real `ActionController::Live` controller in the dummy app. Exercised under both `:thread` and `:fiber` isolation. Asserts queries inside `response.stream.write` route to the captured tenant, on the appraised Rails versions (7.2 / 8.0 / 8.1 / main). Includes a negative-control example that alias-swaps `Generic#call` to omit the env stash and asserts the streamed tenant falls back to the default — proving the around_action is causal, not coincidental.
 
 ### Documentation updates
 
