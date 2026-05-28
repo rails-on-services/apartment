@@ -68,6 +68,30 @@ module Apartment
       responses['Apartment::TenantNotFound'] = :not_found unless responses.key?('Apartment::TenantNotFound')
     end
 
+    # Backport rails/rails#56902 ("Pass IsolatedExecutionState.context to
+    # share_with") to released Rails versions where it has not landed. Prepend
+    # Apartment::Patches::LiveTenantPropagation onto ActionController::Live so
+    # the patch's process(name) override runs before Rails' own, mirroring
+    # Fiber.current.active_support_execution_state onto Thread.current's
+    # accessor for the duration of process — Rails' share_with(Thread.current)
+    # then finds the right hash and shallow-dups it into the spawned thread's
+    # root fiber. All CurrentAttributes propagate, not just apartment's tenant
+    # — matching what share_with(context) does on rails main.
+    #
+    # The patch is a no-op under :thread isolation, and a (redundant, harmless)
+    # no-op once #56902 reaches a stable Rails release apartment supports.
+    #
+    # See docs/designs/rails-boundary-tenancy.md.
+    initializer 'apartment.live_tenancy' do
+      next unless defined?(ActionController::Base) # non-ActionPack apps skip
+
+      require 'action_controller/metal/live'
+      require 'apartment/patches/live_tenant_propagation'
+      next if ActionController::Live.include?(Apartment::Patches::LiveTenantPropagation)
+
+      ActionController::Live.prepend(Apartment::Patches::LiveTenantPropagation)
+    end
+
     # In test environments, clean up apartment's tenant pools before Rails'
     # fixture setup iterates shards. See docs/designs/v4-test-fixtures-compatibility.md.
     if Rails.env.test?

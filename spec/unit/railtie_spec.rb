@@ -203,6 +203,36 @@ if railtie_loaded
           .to(eq(:not_found))
       end
     end
+
+    describe 'apartment.live_tenancy initializer' do
+      before do
+        require 'action_controller'
+        require 'action_controller/metal/live'
+        require 'apartment/patches/live_tenant_propagation'
+      end
+
+      it 'is registered on the railtie by name' do
+        names = Apartment::Railtie.initializers.map(&:name)
+        expect(names).to(include('apartment.live_tenancy'))
+      end
+
+      it 'prepends Apartment::Patches::LiveTenantPropagation onto ActionController::Live when run' do
+        initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.live_tenancy' }
+        initializer.run
+
+        expect(ActionController::Live.ancestors).to(include(Apartment::Patches::LiveTenantPropagation))
+      end
+
+      it 'is idempotent — re-running does not double-prepend' do
+        initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.live_tenancy' }
+        initializer.run
+        first_count = ActionController::Live.ancestors.count(Apartment::Patches::LiveTenantPropagation)
+        initializer.run
+        second_count = ActionController::Live.ancestors.count(Apartment::Patches::LiveTenantPropagation)
+
+        expect(second_count).to(eq(first_count))
+      end
+    end
   end
 else
   RSpec.describe('Apartment::Railtie') do
