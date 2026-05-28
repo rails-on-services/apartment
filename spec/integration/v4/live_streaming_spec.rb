@@ -175,4 +175,35 @@ RSpec.describe(
       end
     end
   end
+
+  context 'with thread-pool reuse across requests under :fiber' do
+    around do |example|
+      original = ActiveSupport::IsolatedExecutionState.isolation_level
+      ActiveSupport::IsolatedExecutionState.isolation_level = :fiber
+      example.run
+    ensure
+      ActiveSupport::IsolatedExecutionState.isolation_level = original
+    end
+
+    it 'does not leak tenant state between consecutive Live requests' do
+      header 'Host', 'acme.example.com'
+      get '/stream'
+      acme_data = stream_payload(last_response)
+
+      header 'Host', 'widgets.example.com'
+      get '/stream'
+      widgets_data = stream_payload(last_response)
+
+      header 'Host', 'acme.example.com'
+      get '/stream'
+      acme_data_again = stream_payload(last_response)
+
+      expect(acme_data['tenant']).to(eq('acme'))
+      expect(acme_data['user_count']).to(eq(3))
+      expect(widgets_data['tenant']).to(eq('widgets'))
+      expect(widgets_data['user_count']).to(eq(1))
+      expect(acme_data_again['tenant']).to(eq('acme'))
+      expect(acme_data_again['user_count']).to(eq(3))
+    end
+  end
 end
