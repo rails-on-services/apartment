@@ -191,16 +191,46 @@ if railtie_loaded
 
     describe 'TenantNotFound rescue_responses mapping' do
       # Unit specs do not boot a Rails::Application, so railtie initializers
-      # never run on their own — invoke the initializer block directly.
-      it 'maps Apartment::TenantNotFound to :not_found' do
-        require 'action_dispatch'
-        initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.rescue_responses' }
+      # never run on their own — invoke the initializer block directly with a
+      # fake app whose config exposes config.action_dispatch.rescue_responses
+      # (the engine config that Rails main's action_dispatch.configure merges
+      # in + refreezes during boot).
+      let(:fake_app) do
+        engine_config = Struct.new(:rescue_responses).new({})
+        app_config = Struct.new(:action_dispatch).new(engine_config)
+        Struct.new(:config).new(app_config)
+      end
+      let(:initializer) do
+        Apartment::Railtie.initializers.find { |i| i.name == 'apartment.rescue_responses' }
+      end
+
+      it 'is registered' do
         expect(initializer).not_to(be_nil)
+      end
 
-        initializer.run
-
-        expect(ActionDispatch::ExceptionWrapper.rescue_responses['Apartment::TenantNotFound'])
+      it 'contributes to config.action_dispatch.rescue_responses (Rails-main path)' do
+        initializer.run(fake_app)
+        expect(fake_app.config.action_dispatch.rescue_responses['Apartment::TenantNotFound'])
           .to(eq(:not_found))
+      end
+
+      it 'mutates ExceptionWrapper.rescue_responses directly when the hash is mutable (pre-main path)' do
+        responses = ActionDispatch::ExceptionWrapper.rescue_responses
+        skip 'this Rails freezes the default hash; the direct-mutation path does not apply' if responses.frozen?
+
+        responses.delete('Apartment::TenantNotFound')
+        initializer.run(fake_app)
+        expect(responses['Apartment::TenantNotFound']).to(eq(:not_found))
+      end
+
+      it 'does not raise when ExceptionWrapper.rescue_responses is frozen (Rails-main behavior)' do
+        responses = ActionDispatch::ExceptionWrapper.rescue_responses
+        previous = responses
+        ActionDispatch::ExceptionWrapper.rescue_responses = responses.dup.freeze
+
+        expect { initializer.run(fake_app) }.not_to(raise_error)
+      ensure
+        ActionDispatch::ExceptionWrapper.rescue_responses = previous
       end
     end
   end
