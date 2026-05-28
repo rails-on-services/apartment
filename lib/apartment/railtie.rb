@@ -62,10 +62,26 @@ module Apartment
     # application's own 404 page when no tenant_not_found_handler is configured.
     # rescue_responses has a non-nil default (:internal_server_error), so a
     # key? check — not ||= — is what skips an app's own explicit mapping.
-    initializer 'apartment.rescue_responses' do
+    #
+    # Rails main (post-rails/rails#57483) makes
+    # ActionDispatch::ExceptionWrapper.rescue_responses Ractor-safe by freezing
+    # the underlying hash and merging the engine config
+    # config.action_dispatch.rescue_responses in during action_dispatch.configure.
+    # Older Rails has a mutable hash and no engine-config merge. We do both:
+    # contribute via engine config (picked up by Rails main + harmless on older
+    # Rails) and mutate directly when the hash is still mutable (the
+    # only path that works on Rails ≤ 8.1.x).
+    initializer 'apartment.rescue_responses', before: 'action_dispatch.configure' do |app|
       require 'action_dispatch'
+
+      # Rails main path: engine config merged + refrozen during action_dispatch.configure.
+      app.config.action_dispatch.rescue_responses['Apartment::TenantNotFound'] = :not_found
+
+      # Pre-rails-main path: mutate directly while the hash is still mutable.
       responses = ActionDispatch::ExceptionWrapper.rescue_responses
-      responses['Apartment::TenantNotFound'] = :not_found unless responses.key?('Apartment::TenantNotFound')
+      unless responses.frozen? || responses.key?('Apartment::TenantNotFound')
+        responses['Apartment::TenantNotFound'] = :not_found
+      end
     end
 
     # In test environments, clean up apartment's tenant pools before Rails'
