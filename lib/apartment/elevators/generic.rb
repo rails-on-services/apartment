@@ -29,6 +29,7 @@ module Apartment
         return @app.call(env) if database.nil?
         return handle_tenant_not_found(database, request) unless tenant_valid?(database)
 
+        env[Apartment::ENV_TENANT_KEY] = database
         Apartment::Tenant.switch(database) { @app.call(env) }
       end
 

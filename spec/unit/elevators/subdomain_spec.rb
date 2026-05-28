@@ -51,4 +51,18 @@ RSpec.describe(Apartment::Elevators::Subdomain) do
       expect(elevator.instance_variable_get(:@excluded_subdomains)).to(be_frozen)
     end
   end
+
+  describe 'env stash inheritance from Generic#call' do
+    let(:capture_app) { ->(_env) { [200, {}, []] } }
+
+    before do
+      allow(Apartment::Tenant).to(receive(:switch).and_yield)
+    end
+
+    it 'writes Apartment::ENV_TENANT_KEY via super into Generic#call' do
+      env = env_for('acme.example.com')
+      described_class.new(capture_app).call(env)
+      expect(env[Apartment::ENV_TENANT_KEY]).to(eq('acme'))
+    end
+  end
 end

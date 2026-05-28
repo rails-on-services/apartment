@@ -65,6 +65,34 @@ RSpec.describe(Apartment::Elevators::Generic) do
     end
   end
 
+  describe 'env stash' do
+    let(:captured) { [] }
+    let(:capture_app) { ->(env) { captured << env[Apartment::ENV_TENANT_KEY]; [200, {}, []] } }
+
+    before do
+      allow(Apartment::Tenant).to(receive(:switch).and_yield)
+    end
+
+    it 'writes Apartment::ENV_TENANT_KEY on env before invoking the app' do
+      elevator = described_class.new(capture_app, ->(_req) { 'acme' })
+      env = Rack::MockRequest.env_for('http://example.com')
+
+      elevator.call(env)
+
+      expect(env[Apartment::ENV_TENANT_KEY]).to(eq('acme'))
+      expect(captured).to(eq(['acme']))
+    end
+
+    it 'does not set ENV_TENANT_KEY when no tenant is resolved' do
+      elevator = described_class.new(capture_app, ->(_req) {})
+      env = Rack::MockRequest.env_for('http://example.com')
+
+      elevator.call(env)
+
+      expect(env).not_to(have_key(Apartment::ENV_TENANT_KEY))
+    end
+  end
+
   describe '#parse_tenant_name' do
     it 'raises NotImplementedError by default' do
       elevator = described_class.new(inner_app)
