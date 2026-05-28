@@ -21,9 +21,9 @@ module Apartment
 
     private
 
-    def _apartment_with_live_tenant
+    def _apartment_with_live_tenant(&)
       tenant = request.env[Apartment::ENV_TENANT_KEY]
-      tenant ? Apartment::Tenant.switch(tenant) { yield } : yield
+      tenant ? Apartment::Tenant.switch(tenant, &) : yield
     end
   end
 end

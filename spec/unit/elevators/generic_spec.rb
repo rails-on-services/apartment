@@ -67,7 +67,12 @@ RSpec.describe(Apartment::Elevators::Generic) do
 
   describe 'env stash' do
     let(:captured) { [] }
-    let(:capture_app) { ->(env) { captured << env[Apartment::ENV_TENANT_KEY]; [200, {}, []] } }
+    let(:capture_app) do
+      lambda { |env|
+        captured << env[Apartment::ENV_TENANT_KEY]
+        [200, {}, []]
+      }
+    end
 
     before do
       allow(Apartment::Tenant).to(receive(:switch).and_yield)

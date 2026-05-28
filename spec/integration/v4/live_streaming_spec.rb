@@ -25,9 +25,12 @@ rescue LoadError, StandardError => e
   false
 end
 
+SKIP_LIVE_STREAMING_REASON =
+  LIVE_STREAMING_DUMMY_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires dummy Rails app + PostgreSQL'
+
 RSpec.describe(
   'ActionController::Live tenant propagation', :integration, :request_lifecycle,
-  skip: (LIVE_STREAMING_DUMMY_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires dummy Rails app + PostgreSQL')
+  skip: SKIP_LIVE_STREAMING_REASON
 ) do
   include Rack::Test::Methods
 
@@ -118,7 +121,7 @@ RSpec.describe(
       ActiveSupport::IsolatedExecutionState.isolation_level = original
     end
 
-    include_examples 'propagates tenant into the Live stream'
+    it_behaves_like 'propagates tenant into the Live stream'
   end
 
   context 'under :fiber isolation' do
@@ -130,7 +133,7 @@ RSpec.describe(
       ActiveSupport::IsolatedExecutionState.isolation_level = original
     end
 
-    include_examples 'propagates tenant into the Live stream'
+    it_behaves_like 'propagates tenant into the Live stream'
 
     it '(negative control) leaks tenant when the elevator does not stash the env key' do
       # Simulate a custom elevator that omits the env stash — alias-swap
@@ -155,8 +158,8 @@ RSpec.describe(
       end
 
       begin
-        header 'Host', 'acme.example.com'
-        get '/stream'
+        header('Host', 'acme.example.com')
+        get('/stream')
         data = stream_payload(last_response)
 
         # Without the env stash, the around_action falls through to a plain
@@ -169,8 +172,8 @@ RSpec.describe(
         expect(data['tenant']).not_to(eq('acme'))
       ensure
         Apartment::Elevators::Generic.class_eval do
-          alias_method :call, :_original_call_for_neg_ctrl
-          remove_method :_original_call_for_neg_ctrl
+          alias_method(:call, :_original_call_for_neg_ctrl)
+          remove_method(:_original_call_for_neg_ctrl)
         end
       end
     end

@@ -4,15 +4,17 @@ require 'spec_helper'
 require 'action_controller'
 require 'action_controller/metal/live'
 
-RSpec.describe Apartment::LiveTenancy do
+RSpec.describe(Apartment::LiveTenancy) do
   # A minimal controller-like host that records around_action registration
-  # and exposes the private callback method for direct invocation.
+  # and exposes the private callback method for direct invocation. The class
+  # instance variable below is intentional — this is a test stub, not a
+  # production class.
   let(:controller_class) do
     Class.new do
       attr_accessor :request
 
       def self.registered_around_actions
-        @registered_around_actions ||= []
+        @registered_around_actions ||= [] # rubocop:disable ThreadSafety/ClassInstanceVariable
       end
 
       def self.around_action(name)

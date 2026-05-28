@@ -209,7 +209,9 @@ if railtie_loaded
         initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.live_tenancy' }
         initializer.run
 
+        # rubocop:disable Rails/ApplicationController -- ApplicationController is not loaded in this spec process
         fresh_controller = Class.new(ActionController::Base) { include ActionController::Live }
+        # rubocop:enable Rails/ApplicationController
         callbacks = fresh_controller._process_action_callbacks.map(&:filter)
 
         expect(callbacks).to(include(:_apartment_with_live_tenant))
@@ -220,7 +222,9 @@ if railtie_loaded
         initializer.run
         initializer.run
 
+        # rubocop:disable Rails/ApplicationController -- ApplicationController is not loaded in this spec process
         fresh_controller = Class.new(ActionController::Base) { include ActionController::Live }
+        # rubocop:enable Rails/ApplicationController
         callbacks = fresh_controller._process_action_callbacks.map(&:filter)
 
         expect(callbacks.count(:_apartment_with_live_tenant)).to(eq(1))
