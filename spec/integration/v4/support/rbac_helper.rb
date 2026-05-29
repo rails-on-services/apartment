@@ -119,10 +119,10 @@ module RbacHelper
       END $$;
     SQL
     connection.execute("GRANT #{ROLES[:app_user]} TO #{ROLES[:db_manager]}")
-    # GRANT CREATE ON DATABASE so db_manager can create schemas.
-    # This runs here (not in CI provisioning) because the test database
-    # (apartment_v4_test) may not exist at CI role-provisioning time.
-    # The CI database (apartment_postgresql_test) differs from the test database.
+    # GRANT CREATE ON DATABASE so db_manager can create schemas. Runs here
+    # (not in CI provisioning) and grants on whatever database is currently
+    # connected, so it stays correct regardless of how the test database is
+    # provisioned or named.
     db_name = connection.current_database
     connection.execute("GRANT CREATE ON DATABASE #{connection.quote_table_name(db_name)} TO #{ROLES[:db_manager]}")
     # db_manager needs full access to the public schema for migrate_primary
