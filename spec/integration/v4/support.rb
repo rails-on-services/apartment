@@ -191,6 +191,13 @@ if V4_INTEGRATION_AVAILABLE
       new_handler = ActiveRecord::ConnectionAdapters::ConnectionHandler.new
       ActiveRecord::Base.connection_handler = new_handler
 
+      # Defensively re-create the primary test database before each example.
+      # A sibling :database_name / RBAC spec may have run DROP DATABASE on it
+      # without restoring it; without this, the next spec's first query fails
+      # with ActiveRecord::NoDatabaseError. Idempotent (no-op when the DB
+      # already exists), and a no-op for SQLite.
+      V4IntegrationHelper.ensure_test_database! unless V4IntegrationHelper.sqlite?
+
       # Re-establish the default connection on the fresh handler.
       default_config = V4IntegrationHelper.default_connection_config
       ActiveRecord::Base.establish_connection(default_config) if default_config
