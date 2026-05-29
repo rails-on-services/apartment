@@ -321,8 +321,22 @@ fi
 section "Checking dependencies"
 
 if [ -f "Gemfile" ]; then
-    log_info "Ruby gems should be available (gems are installed globally)"
-    log_info "Run 'bundle install' only if you add new gems to this worktree"
+    if [ -f "Gemfile.lock" ]; then
+        log_info "Gemfile.lock present — gems already resolved"
+    elif ! command -v bundle >/dev/null 2>&1; then
+        log_warn "bundle not on PATH — run 'bundle install' manually before using ruby-lsp/Serena"
+    else
+        # ruby-lsp refuses to initialize without a lockfile (logs the request
+        # to stderr and exits), so Serena's symbolic tools won't work until
+        # we bundle. Gemfile.lock is gitignored here — gem libraries don't
+        # commit it — so every new worktree starts without one.
+        log_info "No Gemfile.lock — running 'bundle install' so ruby-lsp can initialize"
+        if bundle install --quiet; then
+            log_info "bundle install complete"
+        else
+            log_warn "bundle install failed — run it manually before using ruby-lsp/Serena"
+        fi
+    fi
 else
     log_warn "No Gemfile found"
 fi
