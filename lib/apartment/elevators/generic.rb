@@ -29,7 +29,7 @@ module Apartment
         return @app.call(env) if database.nil?
         return handle_tenant_not_found(database, request) unless tenant_valid?(database)
 
-        Apartment::Tenant.switch(database) { @app.call(env) }
+        switch_with_failsafe(database, request) { @app.call(env) }
       end
 
       def parse_tenant_name(_request)
@@ -47,6 +47,39 @@ module Apartment
         return true if database.to_s == config.default_tenant.to_s
 
         Apartment.tenant_validator.call(database)
+      end
+
+      # Switch into +tenant+ and run the app. In v4 the switch is SQL-free, so a
+      # tenant dropped by another process is not detected until the app's first
+      # query fails inside this block. When that error is one the adapter
+      # recognizes as "the tenant container is gone" (a stale positive in the
+      # validator), evict the name from this process and route through the
+      # not-found path — turning a lingering-drop 500 into a 404. Any other
+      # error, including an app-raised one, re-raises untouched. Adapters that
+      # declare no failsafe error classes skip the rescue entirely. See #414.
+      def switch_with_failsafe(tenant, request, &)
+        adapter = resolve_adapter
+        classes = adapter&.failsafe_error_classes
+        return Apartment::Tenant.switch(tenant, &) if classes.blank?
+
+        begin
+          Apartment::Tenant.switch(tenant, &)
+        rescue *classes => e
+          raise unless adapter.tenant_container_gone?(e, tenant)
+
+          Apartment.tenant_validator.evict(tenant)
+          handle_tenant_not_found(tenant, request)
+        end
+      end
+
+      # The memoized adapter, or nil when it cannot be resolved (Apartment
+      # unconfigured, or no database connection yet). A nil adapter disables the
+      # fail-safe — the switch runs plain, preserving today's behavior — so the
+      # elevator never fails trying to *set up* the fail-safe.
+      def resolve_adapter
+        Apartment.adapter
+      rescue StandardError
+        nil
       end
 
       # Route an unknown tenant through config.tenant_not_found_handler when

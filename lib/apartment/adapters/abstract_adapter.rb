@@ -106,6 +106,28 @@ module Apartment
         false
       end
 
+      # Request-path fail-safe contract (issue #414). The elevator wraps the
+      # tenant switch; on one of these error classes it asks
+      # #tenant_container_gone? whether the tenant's storage actually vanished (a
+      # cross-process drop) rather than an app-level failure. An empty list
+      # disables the rescue, so an adapter that does not implement the seams
+      # never converts an error into a 404.
+      def failsafe_error_classes
+        []
+      end
+
+      # Whether +error+, raised while serving +tenant+, means the tenant's
+      # container (schema/database/file) no longer exists — so the validator
+      # should evict the name and the request should 404 instead of surfacing a
+      # 500. Composed from a cheap error-shape check and an authoritative
+      # existence probe, both conservative by default so the base adapter never
+      # reclassifies. Subclasses override the seams.
+      def tenant_container_gone?(error, tenant)
+        return false unless container_error?(unwrap_db_error(error))
+
+        !tenant_container_exists?(tenant)
+      end
+
       # Qualify a pinned model's table_name so it targets the default
       # tenant's tables from any tenant connection. Subclasses must
       # implement when shared_pinned_connection? returns true.
@@ -192,6 +214,28 @@ module Apartment
       end
 
       private
+
+      # --- Missing-tenant fail-safe seams (issue #414) ------------------------
+
+      # Does +error+ look like a missing-container error for this engine?
+      # Base: never, so the default adapter classifies nothing.
+      def container_error?(_error)
+        false
+      end
+
+      # Authoritative check that the tenant's container exists. Base: assume it
+      # does, so an unimplemented adapter never evicts a live tenant.
+      def tenant_container_exists?(_tenant)
+        true
+      end
+
+      # ConnectionHandling wraps non-Apartment errors raised during pool
+      # resolution in Apartment::ApartmentError with the original as #cause; the
+      # schema-strategy query error arrives unwrapped. Inspect the cause when
+      # present so both shapes classify the same.
+      def unwrap_db_error(error)
+        error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error
+      end
 
       def grant_tenant_privileges(tenant)
         app_role = Apartment.config.app_role

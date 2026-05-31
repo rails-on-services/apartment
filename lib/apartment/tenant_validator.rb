@@ -51,6 +51,16 @@ module Apartment
     end
     alias valid? call
 
+    # Remove a name from the positive set immediately. The request-path
+    # fail-safe (the elevator's missing-tenant rescue) calls this when a switch
+    # hits a container that no longer exists, so this process stops validating a
+    # tenant dropped by another process before its TTL would otherwise heal it.
+    # Mid-rebuild evictions are captured as deltas and re-applied after the swap,
+    # mirroring drop.apartment handling, so the rebuild cannot resurrect the name.
+    def evict(name)
+      apply_lifecycle(:remove, name)
+    end
+
     private
 
     def stale?
