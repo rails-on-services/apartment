@@ -7,13 +7,16 @@ Status: draft. Living doc — updated in place as the feature lands. Tracks #427
 Apartment isolates at the database layer and has zero `Rails.cache` integration:
 cache segmentation is left to key construction, which every adopter re-derives by
 hand. This design makes the tenant/cache boundary first-class without owning the
-cache store. It ships two **tenant-context guard primitives** —
-`Apartment::Tenant.require_tenant!` (routed work) and `require_default_tenant!`
-(pinned/global work) — plus a `with_default_tenant { }` block, and documents the
-**routed-vs-pinned cache model** with a fail-closed namespace recipe. The guards
-catch the leak class where non-request code (Sidekiq jobs, rake tasks,
-ActionCable callbacks) forgets to switch and `Tenant.current` silently resolves to
-the default tenant, contaminating another keyspace.
+cache store. It ships a unified **tenant-context guard family** on
+`Apartment::Tenant` — predicates `in_tenant?` / `in_default_tenant?`, raising
+guards `require_tenant!` / `require_default_tenant!`, a `with_default_tenant { }`
+block, and a `cache_namespace` helper — and documents the **routed-vs-pinned cache
+model** with a two-store architecture. The guards catch the leak class where
+non-request code (Sidekiq jobs, rake tasks, ActionCable callbacks) forgets to
+switch and `Tenant.current` silently resolves to the default tenant, contaminating
+another keyspace. The existing `inside_tenant?` / `assert_inside_tenant!` (#394) are
+**renamed** to `tenant_switched?` / `assert_tenant_switched!` to dissolve a naming
+collision (see [The two axes](#the-two-axes)).
 
 ## Problem
 
@@ -54,36 +57,100 @@ Apartment already draws for models.
 ## Design
 
 Apartment owns the **distinction and the discipline**, not the cache store. Two
-seams: guard primitives (code) and a documented cache recipe (docs). It explicitly
-does NOT ship a cache adapter, a cache backend, or auto-renamespacing on `switch`.
+seams: the guard family (code) and a documented cache architecture (docs). It
+explicitly does NOT ship a cache adapter, a cache backend, or auto-renamespacing on
+`switch`.
 
-### Guard primitives
+### The two axes
 
-Both guards read **effective** `Tenant.current` (default fallback included) and
-**return the tenant name on success**, so a guard can serve directly as a cache
-namespace proc. They live on `Apartment::Tenant` alongside `switch`/`current`.
+Every tenant-context question sits on one of two axes. Conflating them is what made
+the original `inside_tenant?` / `in_tenant?` pair unreadable; the family below gives
+each axis a distinct verb.
+
+1. **Explicitness** — *did someone explicitly switch?* Reads raw `Current.tenant`,
+   ignoring the default fallback. Audience: test discipline ("this code did not ride
+   the ambient default"). Verb: **`switched`**.
+2. **Identity** — *which tenant is effectively active — a real one or the default?*
+   Reads effective `Tenant.current`. Audience: runtime routed/pinned decisions
+   (cache, jobs, storage). Verbs: **`in_`** (predicate) / **`require_`** (guard).
+
+The axes cannot collapse: a pinned-behavior test legitimately runs in the default
+tenant, so it must satisfy the explicitness check while *failing* "am I in a real
+tenant."
+
+| Question (axis) | Predicate | Raising guard | Reads |
+|---|---|---|---|
+| Did a switch establish a tenant? (explicitness) | `tenant_switched?` | `assert_tenant_switched!` | `Current.tenant` present |
+| Effectively in a **real** tenant? (identity) | `in_tenant?` | `require_tenant!` | `current` is non-default |
+| Effectively in the **default**? (identity) | `in_default_tenant?` | `require_default_tenant!` | `current == default_tenant` |
+
+Two mnemonics carry the surface: **`switched`** = "did a switch happen" (explicit
+action); **`in_`** = "where am I now" (effective state). On the identity axis the
+shapes are regular — `in_X?` asks, `require_X!` demands.
+
+**Proof the names disambiguate.** Three states, every method:
+
+| State | `tenant_switched?` | `in_tenant?` | `in_default_tenant?` |
+|---|---|---|---|
+| A. forgot to switch (inertia → default) | **false** | false | true |
+| B. explicit `switch!(default)` / `reset` | **true** | false | true |
+| C. `switch('acme')` | true | **true** | false |
+
+The A-vs-B divergence is exactly where `tenant_switched?` and `in_default_tenant?`
+part ways — and now the names say why (one asks "did a switch happen," the other
+"where am I"). That pair was unreadable as `inside_tenant?` vs `in_default_tenant?`.
+
+**Rename, no aliases.** `inside_tenant?` / `assert_inside_tenant!` (#394) are renamed
+to `tenant_switched?` / `assert_tenant_switched!` outright. This is a breaking
+change, taken cleanly because the gem is pre-1.0 alpha; no deprecated aliases are
+kept. `docs/testing.md` and `docs/upgrading-to-v4.md` are updated in the same PR.
+
+### Guards and predicates
+
+Both raising guards read **effective** `Tenant.current` and compare with `to_s`
+normalization (matching the existing `guard_default_tenant_switch!`), so
+`switch!(:public)` and `default_tenant "public"` agree. They live on
+`Apartment::Tenant` alongside `switch` / `current`.
 
 ```ruby
-# Routed: raise unless current is a real, NON-default tenant.
+# Routed: raise TenantRequired unless current is a real, NON-default tenant.
 # Catches BOTH nil-inertia (forgot to switch) AND an explicit reset to default —
 # routed data never belongs in the default keyspace, however you got there.
-Apartment::Tenant.require_tenant!        # => "acme" (on success), else raises TenantRequired
+Apartment::Tenant.require_tenant!         # => "acme" on success, else raises
 
 # Pinned: raise unless current IS the default tenant.
 # Passes on default-by-inertia AND explicit default — both yield the correct
-# global keyspace for pinned writes.
-Apartment::Tenant.require_default_tenant!  # => default name, else raises DefaultTenantRequired
+# global keyspace for pinned writes. Raises DefaultTenantNotConfigured if no
+# default_tenant is configured (see below).
+Apartment::Tenant.require_default_tenant! # => default name on success, else raises
+
+# Non-raising predicates for conditional branches:
+Apartment::Tenant.in_tenant?              # current is a real, non-default tenant
+Apartment::Tenant.in_default_tenant?      # current is the default tenant
 ```
 
-Predicate (non-raising) forms for conditional branches:
+`require_tenant!` returns the normalized tenant name on success; that return is a
+documented convenience, but the cache recipe uses the purpose-named `cache_namespace`
+(below) rather than relying on a bang method to yield a string.
+
+#### `cache_namespace`
+
+A thin, value-returning wrapper so the namespace proc reads honestly instead of
+teaching "a bang returns a String":
 
 ```ruby
-Apartment::Tenant.in_tenant?          # current is a real, non-default tenant
-Apartment::Tenant.in_default_tenant?  # current is the default tenant
+# Asserts a real, non-default tenant (via require_tenant!) and returns its
+# normalized name. Raises TenantRequired outside a tenant context.
+Apartment::Tenant.cache_namespace         # => "acme"
 ```
 
+There is no `pinned_cache_namespace` counterpart: pinned stores use a *static*
+namespace string, so no helper is needed.
+
+#### `with_default_tenant`
+
 Block primitive to **establish** global/pinned context (enter default + guaranteed
-restore via `ensure`); reads as intent at the call site:
+restore via `ensure`):
 
 ```ruby
 Apartment::Tenant.with_default_tenant do
@@ -91,16 +158,17 @@ Apartment::Tenant.with_default_tenant do
 end
 ```
 
-Implementation note: `with_default_tenant` must NOT be a plain
-`switch(config.default_tenant) { }`. Under strict mode
-(`default_tenant_switch_allowed = false`), `guard_default_tenant_switch!` raises on
-the block form into default by design — `reset`/`switch!` are the sanctioned paths
-back. Entering default for pinned work is legitimate, so `with_default_tenant`
-saves `Current.tenant`, enters default via the guard-exempt path (as `reset`
-does), and restores in `ensure` — bypassing `guard_default_tenant_switch!` exactly
-as `reset` and `switch!` already do.
+State semantics: requires a block (raises `ArgumentError` otherwise); saves the
+prior `Current.tenant` and restores it (including `nil`) in `ensure`, on both normal
+exit and raise; nests correctly; resets `Current.previous_tenant` like the existing
+`switch` primitives. It must NOT be a plain `switch(config.default_tenant) { }`:
+under strict mode (`default_tenant_switch_allowed = false`),
+`guard_default_tenant_switch!` raises on the block form into default by design —
+`reset` / `switch!` are the sanctioned paths back. Entering default for pinned work
+is legitimate, so `with_default_tenant` enters via the guard-exempt path (as `reset`
+does) and restores in `ensure`.
 
-#### Why two single-purpose methods, not one overloaded guard
+#### Why two single-purpose guards, not one overloaded one
 
 `require_tenant!` and `require_default_tenant!` encode opposite intentions that
 share no happy path: "must be tenant-scoped" vs "must be global." Splitting them
@@ -111,29 +179,27 @@ overloading arity to mean "exactly this tenant" gives one method two contracts.
 Code that must run in a specific tenant should `switch('acme') { … }` (which
 guarantees it) or assert `Tenant.current == 'acme'` inline.
 
-#### Relationship to `assert_inside_tenant!`
-
-`inside_tenant?` / `assert_inside_tenant!` (shipped in #394) stay unchanged. They
-read **raw `Current.tenant`** (explicit-entry semantics, ignoring the default
-fallback) and answer a *test* question: "did this spec enter any tenant context at
-all?" — so an explicit `switch!(default)` satisfies them. The new `require_*`
-guards read **effective `Tenant.current`** and answer a *production* question:
-"am I on routed data / global data?" — so `require_tenant!` rejects an explicit
-default. Two audiences, two predicates; the docs name the distinction to prevent
-the "I'm inside a tenant — why did `require_tenant!` raise?" confusion (answer:
-you are on `default`).
-
 #### Exceptions
 
 ```
 Apartment::ApartmentError
-├── Apartment::TenantRequired          # require_tenant! failed (on default or nil-inertia)
-└── Apartment::DefaultTenantRequired   # require_default_tenant! failed (on a non-default tenant)
+├── Apartment::TenantRequired               # require_tenant! failed (on default or nil-inertia)
+├── Apartment::DefaultTenantRequired        # require_default_tenant! failed (on a non-default tenant)
+└── Apartment::DefaultTenantNotConfigured   # require_default_tenant! with no default_tenant set
 ```
 
 Distinct classes let adopters alert on each leak direction separately. Messages
 state expected-vs-actual and whether the failure was implicit-default or
 wrong-tenant.
+
+**`require_default_tenant!` with no configured default raises.** When
+`config.default_tenant` is nil (non-`:schema` strategies that never set one), a
+naïve `current == default` check passes by `nil == nil` — but that yields an empty,
+ambiguous global namespace, which is a leak dressed as a no-op. The guard instead
+raises `DefaultTenantNotConfigured`: a pinned keyspace requires an explicitly named
+anchor. (`in_default_tenant?`, the non-raising predicate, still reflects the literal
+`current == default` equality; the *guard* additionally demands a configured
+default. The doc notes the asymmetry.)
 
 #### Why call-site asserts, not a global default-on mode
 
@@ -145,70 +211,94 @@ data" hook. More decisively: the leaks this design targets (cache, Sidekiq,
 ActionCable) live *outside* ActiveRecord, so a query-layer interceptor would
 protect none of them. Explicit call-site assertions are the only mechanism that
 guards these orthogonal boundaries, and they force the author to classify each
-operation as routed or pinned. A future opt-in dev-mode *log* (warn when
-`current` is read while `Current.tenant` is nil) is a possible observability
-add-on, deliberately out of scope here.
+operation as routed or pinned. A future opt-in dev-mode *log* (warn when `current`
+is read while `Current.tenant` is nil) is a possible observability add-on,
+deliberately out of scope here.
 
-### Cache recipe (documentation deliverable)
+### Cache architecture (documentation deliverable)
 
-The guard's return value makes the routed recipe **fail-closed**:
-
-```ruby
-# Routed store — raises (TenantRequired) if ANYTHING touches it outside a tenant
-# switch, instead of silently writing to the default keyspace.
-config.cache_store = :redis_cache_store,
-  namespace: -> { Apartment::Tenant.require_tenant! }
-```
-
-Documenting the older `namespace: -> { Apartment::Tenant.current }` would itself
-demonstrate the unsafe path: it yields the default keyspace on nil-inertia. The
-guard-as-namespace closes that.
-
-The fail-closed store cannot also hold pinned keys (it would raise on every global
-access). Pinned data goes to a **separate store** with a static namespace:
+**The headline is two stores, one per data class** — not a single `config.cache_store`
+line. A single `namespace: -> { current }` store forces a false choice: namespace
+everything (and fragment pinned keys across N keyspaces) or namespace nothing (and
+collide routed keys across tenants).
 
 ```ruby
+# Routed store — fail-closed: raises TenantRequired if touched outside a real
+# tenant, instead of silently writing to the default keyspace.
+TENANT_CACHE = ActiveSupport::Cache::RedisCacheStore.new(
+  namespace: -> { Apartment::Tenant.cache_namespace }
+)
+
 # Pinned store — STATIC namespace, never a tenant lambda. Global keys only.
 PINNED_CACHE = ActiveSupport::Cache::RedisCacheStore.new(namespace: 'pinned')
 ```
 
-This two-store rule is the load-bearing conclusion. A single
-`namespace: -> { current }` store forces a false choice: namespace everything (and
-fragment pinned keys across N keyspaces) or namespace nothing (and collide routed
-keys across tenants).
+The fail-closed routed store demonstrates the *safe* path. Documenting the older
+`namespace: -> { Apartment::Tenant.current }` would itself teach the unsafe one: it
+yields the default keyspace on nil-inertia.
+
+#### Which store is `Rails.cache`?
+
+This is the adopter's risk call, and the doc presents it as one. The default
+`Rails.cache` is touched by Rails internals, third-party gems (Flipper, Rack::Attack,
+Sidekiq::Web), initializers, the console, and health checks — most of that runs
+outside any tenant.
+
+- **`Rails.cache` = pinned/global, routed work uses `TENANT_CACHE` (recommended for
+  most apps).** Ecosystem-safe: ambient and third-party cache calls land in the
+  global keyspace and never raise. Risk: forgetting to reach for `TENANT_CACHE` on
+  routed data silently collides that data across tenants in the global store.
+- **`Rails.cache` = the fail-closed routed store (for security-strict apps that have
+  audited every cache call).** Forgetting fail-closes *loudly* with `TenantRequired`
+  rather than colliding silently. Cost: every tenant-less cache op — boot,
+  initializers, console, gem internals — raises until wrapped or rerouted.
+
+The first trades a quiet risk for compatibility; the second trades compatibility for
+a loud one. Default the docs to the first; document the second as the strict opt-in.
 
 ## Edge cases / footguns (for the doc's footgun section)
 
-- **Silent pinned-read miss.** Inside tenant `acme`, `Rails.cache.read('flag')` on a
-  tenant-namespaced store becomes `acme:flag` and misses the global value
-  permanently. Read pinned keys from `PINNED_CACHE`, or pass `namespace: nil` per
-  call. This is *why* two stores, not one.
-- **`Rails.cache.clear` on shared Redis** wipes every tenant's keyspace at once.
-  Flag prominently; prefer per-namespace expiry.
+- **Silent pinned-read miss.** Inside tenant `acme`, reading a global key from a
+  tenant-namespaced store resolves to `acme:key` and misses permanently. Read pinned
+  keys from `PINNED_CACHE`. (Per-call `namespace: nil` exists but is store-dependent
+  and undercuts the fail-closed story — prefer the explicit store.)
+- **Pinned store fixes shape, not provenance.** A static `PINNED_CACHE` stops
+  *namespace fragmentation*, but does not stop tenant-derived data from being written
+  globally while inside `acme`. Wrap producers of pinned values in
+  `with_default_tenant` / assert `require_default_tenant!`.
+- **Per-request `LocalCache`.** ActiveSupport's in-request memory layer keys by the
+  resolved namespace at access time; a mid-request tenant change can serve a stale
+  tenant from local memory while the Redis keys look correct. Don't switch tenants
+  mid-request around cached reads.
+- **Fibers / `Thread.new`.** `Current` is fiber-local and does not propagate to raw
+  `Thread.new`; inside one, the routed store raises (good) or a `current`-based key
+  mis-namespaces (bad). Re-establish context in the spawned execution.
+- **Key normalization.** Tenant names with `:`, whitespace, or Unicode become part of
+  Redis keys. `cache_namespace` returns `to_s`; document escaping expectations and
+  keep tenant names within `TenantNameValidator`'s rules.
+- **`Rails.cache.clear` on shared Redis** wipes every tenant's keyspace at once. Flag
+  prominently; prefer per-namespace expiry.
 - **Shared-across-a-subset (org-level) keys** are neither routed nor pinned. Don't
-  force-fit: use an explicit, deliberate namespace key (e.g. `"org:#{org_id}"`),
-  not `Tenant.current`.
-- **Job retries** must re-establish tenant context per `perform`; the namespace
-  lambda re-evaluates correctly only if the connection/context matches. Switch
-  inside the job, then `require_tenant!`.
-- **Fragment caching in shared layouts** can render in mixed context; scope each
-  fragment's tenant explicitly or source shared partials from `PINNED_CACHE`.
-- **`require_default_tenant!` when `default_tenant` is nil** (non-`:schema`
-  strategies that never set one): `current` is nil and equals the nil default, so
-  the guard passes. Documented; apps wanting a hard global anchor should configure
-  a `default_tenant`.
+  force-fit: use an explicit, deliberate namespace key (e.g. `"org:#{org_id}"`), not
+  `Tenant.current`.
+- **Job retries** must re-establish tenant context per `perform`; switch inside the
+  job, then `require_tenant!` (or write through `TENANT_CACHE`, which fail-closes).
 
 ## Testing
 
-- Unit specs on each guard across the state matrix: nil-inertia, explicit
-  `switch!(default)`, explicit non-default, `with_default_tenant` block,
-  `default_tenant` nil. Assert return values (name on success) and the specific
-  exception class on failure.
-- `with_default_tenant` restores prior context on both normal exit and raise.
-- A doc-example smoke test that the fail-closed namespace proc raises
-  `TenantRequired` outside a switch and returns the name inside one.
-- No new database dependency: guards are pure context reads, unit-testable without
-  a real backend.
+- Unit specs on every guard/predicate across the state matrix: nil-inertia, explicit
+  `switch!(default)`, explicit non-default, inside `with_default_tenant`, and
+  `default_tenant` nil. Assert the proof table above, the normalized return of
+  `cache_namespace`, and the specific exception class on each failure (including
+  `DefaultTenantNotConfigured`).
+- `with_default_tenant` restores prior context (including `nil`) on both normal exit
+  and raise, and nests.
+- The rename: specs reference `tenant_switched?` / `assert_tenant_switched!`; a guard
+  spec confirms `inside_tenant?` / `assert_inside_tenant!` are gone (no aliases).
+- A doc-example smoke test: `TENANT_CACHE` raises `TenantRequired` outside a switch
+  and namespaces correctly inside one.
+- No new database dependency: guards are pure context reads, unit-testable without a
+  real backend.
 
 ## Out of scope
 
@@ -220,17 +310,25 @@ keys across tenants).
 
 ## Alternatives considered
 
+- **Guards return the name; no `cache_namespace`.** Rejected: a `foo!` method whose
+  return value you depend on for a String is non-idiomatic (bangs assert; they return
+  `true`/`self`). `cache_namespace` carries the value role honestly; `require_tenant!`
+  stays an assertion (its name return is a documented bonus).
+- **Deprecated aliases for `inside_tenant?` / `assert_inside_tenant!`.** Rejected:
+  pre-1.0 alpha; a clean rename beats carrying two names for the same axis.
+- **`require_default_tenant!` passes when `default_tenant` is nil.** Rejected: a
+  `nil == nil` pass produces an empty global namespace — a silent leak. It raises
+  `DefaultTenantNotConfigured` instead.
+- **Single fail-closed `config.cache_store` as the headline recipe.** Rejected as the
+  *headline*: it weaponizes the default `Rails.cache`, raising on boot/console/gem
+  cache calls. Demoted to the strict opt-in; the two-store split is the headline.
 - **One overloaded `require_tenant!(expected = :any)`** with `:default`/name
-  sentinels. Rejected: one method, two contracts; the `:default` and named cases
-  read with different (effective vs exact) semantics. The split is more teachable.
-- **`without_tenant { }`** mirroring `acts_as_tenant`. Rejected: row-level
-  vocabulary that misleads in a connection-isolation gem — there is always an
-  effective default tenant. `with_default_tenant` (switch + restore) is the honest
-  framing.
+  sentinels. Rejected: one method, two contracts (effective vs exact). The split is
+  more teachable.
+- **`without_tenant { }`** mirroring `acts_as_tenant`. Rejected: row-level vocabulary
+  that misleads in a connection-isolation gem — there is always an effective default
+  tenant. `with_default_tenant` (enter + restore) is the honest framing.
 - **Block forms on the guards** (`require_tenant! { … }`). Rejected: redundant with
-  `switch(tenant) { }`, which already owns context transition. Guards assert;
-  `switch` establishes; conflating them invites nested-switch bugs.
-- **Global default-on query interceptor.** Rejected: wrong layer (see above) and
-  zero coverage for the non-AR leaks this design exists to catch.
-- **Documenting `namespace: -> { Tenant.current }`.** Rejected: demonstrates the
-  unsafe default-by-inertia path; the guard-as-namespace is fail-closed.
+  `switch(tenant) { }`, which already owns context transition.
+- **Global default-on query interceptor.** Rejected: wrong layer, and zero coverage
+  for the non-AR leaks this design exists to catch.
