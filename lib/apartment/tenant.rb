@@ -43,24 +43,23 @@ module Apartment
         switch!(Apartment.config&.default_tenant)
       end
 
-      # Predicate: was a tenant explicitly entered?
+      # Predicate: was a tenant explicitly entered? (Explicitness axis.)
       # Reads Current.tenant directly (not Tenant.current) so it does NOT
-      # consider the default_tenant fallback. Use this when "is there an
-      # explicit tenant context right now?" matters more than "what tenant
-      # is effectively active?" — typically test setup and assertion code.
+      # consider the default_tenant fallback. Use this when "did this code
+      # explicitly enter a tenant?" matters more than "what tenant is
+      # effectively active?" — typically test setup and assertion code.
       #
-      # Note: after Tenant.reset, inside_tenant? returns true. reset enters the
-      # default tenant via switch!, which is an explicit entry. To check
-      # "no tenant ever entered," combine with Current.previous_tenant.nil?.
-      def inside_tenant?
+      # Note: after Tenant.reset, tenant_switched? returns true. reset enters the
+      # default tenant via switch!, which is an explicit entry.
+      def tenant_switched?
         !Current.tenant.nil?
       end
 
-      # Raise if no tenant has been explicitly entered. Test-time guard for
-      # suites that want to fail loudly when ambient writes would land in
-      # the default tenant. No-op when a tenant is active.
-      def assert_inside_tenant!(message: nil)
-        return if inside_tenant?
+      # Raise if no tenant has been explicitly entered. (Explicitness axis.)
+      # Test-time discipline for suites that want to fail loudly when ambient
+      # writes would land in the default tenant. No-op when a tenant is active.
+      def assert_tenant_switched!(message: nil)
+        return if tenant_switched?
 
         raise(Apartment::ApartmentError,
               message ||
