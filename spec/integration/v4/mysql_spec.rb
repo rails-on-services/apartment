@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'rack'
+require 'rack/mock'
 require_relative 'support'
 
 RSpec.describe('v4 MySQL integration', :integration,
@@ -175,6 +177,60 @@ RSpec.describe('v4 MySQL integration', :integration,
         resolved = Apartment.adapter.resolve_connection_config('acme')
         expect(resolved['database']).to(eq('test_acme'))
       end
+    end
+  end
+
+  # Issue #414: a database-per-tenant drop is unambiguous — connecting to the
+  # gone database raises ActiveRecord::NoDatabaseError (MySQL error 1049), so the
+  # fail-safe turns the stale-positive 500 into a 404.
+  describe 'missing-tenant fail-safe (database-per-tenant)' do
+    def drop_database_out_of_band(name)
+      conn = ActiveRecord::Base.connection
+      conn.execute("DROP DATABASE IF EXISTS #{conn.quote_table_name(name)}")
+    end
+
+    it 'distinguishes a dropped database (gone) from a live one' do
+      Apartment.adapter.create('mysql_fs_live')
+      Apartment.adapter.create('mysql_fs_gone')
+      created_tenants.push('mysql_fs_live', 'mysql_fs_gone')
+      drop_database_out_of_band('mysql_fs_gone')
+
+      err = ActiveRecord::NoDatabaseError.new('Unknown database')
+      adapter = Apartment.adapter
+      expect(adapter.tenant_container_gone?(err, 'mysql_fs_gone')).to(be(true))
+      expect(adapter.tenant_container_gone?(err, 'mysql_fs_live')).to(be(false))
+    end
+
+    it 'does not classify a non-NoDatabaseError (missing table in a live db stays 500)' do
+      Apartment.adapter.create('mysql_fs_live')
+      created_tenants << 'mysql_fs_live'
+      err = ActiveRecord::StatementInvalid.new("Table 'x' doesn't exist")
+      expect(Apartment.adapter.tenant_container_gone?(err, 'mysql_fs_live')).to(be(false))
+    end
+
+    it 'returns 404 (TenantNotFound) when the elevator switches to a dropped database' do
+      Apartment.clear_config
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { ['mysql_fs_req'] } # validator sees it as valid (stale positive)
+        c.default_tenant = 'default'
+        c.check_pending_migrations = false
+      end
+      Apartment.adapter = V4IntegrationHelper.build_adapter(@config)
+      Apartment.activate!
+
+      Apartment.adapter.create('mysql_fs_req')
+      created_tenants << 'mysql_fs_req'
+      drop_database_out_of_band('mysql_fs_req')
+
+      app = ->(_env) { [200, {}, [ActiveRecord::Base.connection.select_value('SELECT 1').to_s]] }
+      elevator = Apartment::Elevators::Generic.new(app, ->(_req) { 'mysql_fs_req' })
+      validator = Apartment.tenant_validator
+      allow(validator).to(receive(:evict).and_call_original)
+
+      expect { elevator.call(Rack::MockRequest.env_for('http://example.com/')) }
+        .to(raise_error(Apartment::TenantNotFound, /mysql_fs_req/))
+      expect(validator).to(have_received(:evict).with('mysql_fs_req'))
     end
   end
 end

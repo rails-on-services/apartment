@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'rack'
+require 'rack/mock'
 require_relative 'support'
 
 RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
@@ -27,6 +29,7 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
     apt_db_tenant apt_db_drop_test apt_db_dup
     apt_db_iso_a apt_db_iso_b
     test_apt_env_tenant
+    apt_db_fs_live apt_db_fs_gone apt_db_fs_req
   ].freeze
   # rubocop:enable Lint/ConstantDefinitionInBlock
 
@@ -183,6 +186,55 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
 
       resolved = Apartment.adapter.resolve_connection_config('acme')
       expect(resolved['database']).to(eq('test_acme'))
+    end
+  end
+
+  # Issue #414: a database-per-tenant drop is unambiguous — connecting to the
+  # gone database raises ActiveRecord::NoDatabaseError (PG SQLSTATE 3D000), so
+  # the fail-safe turns the stale-positive 500 into a 404.
+  describe 'missing-tenant fail-safe (database-per-tenant)' do
+    it 'distinguishes a dropped database (gone) from a live one' do
+      Apartment.adapter.create('apt_db_fs_live')
+      Apartment.adapter.create('apt_db_fs_gone')
+      created_tenants.push('apt_db_fs_live', 'apt_db_fs_gone')
+      force_drop_database('apt_db_fs_gone') # out-of-band drop
+
+      err = ActiveRecord::NoDatabaseError.new('database does not exist')
+      adapter = Apartment.adapter
+      expect(adapter.tenant_container_gone?(err, 'apt_db_fs_gone')).to(be(true))
+      expect(adapter.tenant_container_gone?(err, 'apt_db_fs_live')).to(be(false))
+    end
+
+    it 'does not classify a non-NoDatabaseError (missing table in a live db stays 500)' do
+      Apartment.adapter.create('apt_db_fs_live')
+      created_tenants << 'apt_db_fs_live'
+      err = ActiveRecord::StatementInvalid.new('relation "x" does not exist')
+      expect(Apartment.adapter.tenant_container_gone?(err, 'apt_db_fs_live')).to(be(false))
+    end
+
+    it 'returns 404 (TenantNotFound) when the elevator switches to a dropped database' do
+      Apartment.clear_config
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { ['apt_db_fs_req'] } # validator sees it as valid (stale positive)
+        c.default_tenant = @config['database']
+        c.check_pending_migrations = false
+      end
+      Apartment.adapter = Apartment::Adapters::PostgresqlDatabaseAdapter.new(@config.transform_keys(&:to_sym))
+      Apartment.activate!
+
+      Apartment.adapter.create('apt_db_fs_req')
+      created_tenants << 'apt_db_fs_req'
+      force_drop_database('apt_db_fs_req') # out-of-band drop
+
+      app = ->(_env) { [200, {}, [ActiveRecord::Base.connection.select_value('SELECT 1').to_s]] }
+      elevator = Apartment::Elevators::Generic.new(app, ->(_req) { 'apt_db_fs_req' })
+      validator = Apartment.tenant_validator
+      allow(validator).to(receive(:evict).and_call_original)
+
+      expect { elevator.call(Rack::MockRequest.env_for('http://example.com/')) }
+        .to(raise_error(Apartment::TenantNotFound, /apt_db_fs_req/))
+      expect(validator).to(have_received(:evict).with('apt_db_fs_req'))
     end
   end
 end

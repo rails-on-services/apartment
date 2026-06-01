@@ -162,4 +162,14 @@ RSpec.describe(Apartment::Adapters::Sqlite3Adapter) do
       adapter.drop('acme')
     end
   end
+
+  describe 'missing-tenant fail-safe' do
+    # Intentionally NOT implemented for SQLite: a dropped file auto-recreates
+    # empty on connect, so there is no sound "container gone" signal. Keeping the
+    # conservative default means the elevator never wraps the switch and never
+    # false-404s a valid-but-empty tenant. See the adapter comment / design doc.
+    it 'keeps the conservative default (no fail-safe rescue)' do
+      expect(adapter.failsafe_error_classes).to(eq([]))
+    end
+  end
 end

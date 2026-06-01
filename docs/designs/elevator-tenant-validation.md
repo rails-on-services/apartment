@@ -187,15 +187,66 @@ and the failure during that one request is a 404, not a 500. Mechanics:
 - The probe runs on the **default** connection: `Tenant.switch`'s ensure-block
   has already restored `Current.tenant` before the rescue runs, so the catalog
   lookup targets the default pool, not the gone tenant.
-- This is engine-specific. PostgreSQL schema strategy implements it; the other
-  adapters inherit a conservative default (`failsafe_error_classes == []`) that
-  disables the rescue, so a drop on those engines still lingers until the TTL
-  until their override lands. The fail-safe never converts an error it cannot
-  positively classify, and degrades to a plain switch when the adapter cannot be
-  resolved.
+- This is engine-specific. PostgreSQL schema strategy, PostgreSQL
+  database-per-tenant, and MySQL (and Trilogy, by inheritance) implement it;
+  SQLite **intentionally** keeps the conservative default (see below). The
+  database-per-tenant engines key on `ActiveRecord::NoDatabaseError` (unambiguous
+  — connecting to a dropped database fails outright), confirmed by a
+  `pg_database` / `information_schema.schemata` probe; the schema strategy keys on
+  the ambiguous `42P01` and leans entirely on the `to_regnamespace` probe. The
+  fail-safe never converts an error it cannot positively classify, and degrades
+  to a plain switch when the adapter cannot be resolved.
+
+**SQLite — no fail-safe by design.** Unlike the catalog-backed engines, SQLite
+offers no sound "container gone" signal, verified empirically: dropping a tenant
+deletes its file, but the next connection **auto-recreates it empty**, so by the
+time the elevator's rescue runs `File.exist?` is already `true` and the only
+query error is `SQLite3::SQLException` "no such table" (`StatementInvalid`) —
+indistinguishable from a missing table in a live tenant *or* a freshly created
+tenant whose schema has not been loaded (`schema_load_strategy` defaults to
+`nil`). A zero-user-tables heuristic would 404 valid-but-empty tenants, a
+*worse* failure than the 500 it replaces (a 404 asserts the tenant does not
+exist). There is no authoritative catalog to consult, and the auto-create
+behavior is load-bearing — `create_tenant` relies on create-on-connect — so it
+cannot be disabled to force a clean missing-file error at connect. Nor does a
+*pre-switch* `File.exist?` check work: `create_tenant` only `mkdir_p`s the
+directory, and with `schema_load_strategy = nil` the `create` path never
+connects, so a validly created tenant has **no file at all** until its first
+request — a pre-switch existence check would false-404 that brand-new tenant. SQLite
+file-per-tenant is a dev/test strategy rather than a multi-process production
+target, so the cross-process drop gap this feature guards barely applies.
+`Sqlite3Adapter` therefore keeps `failsafe_error_classes == []` and the elevator
+runs a plain switch — a drop falls back to the pre-existing behavior.
 - Eviction is best-effort: a `tenant_validator` of `false` or a custom callable
   with no `#evict` still gets the 404 for a confirmed-gone tenant; only the
   built-in validator's positive set is updated.
+
+**Limitation — warm connection pools (database-per-tenant only).** The
+database-per-tenant fail-safe keys on `ActiveRecord::NoDatabaseError`, which the
+adapter raises when *establishing* a connection to a missing database — i.e. on a
+**cold** pool (a process serving the tenant for the first time, or after the
+`PoolReaper` evicted its pool). That is the common stale-positive shape and is
+fully covered. A **warm** pool (an open connection to a database that is then
+dropped out-of-band) behaves differently and engine-specifically, verified
+against PostgreSQL 18 and MySQL 8.4:
+
+- *PostgreSQL* requires terminating a database's connections before
+  `DROP DATABASE`, so the warm connection dies: the first post-drop request
+  raises `ActiveRecord::ConnectionFailed` (not classified → 500), then the pool
+  discards the dead connection and every subsequent request reconnects into
+  `NoDatabaseError` → 404. The gap is **one request**, self-healing.
+- *MySQL* keeps the warm connection alive across the drop; a query that does not
+  reference a table in the gone database (e.g. `SELECT 1`) still succeeds, and a
+  query that does fails as a table/`no database selected` error, not
+  `NoDatabaseError`. Warm-pool drops are therefore largely undetected until the
+  pool is recycled.
+
+Schema-per-tenant has no warm-pool gap: the shared connection survives a
+`DROP SCHEMA` and the next query fails with the classified `42P01`. Closing the
+database-per-tenant warm-pool gap would mean also classifying connection-reset
+errors gated by the existence probe — a deliberately deferred broadening, since
+the gap is small (PG) or recycles quickly, and connection-error classification is
+a larger, separate decision.
 
 **Limitation — errors during `@app.call`, not deferred body enumeration.** The
 rescue wraps `@app.call`, so it only sees errors raised while the app *builds*
