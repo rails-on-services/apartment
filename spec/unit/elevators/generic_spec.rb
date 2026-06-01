@@ -219,6 +219,18 @@ RSpec.describe(Apartment::Elevators::Generic) do
       expect(elevator.call(env)).to(eq([404, {}, ['gone: acme']]))
     end
 
+    it 'still 404s without evicting when the validator cannot evict (validation disabled / custom callable)' do
+      stub_adapter(gone: true)
+      # config.tenant_validator = false resolves to a bare lambda with no #evict;
+      # the fail-safe must still convert the confirmed drop to a 404, not raise
+      # NoMethodError trying to evict.
+      allow(Apartment).to(receive(:tenant_validator).and_return(->(_name) { true }))
+      allow(Apartment::Tenant).to(receive(:switch).with('acme').and_raise(db_error_class, 'schema gone'))
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound, /acme/))
+    end
+
     it 're-raises the original error when the container still exists (not a drop)' do
       stub_adapter(gone: false)
       allow(Apartment::Tenant).to(receive(:switch).with('acme').and_raise(db_error_class, 'real bug'))

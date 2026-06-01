@@ -193,6 +193,18 @@ and the failure during that one request is a 404, not a 500. Mechanics:
   until their override lands. The fail-safe never converts an error it cannot
   positively classify, and degrades to a plain switch when the adapter cannot be
   resolved.
+- Eviction is best-effort: a `tenant_validator` of `false` or a custom callable
+  with no `#evict` still gets the 404 for a confirmed-gone tenant; only the
+  built-in validator's positive set is updated.
+
+**Limitation — errors during `@app.call`, not deferred body enumeration.** The
+rescue wraps `@app.call`, so it only sees errors raised while the app *builds*
+the response. A lazy/streaming Rack body (`ActionController::Live`, an
+enumerator) is enumerated by the server *after* `@app.call` returns — by which
+point `switch`'s ensure-block has already restored `Current.tenant`, so a query
+during body streaming is outside both the tenant context and this rescue. Such a
+case surfaces as the pre-existing error, not a 404. This matches the broader v4
+streaming caveat; the fail-safe does not change it.
 
 The fail-safe heals *drops* reactively but it is not cross-process
 *synchronization*: a process that never receives a request for a dropped tenant

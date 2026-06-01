@@ -44,8 +44,14 @@ module Apartment
       # (PG::UndefinedTable, 42P01). That is the same shape as a missing table in
       # a *live* schema, so #tenant_container_exists? does the disambiguating
       # to_regnamespace check.
+      #
+      # ApartmentError is included because ConnectionHandling wraps errors raised
+      # during pool resolution (e.g. the dev-mode pending-migration check, which
+      # queries schema_migrations in the gone schema) as ApartmentError with the
+      # StatementInvalid as #cause; #container_error? then unwraps and classifies
+      # it the same as the query-time case, and re-raises any other ApartmentError.
       def failsafe_error_classes
-        [ActiveRecord::StatementInvalid]
+        [ActiveRecord::StatementInvalid, Apartment::ApartmentError]
       end
 
       protected

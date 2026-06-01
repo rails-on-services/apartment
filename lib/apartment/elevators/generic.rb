@@ -67,7 +67,12 @@ module Apartment
         rescue *classes => e
           raise unless adapter.tenant_container_gone?(e, tenant)
 
-          Apartment.tenant_validator.evict(tenant)
+          # Eviction is best-effort: config.tenant_validator may be `false` (a
+          # bare always-valid lambda) or a custom callable with no #evict. The
+          # 404 for a confirmed-gone tenant stands regardless; only the built-in
+          # validator's positive set is memoized.
+          validator = Apartment.tenant_validator
+          validator.evict(tenant) if validator.respond_to?(:evict)
           handle_tenant_not_found(tenant, request)
         end
       end

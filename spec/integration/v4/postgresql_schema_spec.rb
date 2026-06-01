@@ -210,6 +210,19 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
       e
     end
 
+    # Wrap a cause in Apartment::ApartmentError, mirroring how ConnectionHandling
+    # re-raises pool-resolution failures (the dropped-schema error can surface
+    # there, wrapped, in dev when check_pending_migrations queries the gone schema).
+    def wrapped_in_apartment_error(cause)
+      begin
+        raise(cause)
+      rescue StandardError
+        raise(Apartment::ApartmentError, 'Failed to resolve connection pool')
+      end
+    rescue Apartment::ApartmentError => e
+      e
+    end
+
     it 'distinguishes a dropped schema (gone) from a live one (a real app error)' do
       Apartment.adapter.create('failsafe_live')
       Apartment.adapter.create('failsafe_gone')
@@ -221,6 +234,21 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
       adapter = Apartment.adapter
       expect(adapter.tenant_container_gone?(undefined_table_error, 'failsafe_gone')).to(be(true))
       expect(adapter.tenant_container_gone?(undefined_table_error, 'failsafe_live')).to(be(false))
+    end
+
+    it 'classifies a StatementInvalid wrapped in ApartmentError (pool-resolution path)' do
+      Apartment.adapter.create('failsafe_wrapped')
+      created_tenants << 'failsafe_wrapped'
+      ActiveRecord::Base.connection.execute('DROP SCHEMA "failsafe_wrapped" CASCADE')
+      wrapped = wrapped_in_apartment_error(undefined_table_error)
+
+      expect(wrapped.cause).to(be_a(ActiveRecord::StatementInvalid)) # sanity: cause preserved
+      expect(Apartment.adapter.tenant_container_gone?(wrapped, 'failsafe_wrapped')).to(be(true))
+    end
+
+    it 're-raises an ApartmentError that does not wrap a container error' do
+      bare = Apartment::PendingMigrationError.new('acme')
+      expect(Apartment.adapter.tenant_container_gone?(bare, 'acme')).to(be(false))
     end
 
     it 'returns 404 (TenantNotFound) instead of 500 when the elevator switches to a dropped schema' do
