@@ -77,4 +77,33 @@ RSpec.describe('Apartment error hierarchy') do
       expect(error.tenant).to(be_nil)
     end
   end
+
+  describe Apartment::TenantRequired do
+    it 'is an ApartmentError and names the effective tenant' do
+      error = described_class.new('public')
+      expect(error).to(be_a(Apartment::ApartmentError))
+      expect(error.current).to(eq('public'))
+      expect(error.message).to(match(/non-default tenant/))
+      expect(error.message).to(match(/"public"/))
+    end
+  end
+
+  describe Apartment::DefaultTenantRequired do
+    it 'is an ApartmentError and names expected default vs actual' do
+      error = described_class.new('acme', 'public')
+      expect(error).to(be_a(Apartment::ApartmentError))
+      expect(error.current).to(eq('acme'))
+      expect(error.default).to(eq('public'))
+      expect(error.message).to(match(/"public"/))
+      expect(error.message).to(match(/"acme"/))
+    end
+  end
+
+  describe Apartment::DefaultTenantNotConfigured do
+    it 'is an ApartmentError with a configuration message' do
+      error = described_class.new
+      expect(error).to(be_a(Apartment::ApartmentError))
+      expect(error.message).to(match(/default_tenant/))
+    end
+  end
 end
