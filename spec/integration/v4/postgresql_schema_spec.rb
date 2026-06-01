@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'rack'
+require 'rack/mock'
 require_relative 'support'
 
 RSpec.describe('v4 PostgreSQL schema integration', :integration,
@@ -193,6 +195,86 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
     Apartment::Tenant.switch('indie_b') do
       names = ActiveRecord::Base.connection.select_values('SELECT name FROM widgets ORDER BY name')
       expect(names).to(eq(%w[beta]))
+    end
+  end
+
+  # Issue #414: a tenant dropped by another process lingers as a stale positive
+  # in this process's validator until its TTL. The switch then proceeds and the
+  # first query hits a missing schema. The fail-safe turns that 500 into a 404.
+  describe 'missing-tenant fail-safe' do
+    # A real StatementInvalid (PG::UndefinedTable / 42P01) from the default
+    # connection — the same error class a dropped-schema query raises.
+    def undefined_table_error
+      ActiveRecord::Base.connection.select_value('SELECT 1 FROM definitely_missing_xyz')
+    rescue ActiveRecord::StatementInvalid => e
+      e
+    end
+
+    # Wrap a cause in Apartment::ApartmentError, mirroring how ConnectionHandling
+    # re-raises pool-resolution failures (the dropped-schema error can surface
+    # there, wrapped, in dev when check_pending_migrations queries the gone schema).
+    def wrapped_in_apartment_error(cause)
+      begin
+        raise(cause)
+      rescue StandardError
+        raise(Apartment::ApartmentError, 'Failed to resolve connection pool')
+      end
+    rescue Apartment::ApartmentError => e
+      e
+    end
+
+    it 'distinguishes a dropped schema (gone) from a live one (a real app error)' do
+      Apartment.adapter.create('failsafe_live')
+      Apartment.adapter.create('failsafe_gone')
+      created_tenants.push('failsafe_live', 'failsafe_gone')
+      # Simulate a cross-process drop: remove the schema WITHOUT notifying this
+      # process's validator, so to_regnamespace is the only ground truth.
+      ActiveRecord::Base.connection.execute('DROP SCHEMA "failsafe_gone" CASCADE')
+
+      adapter = Apartment.adapter
+      expect(adapter.tenant_container_gone?(undefined_table_error, 'failsafe_gone')).to(be(true))
+      expect(adapter.tenant_container_gone?(undefined_table_error, 'failsafe_live')).to(be(false))
+    end
+
+    it 'classifies a StatementInvalid wrapped in ApartmentError (pool-resolution path)' do
+      Apartment.adapter.create('failsafe_wrapped')
+      created_tenants << 'failsafe_wrapped'
+      ActiveRecord::Base.connection.execute('DROP SCHEMA "failsafe_wrapped" CASCADE')
+      wrapped = wrapped_in_apartment_error(undefined_table_error)
+
+      expect(wrapped.cause).to(be_a(ActiveRecord::StatementInvalid)) # sanity: cause preserved
+      expect(Apartment.adapter.tenant_container_gone?(wrapped, 'failsafe_wrapped')).to(be(true))
+    end
+
+    it 're-raises an ApartmentError that does not wrap a container error' do
+      bare = Apartment::PendingMigrationError.new('acme')
+      expect(Apartment.adapter.tenant_container_gone?(bare, 'acme')).to(be(false))
+    end
+
+    it 'returns 404 (TenantNotFound) instead of 500 when the elevator switches to a dropped schema' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { ['failsafe_req'] } # validator sees it as valid (stale positive)
+        c.check_pending_migrations = false
+      end
+      config = V4IntegrationHelper.default_connection_config(tmp_dir: tmp_dir)
+      Apartment.adapter = V4IntegrationHelper.build_adapter(config)
+      Apartment.activate!
+
+      Apartment.adapter.create('failsafe_req')
+      created_tenants << 'failsafe_req'
+      ActiveRecord::Base.connection.execute('DROP SCHEMA "failsafe_req" CASCADE') # out-of-band drop
+
+      app = ->(_env) { [200, {}, [ActiveRecord::Base.connection.select_value('SELECT 1 FROM some_table').to_s]] }
+      elevator = Apartment::Elevators::Generic.new(app, ->(_req) { 'failsafe_req' })
+
+      # The processor hardcodes the tenant, so the host is irrelevant — keep it a
+      # valid hostname (rack 3.2+ rejects underscores in the registry part).
+      expect { elevator.call(Rack::MockRequest.env_for('http://example.com/')) }
+        .to(raise_error(Apartment::TenantNotFound, /failsafe_req/))
+      # The stale positive is evicted, so the next request 404s without re-querying the gone schema.
+      expect(Apartment.tenant_validator.call('failsafe_req')).to(be(false))
     end
   end
 end

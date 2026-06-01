@@ -119,6 +119,38 @@ RSpec.describe(Apartment::TenantValidator) do
     end
   end
 
+  describe '#evict' do
+    it 'removes a tenant from the positive set so it no longer validates' do
+      configure(-> { %w[acme widgets] })
+      # A long rebuild interval keeps rebuild-on-miss from immediately
+      # re-adding the name from the (still-listing) provider, isolating the
+      # eviction's effect — the fail-safe relies on this to 404 a just-dropped
+      # tenant in the window before a rebuild reconciles with the source.
+      validator = build_validator(rebuild_interval: 3600)
+      expect(validator.call('widgets')).to(be(true))
+      validator.evict('widgets')
+      expect(validator.call('widgets')).to(be(false))
+    end
+
+    it 'preserves an eviction that lands mid-rebuild' do
+      provider_running = Queue.new
+      finish_provider = Queue.new
+      configure(lambda {
+        provider_running << true
+        finish_provider.pop
+        %w[acme widgets] # the provider snapshot still lists widgets
+      })
+      validator = build_validator(rebuild_interval: 3600)
+      builder = Thread.new { validator.call('acme') }
+      provider_running.pop # the rebuild is inside provider.call
+      validator.evict('widgets')
+      finish_provider << true
+      builder.join
+
+      expect(validator.call('widgets')).to(be(false))
+    end
+  end
+
   describe 'fail-open on source error' do
     it 'allows any name when tenants_provider raises' do
       configure(-> { raise(StandardError, 'provider down') })

@@ -164,9 +164,52 @@ problem.
 The registry is per-process. With several app processes or containers, a
 `Tenant.create` in one process does not reach the others' registries directly —
 but rebuild-on-miss heals it: the first request naming the new tenant on any
-process rebuilds that process's set. A *dropped* tenant lingers in other
-processes' sets until their TTL; a request to it in that window degrades to the
-pre-existing behavior (a database error), not a data leak.
+process rebuilds that process's set.
+
+A *dropped* tenant is a stale **positive** in other processes' sets until their
+TTL. The **request-path fail-safe** bounds that window to a single request per
+process rather than a full TTL: when the elevator switches into a tenant whose
+container the adapter recognizes as gone, it evicts the name locally and routes
+through the not-found handler (a 404), instead of surfacing the pre-existing
+database error (a 500). So a cross-process drop self-heals on the *first*
+request that names it on each process — the same latency profile as a create —
+and the failure during that one request is a 404, not a 500. Mechanics:
+
+- The elevator wraps `Tenant.switch { @app.call }` and rescues only the error
+  classes the adapter declares via `failsafe_error_classes`. On such an error it
+  asks `adapter.tenant_container_gone?(error, name)`, which pairs a cheap
+  error-shape check with an **authoritative existence probe** (for PG schemas,
+  `to_regnamespace` on the default connection). Only a *confirmed*-missing
+  container converts to a 404 and evicts; anything else — a missing table in a
+  live tenant, a connection failure — re-raises unchanged. A confirmed drop also
+  calls `TenantValidator#evict`, so subsequent requests on that process 404
+  without re-querying the gone container.
+- The probe runs on the **default** connection: `Tenant.switch`'s ensure-block
+  has already restored `Current.tenant` before the rescue runs, so the catalog
+  lookup targets the default pool, not the gone tenant.
+- This is engine-specific. PostgreSQL schema strategy implements it; the other
+  adapters inherit a conservative default (`failsafe_error_classes == []`) that
+  disables the rescue, so a drop on those engines still lingers until the TTL
+  until their override lands. The fail-safe never converts an error it cannot
+  positively classify, and degrades to a plain switch when the adapter cannot be
+  resolved.
+- Eviction is best-effort: a `tenant_validator` of `false` or a custom callable
+  with no `#evict` still gets the 404 for a confirmed-gone tenant; only the
+  built-in validator's positive set is updated.
+
+**Limitation — errors during `@app.call`, not deferred body enumeration.** The
+rescue wraps `@app.call`, so it only sees errors raised while the app *builds*
+the response. A lazy/streaming Rack body (`ActionController::Live`, an
+enumerator) is enumerated by the server *after* `@app.call` returns — by which
+point `switch`'s ensure-block has already restored `Current.tenant`, so a query
+during body streaming is outside both the tenant context and this rescue. Such a
+case surfaces as the pre-existing error, not a 404. This matches the broader v4
+streaming caveat; the fail-safe does not change it.
+
+The fail-safe heals *drops* reactively but it is not cross-process
+*synchronization*: a process that never receives a request for a dropped tenant
+keeps the stale positive until its TTL (harmless — nothing routes to it). Strict,
+immediate, proactive cross-process enforcement is a separate concern (issue #414):
 
 The gem ships **no cache backend**. An app needing strict cross-process
 consistency plugs a custom `tenant_validator` backed by a **dedicated,
