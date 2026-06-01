@@ -56,7 +56,7 @@ module Apartment
       # validator), evict the name from this process and route through the
       # not-found path — turning a lingering-drop 500 into a 404. Any other
       # error, including an app-raised one, re-raises untouched. Adapters that
-      # declare no failsafe error classes skip the rescue entirely. See #414.
+      # declare no failsafe error classes skip the rescue entirely.
       def switch_with_failsafe(tenant, request, &)
         adapter = resolve_adapter
         classes = adapter&.failsafe_error_classes
@@ -75,10 +75,12 @@ module Apartment
       # The memoized adapter, or nil when it cannot be resolved (Apartment
       # unconfigured, or no database connection yet). A nil adapter disables the
       # fail-safe — the switch runs plain, preserving today's behavior — so the
-      # elevator never fails trying to *set up* the fail-safe.
+      # elevator never fails trying to *set up* the fail-safe. The rescue is
+      # scoped to the setup-time failures (unconfigured, or no connection yet) —
+      # a genuine bug in adapter resolution is left to surface, not swallowed.
       def resolve_adapter
         Apartment.adapter
-      rescue StandardError
+      rescue Apartment::ApartmentError, ActiveRecord::ConnectionNotEstablished
         nil
       end
 

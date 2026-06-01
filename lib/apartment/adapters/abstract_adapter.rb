@@ -106,7 +106,7 @@ module Apartment
         false
       end
 
-      # Request-path fail-safe contract (issue #414). The elevator wraps the
+      # Request-path fail-safe contract. The elevator wraps the
       # tenant switch; on one of these error classes it asks
       # #tenant_container_gone? whether the tenant's storage actually vanished (a
       # cross-process drop) rather than an app-level failure. An empty list
@@ -215,7 +215,7 @@ module Apartment
 
       private
 
-      # --- Missing-tenant fail-safe seams (issue #414) ------------------------
+      # --- Missing-tenant fail-safe seams -------------------------------------
 
       # Does +error+ look like a missing-container error for this engine?
       # Base: never, so the default adapter classifies nothing.

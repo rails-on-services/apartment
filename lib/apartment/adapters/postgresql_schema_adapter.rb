@@ -43,7 +43,7 @@ module Apartment
       # surfaces on the first query as ActiveRecord::StatementInvalid
       # (PG::UndefinedTable, 42P01). That is the same shape as a missing table in
       # a *live* schema, so #tenant_container_exists? does the disambiguating
-      # to_regnamespace check. See issue #414.
+      # to_regnamespace check.
       def failsafe_error_classes
         [ActiveRecord::StatementInvalid]
       end
