@@ -110,16 +110,23 @@ module Apartment
       end
 
       # Establish the default/pinned tenant context for the block, then restore
-      # the prior context (including nil) on exit or raise. Enters default via
-      # direct Current assignment — the guard-exempt path that reset/switch! use
-      # — so it is NOT blocked by default_tenant_switch_allowed = false. Use for
-      # pinned/global work (e.g. writing app-wide cache keys).
+      # the prior Current.tenant (including nil) on exit or raise. Enters default
+      # via direct Current assignment — the guard-exempt path that reset/switch!
+      # use — so it is NOT blocked by default_tenant_switch_allowed = false. Use
+      # for pinned/global work (e.g. writing app-wide cache keys).
+      #
+      # Raises DefaultTenantNotConfigured when no default_tenant is configured,
+      # mirroring require_default_tenant! — entering a nil keyspace for pinned
+      # work is a silent leak, not a valid global context.
       def with_default_tenant
         raise(ArgumentError, 'Apartment::Tenant.with_default_tenant requires a block') unless block_given?
 
+        default = Apartment.config&.default_tenant
+        raise(Apartment::DefaultTenantNotConfigured) if default.nil?
+
         previous = Current.tenant
         begin
-          Current.tenant = Apartment.config&.default_tenant
+          Current.tenant = default
           Current.previous_tenant = previous
           yield
         ensure

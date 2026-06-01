@@ -353,7 +353,7 @@ For automatic tenant propagation:
 - [apartment-activejob](https://github.com/rails-on-services/apartment-activejob)
 
 A job that forgets to switch runs in the default tenant — for `Rails.cache` and
-other `Tenant.current`-derived resources that silently contaminates another
+other `Tenant.current`-derived resources that silently contaminate another
 tenant's keyspace. Guard routed work with `Apartment::Tenant.require_tenant!`
 (raises unless a real, non-default tenant is active) and pinned/global work with
 `require_default_tenant!`. See [Tenant-Aware Caching](docs/caching.md) for the

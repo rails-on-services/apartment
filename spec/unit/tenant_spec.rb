@@ -629,7 +629,7 @@ RSpec.describe(Apartment::Tenant) do
 
   describe '.in_tenant? / .in_default_tenant? (identity axis)' do
     it 'A. forgot to switch (inertia -> default): not in tenant, in default' do
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect(described_class.in_tenant?).to(be(false))
       expect(described_class.in_default_tenant?).to(be(true))
     end
@@ -659,7 +659,7 @@ RSpec.describe(Apartment::Tenant) do
         c.default_tenant = nil
       end
       Apartment.adapter = mock_adapter
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect(described_class.in_default_tenant?).to(be(false))
     end
   end
@@ -671,7 +671,7 @@ RSpec.describe(Apartment::Tenant) do
     end
 
     it 'require_tenant! raises TenantRequired on default-by-inertia' do
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect { described_class.require_tenant! }
         .to(raise_error(Apartment::TenantRequired, /non-default tenant/))
     end
@@ -688,7 +688,7 @@ RSpec.describe(Apartment::Tenant) do
     end
 
     it 'require_default_tenant! passes on default-by-inertia' do
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect(described_class.require_default_tenant!).to(eq('public'))
     end
 
@@ -705,7 +705,7 @@ RSpec.describe(Apartment::Tenant) do
         c.default_tenant = nil
       end
       Apartment.adapter = mock_adapter
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect { described_class.require_default_tenant! }
         .to(raise_error(Apartment::DefaultTenantNotConfigured))
     end
@@ -718,7 +718,7 @@ RSpec.describe(Apartment::Tenant) do
     end
 
     it 'raises TenantRequired outside a real tenant (fail-closed for the proc)' do
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect { described_class.cache_namespace }
         .to(raise_error(Apartment::TenantRequired))
     end
@@ -756,7 +756,7 @@ RSpec.describe(Apartment::Tenant) do
     end
 
     it 'restores prior context (including nil) on raise' do
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect do
         described_class.with_default_tenant { raise('boom') }
       end.to(raise_error('boom'))
@@ -771,8 +771,22 @@ RSpec.describe(Apartment::Tenant) do
         c.default_tenant_switch_allowed = false
       end
       Apartment.adapter = mock_adapter
-      Apartment::Current.reset
+      Apartment::Current.tenant = nil
       expect { described_class.with_default_tenant { :ok } }.not_to(raise_error)
+    end
+
+    it 'raises DefaultTenantNotConfigured when no default_tenant is configured' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = nil
+      end
+      Apartment.adapter = mock_adapter
+      described_class.switch!('tenant1')
+      expect { described_class.with_default_tenant { :unreached } }
+        .to(raise_error(Apartment::DefaultTenantNotConfigured))
+      # raises before touching context — prior tenant is preserved
+      expect(described_class.current).to(eq('tenant1'))
     end
   end
 end

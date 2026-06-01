@@ -158,10 +158,14 @@ Apartment::Tenant.with_default_tenant do
 end
 ```
 
-State semantics: requires a block (raises `ArgumentError` otherwise); saves the
-prior `Current.tenant` and restores it (including `nil`) in `ensure`, on both normal
-exit and raise; nests correctly; resets `Current.previous_tenant` like the existing
-`switch` primitives. It must NOT be a plain `switch(config.default_tenant) { }`:
+State semantics: requires a block (raises `ArgumentError` otherwise); raises
+`DefaultTenantNotConfigured` when no `default_tenant` is configured — mirroring
+`require_default_tenant!`, since entering a `nil` keyspace for pinned work is the
+same silent leak (both checks raise *before* touching `Current`, so a failed call
+preserves the prior context); otherwise saves the prior `Current.tenant` and
+restores it (including `nil`) in `ensure`, on both normal exit and raise; nests
+correctly; resets `Current.previous_tenant` like the existing `switch` primitives.
+It must NOT be a plain `switch(config.default_tenant) { }`:
 under strict mode (`default_tenant_switch_allowed = false`),
 `guard_default_tenant_switch!` raises on the block form into default by design —
 `reset` / `switch!` are the sanctioned paths back. Entering default for pinned work
