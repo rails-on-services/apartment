@@ -68,6 +68,20 @@ module Apartment
               'Apartment::Tenant.switch!(tenant).')
       end
 
+      # Predicate: is the effective tenant a real, NON-default tenant?
+      # (Identity axis — reads Tenant.current, default fallback included.)
+      def in_tenant?
+        c = current
+        !c.nil? && c.to_s != Apartment.config&.default_tenant.to_s
+      end
+
+      # Predicate: is the effective tenant the default tenant?
+      # (Identity axis.) False when no default_tenant is configured.
+      def in_default_tenant?
+        default = Apartment.config&.default_tenant
+        !default.nil? && current.to_s == default.to_s
+      end
+
       # Initialize: resolve excluded_models shim, then process pinned models.
       def init
         resolve_excluded_models_shim

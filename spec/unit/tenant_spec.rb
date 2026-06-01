@@ -626,4 +626,41 @@ RSpec.describe(Apartment::Tenant) do
       expect(described_class.pool_stats).to(eq({}))
     end
   end
+
+  describe '.in_tenant? / .in_default_tenant? (identity axis)' do
+    it 'A. forgot to switch (inertia -> default): not in tenant, in default' do
+      Apartment::Current.reset
+      expect(described_class.in_tenant?).to(be(false))
+      expect(described_class.in_default_tenant?).to(be(true))
+    end
+
+    it 'B. explicit switch!(default): not in tenant, in default' do
+      described_class.switch!('public')
+      expect(described_class.in_tenant?).to(be(false))
+      expect(described_class.in_default_tenant?).to(be(true))
+    end
+
+    it 'C. real tenant: in tenant, not in default' do
+      described_class.switch!('tenant1')
+      expect(described_class.in_tenant?).to(be(true))
+      expect(described_class.in_default_tenant?).to(be(false))
+    end
+
+    it 'normalizes symbols against the configured default' do
+      described_class.switch!(:public)
+      expect(described_class.in_tenant?).to(be(false))
+      expect(described_class.in_default_tenant?).to(be(true))
+    end
+
+    it 'in_default_tenant? is false when no default_tenant is configured' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = nil
+      end
+      Apartment.adapter = mock_adapter
+      Apartment::Current.reset
+      expect(described_class.in_default_tenant?).to(be(false))
+    end
+  end
 end
