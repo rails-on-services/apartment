@@ -35,6 +35,10 @@ Apartment::Tenant.with_default_tenant { }  # run a block in the default/pinned c
 Apartment::Tenant.cache_namespace          # require_tenant! + return the name; for namespace procs
 ```
 
+> `tenant_switched?` / `assert_tenant_switched!` are the **explicitness** axis —
+> test discipline only. They pass in the default tenant, so never use them to
+> guard routed cache or job work. Use `require_tenant!` (identity axis) for that.
+
 The predicates resolve across the three context states as follows. Note that
 `in_default_tenant?` passes on default-by-inertia *and* an explicit default — it
 asks "where am I effectively?", not "did I deliberately enter default?". For the
@@ -110,8 +114,20 @@ tenant. Two options, your risk call:
   `Thread.new` — re-establish context in the spawned execution. Under Rails' default
   `:thread` isolation, fibers on one thread would *share* context, which is why v4
   mandates `:fiber`.
-- **`Rails.cache.clear`** on shared Redis wipes every tenant's keyspace. Prefer
-  per-namespace expiry.
+- **`clear` is store-specific — know yours before calling it.**
+  `RedisCacheStore#clear` with a configured `namespace:` deletes only that store's
+  namespace (`PINNED_CACHE.clear` wipes `pinned:*`, the routed store wipes the
+  *current* tenant's namespace); with NO namespace it issues `FLUSHDB` and wipes
+  the entire Redis db — every tenant and every other app sharing it.
+  `MemCacheStore#clear` always flushes the whole server (no namespace scoping).
+- **Key normalization.** Tenant names become part of the Redis key.
+  `cache_namespace` returns `to_s` with no escaping, so names with `:`, whitespace,
+  or Unicode produce surprising keys — keep tenant names within
+  `TenantNameValidator`'s rules.
+- **A real tenant literally named the default** (e.g. a customer slug `"public"`):
+  the identity axis treats it as the default, so `in_tenant?` is false and routed
+  cache is rejected for it — even though connection routing still uses that name.
+  Avoid reusing the `default_tenant` name as a real tenant.
 - **Org-level keys** (shared across a subset of tenants) are neither routed nor
   pinned — use an explicit `"org:#{org_id}"` namespace, not `Tenant.current`.
 - **Job retries** must re-establish tenant context per `perform`.

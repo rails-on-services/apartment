@@ -1,6 +1,6 @@
 # Tenant-Aware Caching & Tenant-Context Guards
 
-Status: draft. Living doc — updated in place as the feature lands. Tracks #427.
+Status: implemented in PR #431 (guards + docs). Living doc — updated in place. Tracks #427.
 
 ## TLDR
 
@@ -272,18 +272,22 @@ a loud one. Default the docs to the first; document the second as the strict opt
   *namespace fragmentation*, but does not stop tenant-derived data from being written
   globally while inside `acme`. Wrap producers of pinned values in
   `with_default_tenant` / assert `require_default_tenant!`.
-- **Per-request `LocalCache`.** ActiveSupport's in-request memory layer keys by the
-  resolved namespace at access time; a mid-request tenant change can serve a stale
-  tenant from local memory while the Redis keys look correct. Don't switch tenants
-  mid-request around cached reads.
-- **Fibers / `Thread.new`.** `Current` is fiber-local and does not propagate to raw
-  `Thread.new`; inside one, the routed store raises (good) or a `current`-based key
-  mis-namespaces (bad). Re-establish context in the spawned execution.
+- **Per-request `LocalCache` with a memoized namespace.** The in-request memory layer
+  keys by the *resolved* namespace, so a mid-request switch normally yields different
+  keys (no stale serve). The narrow risk is code that snapshots the namespace once
+  instead of recomputing it — keep the namespace a live proc.
+- **Fibers / `Thread.new`.** With `isolation_level = :fiber` (the railtie enforces it),
+  `Current` is fiber-local and does not propagate to raw `Thread.new`; inside one, the
+  routed store raises (good) or a `current`-based key mis-namespaces (bad). Re-establish
+  context in the spawned execution. Under Rails' default `:thread` isolation, fibers on
+  one thread share context — another reason v4 mandates `:fiber`.
 - **Key normalization.** Tenant names with `:`, whitespace, or Unicode become part of
   Redis keys. `cache_namespace` returns `to_s`; document escaping expectations and
   keep tenant names within `TenantNameValidator`'s rules.
-- **`Rails.cache.clear` on shared Redis** wipes every tenant's keyspace at once. Flag
-  prominently; prefer per-namespace expiry.
+- **`clear` is store-specific.** `RedisCacheStore#clear` with a `namespace:` deletes
+  only that store's namespace; un-namespaced it issues `FLUSHDB` (whole db).
+  `MemCacheStore#clear` always flushes the entire server. Document per store, not as
+  one blanket "wipes everything."
 - **Shared-across-a-subset (org-level) keys** are neither routed nor pinned. Don't
   force-fit: use an explicit, deliberate namespace key (e.g. `"org:#{org_id}"`), not
   `Tenant.current`.
