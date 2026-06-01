@@ -20,11 +20,11 @@ When set to `false`, the block form `Apartment::Tenant.switch(default_tenant) { 
 
 The flag defaults to `true` for all strategies. New PostgreSQL `:schema` apps that want strict semantics from day one should opt in.
 
-### `Tenant.assert_inside_tenant!`
+### `Tenant.assert_tenant_switched!`
 
 ```ruby
 RSpec.configure do |config|
-  config.before(:each) { Apartment::Tenant.assert_inside_tenant! }
+  config.before(:each) { Apartment::Tenant.assert_tenant_switched! }
 end
 ```
 
@@ -35,10 +35,10 @@ Establish tenant context in a `before(:each)` hook — see [Recommended baseline
 For richer failure messages, pass `message:`:
 
 ```ruby
-Apartment::Tenant.assert_inside_tenant!(message: 'cross_tenant: true required for this spec')
+Apartment::Tenant.assert_tenant_switched!(message: 'cross_tenant: true required for this spec')
 ```
 
-`assert_inside_tenant!` reads `Current.tenant` directly, not `Tenant.current` — so it doesn't see the default-tenant fallback. That's the point: it answers "did this spec explicitly enter a tenant?", not "what tenant is effectively active?".
+`assert_tenant_switched!` reads `Current.tenant` directly, not `Tenant.current` — so it doesn't see the default-tenant fallback. That's the point: it answers "did this spec explicitly enter a tenant?", not "what tenant is effectively active?".
 
 ## `switch`, `switch!`, and `reset`
 
@@ -168,7 +168,7 @@ This keeps the default schema for shared/pinned data (`Apartment::Model` + `pin_
 If you would rather have each spec enter its own tenant — so a forgotten switch fails loudly — drop the `switch!` and assert instead:
 
 ```ruby
-c.before(:each) { Apartment::Tenant.assert_inside_tenant! }
+c.before(:each) { Apartment::Tenant.assert_tenant_switched! }
 ```
 
 Each spec is then responsible for switching, in its own `before(:each)` or in an `around` defined *inside* the example group. A group-level `around` survives the reset; a global `config.around` does not.

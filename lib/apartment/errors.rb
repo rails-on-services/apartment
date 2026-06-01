@@ -79,4 +79,49 @@ module Apartment
       )
     end
   end
+
+  # Raised by Apartment::Tenant.require_tenant! when the effective tenant is the
+  # default (or unset) — routed data must not land in the default keyspace.
+  class TenantRequired < ApartmentError
+    attr_reader :current
+
+    def initialize(current = nil)
+      @current = current
+      super(
+        'Expected an explicit, non-default tenant context, but the effective ' \
+        "tenant is #{current.inspect}. Wrap the work in " \
+        'Apartment::Tenant.switch(name) { ... } — routed data must not use the ' \
+        'default keyspace.'
+      )
+    end
+  end
+
+  # Raised by Apartment::Tenant.require_default_tenant! when the effective tenant
+  # is a real (non-default) tenant — pinned/global work must run in the default.
+  class DefaultTenantRequired < ApartmentError
+    attr_reader :current, :default
+
+    def initialize(current = nil, default = nil)
+      @current = current
+      @default = default
+      super(
+        "Expected the default tenant #{default.inspect}, but the effective " \
+        "tenant is #{current.inspect}. Wrap pinned/global work in " \
+        'Apartment::Tenant.with_default_tenant { ... }.'
+      )
+    end
+  end
+
+  # Raised by Apartment::Tenant.require_default_tenant! and with_default_tenant
+  # when no default_tenant is configured: a pinned keyspace needs an explicitly
+  # named anchor, not nil.
+  class DefaultTenantNotConfigured < ApartmentError
+    def initialize(message = nil)
+      super(
+        message ||
+          'require_default_tenant! needs a configured Apartment.config.default_tenant; ' \
+          'none is set. A pinned keyspace requires an explicitly named default tenant.'
+      )
+    end
+  end
 end

@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 module Apartment
-  module Tenant
-    class << self
+  module Tenant # rubocop:disable Metrics/ModuleLength
+    class << self # rubocop:disable Metrics/ClassLength
       # Switch to a tenant for the duration of the block.
       # Guaranteed cleanup via ensure — tenant context is always restored.
       #
@@ -15,16 +15,18 @@ module Apartment
         guard_default_tenant_switch!(tenant)
 
         previous = Current.tenant
-        Current.tenant = tenant
-        Current.previous_tenant = previous
-        if tagged_logging?
-          Rails.logger.tagged("tenant=#{tenant}", &block)
-        else
-          yield
+        begin
+          Current.tenant = tenant
+          Current.previous_tenant = previous
+          if tagged_logging?
+            Rails.logger.tagged("tenant=#{tenant}", &block)
+          else
+            yield
+          end
+        ensure
+          Current.tenant = previous
+          Current.previous_tenant = nil
         end
-      ensure
-        Current.tenant = previous
-        Current.previous_tenant = nil
       end
 
       # Direct switch without block. Discouraged — prefer switch with block.
@@ -43,30 +45,100 @@ module Apartment
         switch!(Apartment.config&.default_tenant)
       end
 
-      # Predicate: was a tenant explicitly entered?
+      # Predicate: was a tenant explicitly entered? (Explicitness axis.)
       # Reads Current.tenant directly (not Tenant.current) so it does NOT
-      # consider the default_tenant fallback. Use this when "is there an
-      # explicit tenant context right now?" matters more than "what tenant
-      # is effectively active?" — typically test setup and assertion code.
+      # consider the default_tenant fallback. Use this when "did this code
+      # explicitly enter a tenant?" matters more than "what tenant is
+      # effectively active?" — typically test setup and assertion code.
       #
-      # Note: after Tenant.reset, inside_tenant? returns true. reset enters the
-      # default tenant via switch!, which is an explicit entry. To check
-      # "no tenant ever entered," combine with Current.previous_tenant.nil?.
-      def inside_tenant?
+      # Note: after Tenant.reset, tenant_switched? returns true. reset enters the
+      # default tenant via switch!, which is an explicit entry.
+      def tenant_switched?
         !Current.tenant.nil?
       end
 
-      # Raise if no tenant has been explicitly entered. Test-time guard for
-      # suites that want to fail loudly when ambient writes would land in
-      # the default tenant. No-op when a tenant is active.
-      def assert_inside_tenant!(message: nil)
-        return if inside_tenant?
+      # Raise if no tenant has been explicitly entered. (Explicitness axis.)
+      # Test-time discipline for suites that want to fail loudly when ambient
+      # writes would land in the default tenant. No-op when a tenant is active.
+      def assert_tenant_switched!(message: nil)
+        return if tenant_switched?
 
         raise(Apartment::ApartmentError,
               message ||
               'Expected an explicit tenant context, but Apartment::Current.tenant is nil. ' \
               'Wrap the call in Apartment::Tenant.switch(tenant) { ... } or call ' \
               'Apartment::Tenant.switch!(tenant).')
+      end
+
+      # Predicate: is the effective tenant a real, NON-default tenant?
+      # (Identity axis — reads Tenant.current, default fallback included.)
+      # False for nil/empty current (e.g. switch!("") bypasses name validation)
+      # and false when no default_tenant is configured and no tenant is active.
+      def in_tenant?
+        c = current.to_s
+        !c.empty? && c != Apartment.config&.default_tenant.to_s
+      end
+
+      # Predicate: is the effective tenant the default tenant?
+      # (Identity axis.) False when no default_tenant is configured.
+      def in_default_tenant?
+        default = Apartment.config&.default_tenant
+        !default.nil? && current.to_s == default.to_s
+      end
+
+      # Guard: raise unless the effective tenant is a real, non-default tenant.
+      # Returns the normalized tenant name on success (a documented convenience;
+      # the cache recipe uses cache_namespace, not this return, for the proc).
+      def require_tenant!
+        return current.to_s if in_tenant?
+
+        raise(Apartment::TenantRequired, current)
+      end
+
+      # Guard: raise unless the effective tenant is the default tenant. Returns
+      # the normalized default name on success. Raises DefaultTenantNotConfigured
+      # when no default_tenant is configured (a nil keyspace is a silent leak).
+      def require_default_tenant!
+        default = Apartment.config&.default_tenant
+        raise(Apartment::DefaultTenantNotConfigured) if default.nil?
+        return default.to_s if current.to_s == default.to_s
+
+        raise(Apartment::DefaultTenantRequired.new(current, default))
+      end
+
+      # Routed cache namespace helper: asserts a real, non-default tenant and
+      # returns its normalized name. Intended as a fail-closed cache namespace
+      # proc — `namespace: -> { Apartment::Tenant.cache_namespace }`.
+      def cache_namespace
+        require_tenant!
+      end
+
+      # Establish the default/pinned tenant context for the block. On exit or
+      # raise, restores the prior Current.tenant (including nil) and resets
+      # Current.previous_tenant to nil — same single-level (non-stacking) contract
+      # as switch/switch!. Enters default via a direct Current.tenant assignment
+      # that bypasses guard_default_tenant_switch!, so it is NOT blocked by
+      # default_tenant_switch_allowed = false. Use for pinned/global work (e.g.
+      # writing app-wide cache keys).
+      #
+      # Raises DefaultTenantNotConfigured when no default_tenant is configured,
+      # mirroring require_default_tenant! — entering a nil keyspace for pinned
+      # work is a silent leak, not a valid global context.
+      def with_default_tenant
+        raise(ArgumentError, 'Apartment::Tenant.with_default_tenant requires a block') unless block_given?
+
+        default = Apartment.config&.default_tenant
+        raise(Apartment::DefaultTenantNotConfigured) if default.nil?
+
+        previous = Current.tenant
+        begin
+          Current.tenant = default
+          Current.previous_tenant = previous
+          yield
+        ensure
+          Current.tenant = previous
+          Current.previous_tenant = nil
+        end
       end
 
       # Initialize: resolve excluded_models shim, then process pinned models.

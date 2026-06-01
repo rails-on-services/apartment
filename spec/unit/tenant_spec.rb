@@ -110,69 +110,74 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
-  describe '.inside_tenant?' do
+  describe '.tenant_switched?' do
     it 'returns false when Current.tenant is nil' do
       Apartment::Current.tenant = nil
-      expect(described_class.inside_tenant?).to(be(false))
+      expect(described_class.tenant_switched?).to(be(false))
     end
 
     it 'returns true after switch!' do
       described_class.switch!('tenant1')
-      expect(described_class.inside_tenant?).to(be(true))
+      expect(described_class.tenant_switched?).to(be(true))
     end
 
     it 'returns true after reset (reset is an explicit entry into default_tenant)' do
       described_class.switch!('tenant1')
       described_class.reset
       # reset switches to default_tenant ('public') via switch!, which sets
-      # Current.tenant. inside_tenant? reports true — reset is an explicit entry
+      # Current.tenant. tenant_switched? reports true — reset is an explicit entry
       # into the default tenant, distinct from "no tenant ever entered".
-      expect(described_class.inside_tenant?).to(be(true))
+      expect(described_class.tenant_switched?).to(be(true))
     end
 
     it 'returns false outside a switch block, true inside' do
       Apartment::Current.tenant = nil
-      expect(described_class.inside_tenant?).to(be(false))
+      expect(described_class.tenant_switched?).to(be(false))
       described_class.switch('tenant1') do
-        expect(described_class.inside_tenant?).to(be(true))
+        expect(described_class.tenant_switched?).to(be(true))
       end
-      expect(described_class.inside_tenant?).to(be(false))
+      expect(described_class.tenant_switched?).to(be(false))
     end
 
     it 'distinguishes from .current when nothing has been entered' do
       Apartment::Current.tenant = nil
       expect(described_class.current).to(eq('public'))
-      expect(described_class.inside_tenant?).to(be(false))
+      expect(described_class.tenant_switched?).to(be(false))
+    end
+
+    it 'no longer responds to the pre-rename names (no aliases)' do
+      expect(described_class).not_to(respond_to(:inside_tenant?))
+      expect(described_class).not_to(respond_to(:assert_inside_tenant!))
     end
   end
 
-  describe '.assert_inside_tenant!' do
+  describe '.assert_tenant_switched!' do
     it 'raises when Current.tenant is nil' do
       Apartment::Current.tenant = nil
-      expect { described_class.assert_inside_tenant! }
+      expect { described_class.assert_tenant_switched! }
         .to(raise_error(Apartment::ApartmentError, /no explicit tenant context|Current.tenant is nil/))
     end
 
     it 'no-ops when a tenant has been entered' do
       described_class.switch!('tenant1')
-      expect { described_class.assert_inside_tenant! }.not_to(raise_error)
+      expect { described_class.assert_tenant_switched! }.not_to(raise_error)
     end
 
     it 'no-ops inside a switch block' do
       described_class.switch('tenant1') do
-        expect { described_class.assert_inside_tenant! }.not_to(raise_error)
+        expect { described_class.assert_tenant_switched! }.not_to(raise_error)
       end
     end
 
     it 'message points the caller at switch / switch!' do
       Apartment::Current.tenant = nil
-      expect { described_class.assert_inside_tenant! }
+      expect { described_class.assert_tenant_switched! }
         .to(raise_error(/Apartment::Tenant\.switch/))
     end
 
     it 'honors a custom message: kwarg' do
       Apartment::Current.tenant = nil
-      expect { described_class.assert_inside_tenant!(message: 'cross_tenant: true required') }
+      expect { described_class.assert_tenant_switched!(message: 'cross_tenant: true required') }
         .to(raise_error(Apartment::ApartmentError, 'cross_tenant: true required'))
     end
   end
@@ -198,6 +203,13 @@ RSpec.describe(Apartment::Tenant) do
         expect { described_class.switch('public') { :ok } }
           .to(raise_error(Apartment::ApartmentError,
                           /switch\("public"\) is disabled.*default_tenant_switch_allowed/m))
+      end
+
+      it 'preserves the prior tenant context when the guard rejects the switch' do
+        described_class.switch!('tenant1')
+        expect { described_class.switch('public') { :ok } }.to(raise_error(Apartment::ApartmentError))
+        # the guard raises before the switch mutates Current — context survives
+        expect(described_class.current).to(eq('tenant1'))
       end
 
       it 'permits switch into a non-default tenant' do
@@ -619,6 +631,203 @@ RSpec.describe(Apartment::Tenant) do
     it 'returns empty hash when pool_manager is nil' do
       Apartment.clear_config
       expect(described_class.pool_stats).to(eq({}))
+    end
+  end
+
+  describe '.in_tenant? / .in_default_tenant? (identity axis)' do
+    it 'A. forgot to switch (inertia -> default): not in tenant, in default' do
+      Apartment::Current.tenant = nil
+      expect(described_class.in_tenant?).to(be(false))
+      expect(described_class.in_default_tenant?).to(be(true))
+    end
+
+    it 'B. explicit switch!(default): not in tenant, in default' do
+      described_class.switch!('public')
+      expect(described_class.in_tenant?).to(be(false))
+      expect(described_class.in_default_tenant?).to(be(true))
+    end
+
+    it 'C. real tenant: in tenant, not in default' do
+      described_class.switch!('tenant1')
+      expect(described_class.in_tenant?).to(be(true))
+      expect(described_class.in_default_tenant?).to(be(false))
+    end
+
+    it 'normalizes symbols against the configured default' do
+      described_class.switch!(:public)
+      expect(described_class.in_tenant?).to(be(false))
+      expect(described_class.in_default_tenant?).to(be(true))
+    end
+
+    it 'in_default_tenant? is false when no default_tenant is configured' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = nil
+      end
+      Apartment.adapter = mock_adapter
+      Apartment::Current.tenant = nil
+      expect(described_class.in_default_tenant?).to(be(false))
+    end
+  end
+
+  describe '.require_tenant! / .require_default_tenant! (raising guards)' do
+    it 'require_tenant! returns the normalized name inside a real tenant' do
+      described_class.switch!('tenant1')
+      expect(described_class.require_tenant!).to(eq('tenant1'))
+    end
+
+    it 'require_tenant! raises TenantRequired on default-by-inertia' do
+      Apartment::Current.tenant = nil
+      expect { described_class.require_tenant! }
+        .to(raise_error(Apartment::TenantRequired, /non-default tenant/))
+    end
+
+    it 'require_tenant! raises TenantRequired on explicit switch!(default)' do
+      described_class.switch!('public')
+      expect { described_class.require_tenant! }
+        .to(raise_error(Apartment::TenantRequired))
+    end
+
+    it 'require_default_tenant! returns the default name when in default' do
+      described_class.switch!('public')
+      expect(described_class.require_default_tenant!).to(eq('public'))
+    end
+
+    it 'require_default_tenant! passes on default-by-inertia' do
+      Apartment::Current.tenant = nil
+      expect(described_class.require_default_tenant!).to(eq('public'))
+    end
+
+    it 'require_default_tenant! raises DefaultTenantRequired in a real tenant' do
+      described_class.switch!('tenant1')
+      expect { described_class.require_default_tenant! }
+        .to(raise_error(Apartment::DefaultTenantRequired, /"public"/))
+    end
+
+    it 'require_default_tenant! raises DefaultTenantNotConfigured when no default set' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = nil
+      end
+      Apartment.adapter = mock_adapter
+      Apartment::Current.tenant = nil
+      expect { described_class.require_default_tenant! }
+        .to(raise_error(Apartment::DefaultTenantNotConfigured))
+    end
+  end
+
+  describe '.cache_namespace' do
+    it 'returns the normalized tenant name inside a real tenant' do
+      described_class.switch!('tenant1')
+      expect(described_class.cache_namespace).to(eq('tenant1'))
+    end
+
+    it 'raises TenantRequired outside a real tenant (fail-closed for the proc)' do
+      Apartment::Current.tenant = nil
+      expect { described_class.cache_namespace }
+        .to(raise_error(Apartment::TenantRequired))
+    end
+
+    it 'works as a namespace proc' do
+      proc = -> { described_class.cache_namespace }
+      described_class.switch('tenant1') { expect(proc.call).to(eq('tenant1')) }
+    end
+
+    it 'fails closed on an empty-string tenant (switch! bypasses name validation)' do
+      described_class.switch!('')
+      expect(described_class.in_tenant?).to(be(false))
+      expect { described_class.cache_namespace }
+        .to(raise_error(Apartment::TenantRequired))
+    end
+
+    it 'succeeds for a real tenant even when no default_tenant is configured' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = nil
+      end
+      Apartment.adapter = mock_adapter
+      described_class.switch!('tenant1')
+      expect(described_class.require_tenant!).to(eq('tenant1'))
+      expect(described_class.cache_namespace).to(eq('tenant1'))
+    end
+  end
+
+  describe '.with_default_tenant' do
+    it 'requires a block' do
+      expect { described_class.with_default_tenant }
+        .to(raise_error(ArgumentError, /requires a block/))
+    end
+
+    it 'does not clobber the current context when called without a block' do
+      described_class.switch!('tenant1')
+      expect { described_class.with_default_tenant }.to(raise_error(ArgumentError))
+      expect(described_class.current).to(eq('tenant1'))
+    end
+
+    it 'runs the block in the default tenant' do
+      described_class.switch!('tenant1')
+      described_class.with_default_tenant do
+        expect(described_class.current).to(eq('public'))
+        expect(described_class.in_default_tenant?).to(be(true))
+      end
+    end
+
+    it 'restores the prior tenant on normal exit' do
+      described_class.switch!('tenant1')
+      described_class.with_default_tenant { :noop }
+      expect(described_class.current).to(eq('tenant1'))
+    end
+
+    it 'restores prior context (including nil) on raise' do
+      Apartment::Current.tenant = nil
+      expect do
+        described_class.with_default_tenant { raise('boom') }
+      end.to(raise_error('boom'))
+      expect(Apartment::Current.tenant).to(be_nil)
+    end
+
+    it 'bypasses the strict-mode default_tenant switch guard' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = 'public'
+        c.default_tenant_switch_allowed = false
+      end
+      Apartment.adapter = mock_adapter
+      Apartment::Current.tenant = nil
+      expect { described_class.with_default_tenant { :ok } }.not_to(raise_error)
+    end
+
+    it 'raises DefaultTenantNotConfigured when no default_tenant is configured' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = nil
+      end
+      Apartment.adapter = mock_adapter
+      described_class.switch!('tenant1')
+      expect { described_class.with_default_tenant { :unreached } }
+        .to(raise_error(Apartment::DefaultTenantNotConfigured))
+      # raises before touching context — prior tenant is preserved
+      expect(described_class.current).to(eq('tenant1'))
+    end
+
+    it 'nests: restores each enclosing tenant context as blocks unwind' do
+      described_class.switch('tenant1') do
+        described_class.with_default_tenant do
+          expect(described_class.in_default_tenant?).to(be(true))
+          described_class.with_default_tenant { :inner }
+          # inner unwinds back to the (still default) enclosing context
+          expect(described_class.current).to(eq('public'))
+        end
+        # outer with_default_tenant unwinds back to tenant1
+        expect(described_class.current).to(eq('tenant1'))
+      end
+      # the switch block unwinds back to no explicit tenant
+      expect(Apartment::Current.tenant).to(be_nil)
     end
   end
 end

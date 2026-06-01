@@ -72,11 +72,11 @@ Two new predicates and a config flag landed in 4.0.0.alpha3 to support strict te
 
 ```ruby
 # Predicate: was a tenant explicitly entered?
-Apartment::Tenant.inside_tenant?            # reads Current.tenant directly, ignores default fallback
+Apartment::Tenant.tenant_switched?          # reads Current.tenant directly, ignores default fallback
 
 # Test-time assertion: raise when no explicit tenant is active
-Apartment::Tenant.assert_inside_tenant!
-Apartment::Tenant.assert_inside_tenant!(message: 'spec must declare a tenant')
+Apartment::Tenant.assert_tenant_switched!
+Apartment::Tenant.assert_tenant_switched!(message: 'spec must declare a tenant')
 
 # Config: opt-in guard on switch(default_tenant) { ... }
 Apartment.configure do |config|
@@ -85,6 +85,8 @@ end
 ```
 
 `Tenant.reset` and `Tenant.switch!` bypass the guard by design — they are the documented paths back to the default tenant under strict mode. Defaults to `true` (permissive) for all strategies; opt in to `false` for new PostgreSQL `:schema` apps that want strict semantics from day one.
+
+v4 also adds the identity-axis guards for runtime (non-test) code: `require_tenant!` / `require_default_tenant!`, predicates `in_tenant?` / `in_default_tenant?`, `with_default_tenant { }`, and `cache_namespace`. See [Tenant-Aware Caching](./caching.md). The explicitness-axis methods `inside_tenant?` / `assert_inside_tenant!` were **renamed** to `tenant_switched?` / `assert_tenant_switched!` with no aliases.
 
 See [Testing with Apartment v4](./testing.md) for recipe-level guidance on strict discipline, cross-pool transaction visibility, and pinned-model cleanup.
 
