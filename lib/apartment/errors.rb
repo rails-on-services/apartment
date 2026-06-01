@@ -112,8 +112,9 @@ module Apartment
     end
   end
 
-  # Raised by Apartment::Tenant.require_default_tenant! when no default_tenant is
-  # configured: a pinned keyspace needs an explicitly named anchor, not nil.
+  # Raised by Apartment::Tenant.require_default_tenant! and with_default_tenant
+  # when no default_tenant is configured: a pinned keyspace needs an explicitly
+  # named anchor, not nil.
   class DefaultTenantNotConfigured < ApartmentError
     def initialize(message = nil)
       super(

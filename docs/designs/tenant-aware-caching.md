@@ -163,8 +163,10 @@ State semantics: requires a block (raises `ArgumentError` otherwise); raises
 `require_default_tenant!`, since entering a `nil` keyspace for pinned work is the
 same silent leak (both checks raise *before* touching `Current`, so a failed call
 preserves the prior context); otherwise saves the prior `Current.tenant` and
-restores it (including `nil`) in `ensure`, on both normal exit and raise; nests
-correctly; resets `Current.previous_tenant` like the existing `switch` primitives.
+restores it (including `nil`) in `ensure`, on both normal exit and raise. Nesting
+restores `Current.tenant` to the enclosing value at each level; `Current.previous_tenant`
+is reset to `nil` on exit (single-level, non-stacking — the same contract as the
+existing `switch` primitives, not a deeper stack).
 It must NOT be a plain `switch(config.default_tenant) { }`:
 under strict mode (`default_tenant_switch_allowed = false`),
 `guard_default_tenant_switch!` raises on the block form into default by design —

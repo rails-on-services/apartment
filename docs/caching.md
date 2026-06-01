@@ -35,6 +35,21 @@ Apartment::Tenant.with_default_tenant { }  # run a block in the default/pinned c
 Apartment::Tenant.cache_namespace          # require_tenant! + return the name; for namespace procs
 ```
 
+The predicates resolve across the three context states as follows. Note that
+`in_default_tenant?` passes on default-by-inertia *and* an explicit default — it
+asks "where am I effectively?", not "did I deliberately enter default?". For the
+latter (test discipline) use `tenant_switched?`.
+
+| Context state | `tenant_switched?` | `in_tenant?` | `in_default_tenant?` |
+|---|---|---|---|
+| Forgot to switch (default by inertia) | false | false | true |
+| Explicit `switch!(default)` / `reset` | true | false | true |
+| Real tenant (`switch('acme')`) | true | true | false |
+
+(When no `default_tenant` is configured, `in_default_tenant?` is false and both
+predicates can be false at once; the raising guards `require_tenant!` /
+`require_default_tenant!` are exhaustive where the predicates are not.)
+
 ```ruby
 class RebuildFragmentsJob
   def perform(tenant)
@@ -84,11 +99,17 @@ tenant. Two options, your risk call:
 - **Pinned store fixes shape, not provenance.** It stops fragmentation, not
   tenant-derived data being written globally while inside `acme`. Wrap producers
   of pinned values in `with_default_tenant` or assert `require_default_tenant!`.
-- **Per-request `LocalCache`.** ActiveSupport's in-request memory layer keys by
-  the namespace at access time; don't switch tenants mid-request around cached
-  reads, or a stale tenant may be served from memory.
-- **Fibers / `Thread.new`.** `Current` is fiber-local and does not propagate to a
-  raw thread; re-establish context in the spawned execution.
+- **Per-request `LocalCache` with a memoized namespace.** ActiveSupport's
+  in-request memory layer keys by the *resolved* namespace, so a mid-request
+  switch normally yields different keys (no stale serve). The narrow risk is
+  custom code that captures the namespace once instead of recomputing it — keep
+  the namespace a live proc (`-> { cache_namespace }`), never a value snapshotted
+  at store construction.
+- **Fibers / `Thread.new`.** With `isolation_level = :fiber` (the v4 railtie
+  enforces it), `Current` is fiber-local and does not propagate into a raw
+  `Thread.new` — re-establish context in the spawned execution. Under Rails' default
+  `:thread` isolation, fibers on one thread would *share* context, which is why v4
+  mandates `:fiber`.
 - **`Rails.cache.clear`** on shared Redis wipes every tenant's keyspace. Prefer
   per-namespace expiry.
 - **Org-level keys** (shared across a subset of tenants) are neither routed nor

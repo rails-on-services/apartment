@@ -15,16 +15,18 @@ module Apartment
         guard_default_tenant_switch!(tenant)
 
         previous = Current.tenant
-        Current.tenant = tenant
-        Current.previous_tenant = previous
-        if tagged_logging?
-          Rails.logger.tagged("tenant=#{tenant}", &block)
-        else
-          yield
+        begin
+          Current.tenant = tenant
+          Current.previous_tenant = previous
+          if tagged_logging?
+            Rails.logger.tagged("tenant=#{tenant}", &block)
+          else
+            yield
+          end
+        ensure
+          Current.tenant = previous
+          Current.previous_tenant = nil
         end
-      ensure
-        Current.tenant = previous
-        Current.previous_tenant = nil
       end
 
       # Direct switch without block. Discouraged — prefer switch with block.
@@ -70,9 +72,11 @@ module Apartment
 
       # Predicate: is the effective tenant a real, NON-default tenant?
       # (Identity axis — reads Tenant.current, default fallback included.)
+      # False for nil/empty current (e.g. switch!("") bypasses name validation)
+      # and false when no default_tenant is configured and no tenant is active.
       def in_tenant?
-        c = current
-        !c.nil? && c.to_s != Apartment.config&.default_tenant.to_s
+        c = current.to_s
+        !c.empty? && c != Apartment.config&.default_tenant.to_s
       end
 
       # Predicate: is the effective tenant the default tenant?
@@ -109,11 +113,13 @@ module Apartment
         require_tenant!
       end
 
-      # Establish the default/pinned tenant context for the block, then restore
-      # the prior Current.tenant (including nil) on exit or raise. Enters default
-      # via direct Current assignment — the guard-exempt path that reset/switch!
-      # use — so it is NOT blocked by default_tenant_switch_allowed = false. Use
-      # for pinned/global work (e.g. writing app-wide cache keys).
+      # Establish the default/pinned tenant context for the block. On exit or
+      # raise, restores the prior Current.tenant (including nil) and resets
+      # Current.previous_tenant to nil — same single-level (non-stacking) contract
+      # as switch/switch!. Enters default via a direct Current.tenant assignment
+      # that bypasses guard_default_tenant_switch!, so it is NOT blocked by
+      # default_tenant_switch_allowed = false. Use for pinned/global work (e.g.
+      # writing app-wide cache keys).
       #
       # Raises DefaultTenantNotConfigured when no default_tenant is configured,
       # mirroring require_default_tenant! — entering a nil keyspace for pinned
