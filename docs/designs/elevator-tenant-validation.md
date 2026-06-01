@@ -187,10 +187,15 @@ and the failure during that one request is a 404, not a 500. Mechanics:
 - The probe runs on the **default** connection: `Tenant.switch`'s ensure-block
   has already restored `Current.tenant` before the rescue runs, so the catalog
   lookup targets the default pool, not the gone tenant.
-- This is engine-specific. PostgreSQL schema strategy implements it; the other
-  adapters inherit a conservative default (`failsafe_error_classes == []`) that
-  disables the rescue, so a drop on those engines still lingers until the TTL
-  until their override lands. The fail-safe never converts an error it cannot
+- This is engine-specific. PostgreSQL schema strategy, PostgreSQL
+  database-per-tenant, and MySQL (and Trilogy, by inheritance) implement it;
+  SQLite inherits a conservative default (`failsafe_error_classes == []`) that
+  disables the rescue, so a drop there still lingers until the TTL until its
+  override lands. The database-per-tenant engines key on
+  `ActiveRecord::NoDatabaseError` (unambiguous — connecting to a dropped database
+  fails outright), confirmed by a `pg_database` / `information_schema.schemata`
+  probe; the schema strategy keys on the ambiguous `42P01` and leans entirely on
+  the `to_regnamespace` probe. The fail-safe never converts an error it cannot
   positively classify, and degrades to a plain switch when the adapter cannot be
   resolved.
 - Eviction is best-effort: a `tenant_validator` of `false` or a custom callable

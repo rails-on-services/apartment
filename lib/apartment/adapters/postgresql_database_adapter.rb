@@ -15,6 +15,16 @@ module Apartment
         config.merge('database' => environmentify(tenant))
       end
 
+      # The database-per-tenant missing-tenant error: connecting to a dropped
+      # database raises ActiveRecord::NoDatabaseError (PG SQLSTATE 3D000) — an
+      # unambiguous signal, unlike the schema strategy's 42P01. It surfaces raw at
+      # query time, or wrapped in ApartmentError when ConnectionHandling resolves
+      # the pool (the dev-mode pending-migration check), so both are listed;
+      # #container_error? gates on the unwrapped NoDatabaseError.
+      def failsafe_error_classes
+        [ActiveRecord::NoDatabaseError, Apartment::ApartmentError]
+      end
+
       protected
 
       def create_tenant(tenant)
@@ -42,6 +52,25 @@ module Apartment
       # (GRANT CONNECT on server, table grants inside tenant DB).
       # Use the callable app_role escape hatch for this strategy.
       # See docs/designs/v4-phase5-rbac-roles-schema-cache.md.
+
+      private
+
+      def container_error?(error)
+        error.is_a?(ActiveRecord::NoDatabaseError)
+      end
+
+      # Authoritative existence check on the DEFAULT connection: pg_database is a
+      # cluster-global catalog reachable from any database, and the rescue runs
+      # after switch restored Current.tenant to default. The tenant's database is
+      # the environmentified name. A probe failure means we cannot prove it gone,
+      # so report it as existing and let the original error re-raise.
+      def tenant_container_exists?(tenant)
+        conn = ActiveRecord::Base.connection
+        quoted = conn.quote(environmentify(tenant))
+        !conn.select_value("SELECT 1 FROM pg_database WHERE datname = #{quoted}").nil?
+      rescue StandardError
+        true
+      end
     end
   end
 end
