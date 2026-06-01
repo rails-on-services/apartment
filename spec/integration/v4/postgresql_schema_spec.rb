@@ -241,7 +241,9 @@ RSpec.describe('v4 PostgreSQL schema integration', :integration,
       app = ->(_env) { [200, {}, [ActiveRecord::Base.connection.select_value('SELECT 1 FROM some_table').to_s]] }
       elevator = Apartment::Elevators::Generic.new(app, ->(_req) { 'failsafe_req' })
 
-      expect { elevator.call(Rack::MockRequest.env_for('http://failsafe_req.example.com/')) }
+      # The processor hardcodes the tenant, so the host is irrelevant — keep it a
+      # valid hostname (rack 3.2+ rejects underscores in the registry part).
+      expect { elevator.call(Rack::MockRequest.env_for('http://example.com/')) }
         .to(raise_error(Apartment::TenantNotFound, /failsafe_req/))
       # The stale positive is evicted, so the next request 404s without re-querying the gone schema.
       expect(Apartment.tenant_validator.call('failsafe_req')).to(be(false))
