@@ -16,6 +16,7 @@ Do NOT use `docs/superpowers/specs/` or `docs/superpowers/plans/` — those are 
 **Key documents:**
 - `docs/designs/apartment-v4.md` — v4 design spec
 - `docs/designs/v4-railtie-test-infra.md` — Railtie + test infrastructure design
+- `docs/designs/elevator-tenant-validation.md` — Elevator tenant validation + missing-tenant fail-safe (shipped; see Key Patterns)
 - `docs/plans/apartment-v4/phase-2-adapters.md` — Current phase plan (includes deferred review items)
 
 ## Where to Start
@@ -82,6 +83,8 @@ See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strat
 - **Callbacks**: `ActiveSupport::Callbacks` on `:create` and `:switch` for logging/notification hooks.
 - **Dynamic tenant discovery**: `tenants_provider` is a callable (proc/lambda) that queries the database at runtime.
 - **Tenant name validation**: `TenantNameValidator` does pure in-memory format checks (no DB queries). Enforced in `AbstractAdapter#create` and `ConnectionHandling#connection_pool`. Engine-specific rules for PG identifiers, MySQL names, SQLite paths.
+- **Elevator tenant validation + missing-tenant fail-safe** (design: `docs/designs/elevator-tenant-validation.md`): distinct from name-format validation above. `Apartment::TenantValidator` is a process-local memoized set of valid tenant names; the elevator returns a 404 for an unknown tenant instead of a deep 500. The **request-path fail-safe is shipped** across every catalog-backed engine — PG schema-per-tenant, PG database-per-tenant, MySQL/Trilogy. A tenant dropped by another process self-heals to a 404 within one request per worker: the elevator wraps the switch, and on an adapter-declared error class a strict classifier (`tenant_container_gone?` → `container_error?` + an authoritative `to_regnamespace`/`pg_database`/`information_schema` probe) confirms the drop, evicts the stale positive, and 404s; anything it cannot positively classify re-raises. SQLite is a **reasoned exclusion** (no sound "container gone" signal — a dropped file auto-recreates empty), documented in the adapter, a unit guard, and the design doc.
+  - **Remaining (deferred on purpose):** only the opt-in cross-process **transport seam** — the proactive pub/sub path that would propagate creates/drops without waiting for a request to trip the fail-safe (closing create-latency and the residual warm-pool / SQLite cases). The reactive fail-safe is the evidence base for whether the proactive seam earns a shipped dependency, and no adopter has yet reported a gap it would close. The escape hatch (a custom `tenant_validator` backed by a dedicated, un-namespaced store) remains available in the meantime.
 
 ## Code style
 
