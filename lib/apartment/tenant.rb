@@ -102,6 +102,13 @@ module Apartment
         raise(Apartment::DefaultTenantRequired.new(current, default))
       end
 
+      # Routed cache namespace helper: asserts a real, non-default tenant and
+      # returns its normalized name. Intended as a fail-closed cache namespace
+      # proc — `namespace: -> { Apartment::Tenant.cache_namespace }`.
+      def cache_namespace
+        require_tenant!
+      end
+
       # Initialize: resolve excluded_models shim, then process pinned models.
       def init
         resolve_excluded_models_shim

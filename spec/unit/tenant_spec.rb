@@ -710,4 +710,22 @@ RSpec.describe(Apartment::Tenant) do
         .to(raise_error(Apartment::DefaultTenantNotConfigured))
     end
   end
+
+  describe '.cache_namespace' do
+    it 'returns the normalized tenant name inside a real tenant' do
+      described_class.switch!('tenant1')
+      expect(described_class.cache_namespace).to(eq('tenant1'))
+    end
+
+    it 'raises TenantRequired outside a real tenant (fail-closed for the proc)' do
+      Apartment::Current.reset
+      expect { described_class.cache_namespace }
+        .to(raise_error(Apartment::TenantRequired))
+    end
+
+    it 'works as a namespace proc' do
+      proc = -> { described_class.cache_namespace }
+      described_class.switch('tenant1') { expect(proc.call).to(eq('tenant1')) }
+    end
+  end
 end
