@@ -208,7 +208,11 @@ tenant whose schema has not been loaded (`schema_load_strategy` defaults to
 *worse* failure than the 500 it replaces (a 404 asserts the tenant does not
 exist). There is no authoritative catalog to consult, and the auto-create
 behavior is load-bearing — `create_tenant` relies on create-on-connect — so it
-cannot be disabled to force a clean missing-file error at connect. SQLite
+cannot be disabled to force a clean missing-file error at connect. Nor does a
+*pre-switch* `File.exist?` check work: `create_tenant` only `mkdir_p`s the
+directory, and with `schema_load_strategy = nil` the `create` path never
+connects, so a validly created tenant has **no file at all** until its first
+request — a pre-switch existence check would false-404 that brand-new tenant. SQLite
 file-per-tenant is a dev/test strategy rather than a multi-process production
 target, so the cross-process drop gap this feature guards barely applies.
 `Sqlite3Adapter` therefore keeps `failsafe_error_classes == []` and the elevator
