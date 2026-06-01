@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "rails-mcp-server": {
-      "type": "stdio",
-      "command": "rails-mcp-server",
-      "args": []
-    }
-  }
-}
