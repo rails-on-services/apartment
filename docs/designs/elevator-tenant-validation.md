@@ -202,6 +202,33 @@ and the failure during that one request is a 404, not a 500. Mechanics:
   with no `#evict` still gets the 404 for a confirmed-gone tenant; only the
   built-in validator's positive set is updated.
 
+**Limitation — warm connection pools (database-per-tenant only).** The
+database-per-tenant fail-safe keys on `ActiveRecord::NoDatabaseError`, which the
+adapter raises when *establishing* a connection to a missing database — i.e. on a
+**cold** pool (a process serving the tenant for the first time, or after the
+`PoolReaper` evicted its pool). That is the common stale-positive shape and is
+fully covered. A **warm** pool (an open connection to a database that is then
+dropped out-of-band) behaves differently and engine-specifically, verified
+against PostgreSQL 18 and MySQL 8.4:
+
+- *PostgreSQL* requires terminating a database's connections before
+  `DROP DATABASE`, so the warm connection dies: the first post-drop request
+  raises `ActiveRecord::ConnectionFailed` (not classified → 500), then the pool
+  discards the dead connection and every subsequent request reconnects into
+  `NoDatabaseError` → 404. The gap is **one request**, self-healing.
+- *MySQL* keeps the warm connection alive across the drop; a query that does not
+  reference a table in the gone database (e.g. `SELECT 1`) still succeeds, and a
+  query that does fails as a table/`no database selected` error, not
+  `NoDatabaseError`. Warm-pool drops are therefore largely undetected until the
+  pool is recycled.
+
+Schema-per-tenant has no warm-pool gap: the shared connection survives a
+`DROP SCHEMA` and the next query fails with the classified `42P01`. Closing the
+database-per-tenant warm-pool gap would mean also classifying connection-reset
+errors gated by the existence probe — a deliberately deferred broadening, since
+the gap is small (PG) or recycles quickly, and connection-error classification is
+a larger, separate decision.
+
 **Limitation — errors during `@app.call`, not deferred body enumeration.** The
 rescue wraps `@app.call`, so it only sees errors raised while the app *builds*
 the response. A lazy/streaming Rack body (`ActionController::Live`, an

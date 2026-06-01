@@ -225,10 +225,12 @@ RSpec.describe('v4 MySQL integration', :integration,
 
       app = ->(_env) { [200, {}, [ActiveRecord::Base.connection.select_value('SELECT 1').to_s]] }
       elevator = Apartment::Elevators::Generic.new(app, ->(_req) { 'mysql_fs_req' })
+      validator = Apartment.tenant_validator
+      allow(validator).to(receive(:evict).and_call_original)
 
       expect { elevator.call(Rack::MockRequest.env_for('http://example.com/')) }
         .to(raise_error(Apartment::TenantNotFound, /mysql_fs_req/))
-      expect(Apartment.tenant_validator.call('mysql_fs_req')).to(be(false))
+      expect(validator).to(have_received(:evict).with('mysql_fs_req'))
     end
   end
 end
