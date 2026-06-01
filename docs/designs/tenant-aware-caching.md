@@ -197,9 +197,9 @@ wrong-tenant.
 naïve `current == default` check passes by `nil == nil` — but that yields an empty,
 ambiguous global namespace, which is a leak dressed as a no-op. The guard instead
 raises `DefaultTenantNotConfigured`: a pinned keyspace requires an explicitly named
-anchor. (`in_default_tenant?`, the non-raising predicate, still reflects the literal
-`current == default` equality; the *guard* additionally demands a configured
-default. The doc notes the asymmetry.)
+anchor. The non-raising predicate `in_default_tenant?` is likewise **false** when no
+default is configured — it does not claim you are "in" a default that does not
+exist (avoiding the same `nil == nil` trap the guard rejects).
 
 #### Why call-site asserts, not a global default-on mode
 
