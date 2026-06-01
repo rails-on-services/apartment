@@ -189,15 +189,30 @@ and the failure during that one request is a 404, not a 500. Mechanics:
   lookup targets the default pool, not the gone tenant.
 - This is engine-specific. PostgreSQL schema strategy, PostgreSQL
   database-per-tenant, and MySQL (and Trilogy, by inheritance) implement it;
-  SQLite inherits a conservative default (`failsafe_error_classes == []`) that
-  disables the rescue, so a drop there still lingers until the TTL until its
-  override lands. The database-per-tenant engines key on
-  `ActiveRecord::NoDatabaseError` (unambiguous — connecting to a dropped database
-  fails outright), confirmed by a `pg_database` / `information_schema.schemata`
-  probe; the schema strategy keys on the ambiguous `42P01` and leans entirely on
-  the `to_regnamespace` probe. The fail-safe never converts an error it cannot
-  positively classify, and degrades to a plain switch when the adapter cannot be
-  resolved.
+  SQLite **intentionally** keeps the conservative default (see below). The
+  database-per-tenant engines key on `ActiveRecord::NoDatabaseError` (unambiguous
+  — connecting to a dropped database fails outright), confirmed by a
+  `pg_database` / `information_schema.schemata` probe; the schema strategy keys on
+  the ambiguous `42P01` and leans entirely on the `to_regnamespace` probe. The
+  fail-safe never converts an error it cannot positively classify, and degrades
+  to a plain switch when the adapter cannot be resolved.
+
+**SQLite — no fail-safe by design.** Unlike the catalog-backed engines, SQLite
+offers no sound "container gone" signal, verified empirically: dropping a tenant
+deletes its file, but the next connection **auto-recreates it empty**, so by the
+time the elevator's rescue runs `File.exist?` is already `true` and the only
+query error is `SQLite3::SQLException` "no such table" (`StatementInvalid`) —
+indistinguishable from a missing table in a live tenant *or* a freshly created
+tenant whose schema has not been loaded (`schema_load_strategy` defaults to
+`nil`). A zero-user-tables heuristic would 404 valid-but-empty tenants, a
+*worse* failure than the 500 it replaces (a 404 asserts the tenant does not
+exist). There is no authoritative catalog to consult, and the auto-create
+behavior is load-bearing — `create_tenant` relies on create-on-connect — so it
+cannot be disabled to force a clean missing-file error at connect. SQLite
+file-per-tenant is a dev/test strategy rather than a multi-process production
+target, so the cross-process drop gap this feature guards barely applies.
+`Sqlite3Adapter` therefore keeps `failsafe_error_classes == []` and the elevator
+runs a plain switch — a drop falls back to the pre-existing behavior.
 - Eviction is best-effort: a `tenant_validator` of `false` or a custom callable
   with no `#evict` still gets the 404 for a confirmed-gone tenant; only the
   built-in validator's positive set is updated.

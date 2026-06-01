@@ -18,6 +18,20 @@ module Apartment
         config.merge('database' => File.join(db_dir, "#{environmentify(tenant)}.sqlite3"))
       end
 
+      # No missing-tenant fail-safe override on purpose — keep the conservative
+      # AbstractAdapter default (failsafe_error_classes == []). SQLite gives no
+      # sound "container gone" signal: connecting to a dropped file auto-recreates
+      # it empty, so by the time the elevator's rescue runs File.exist? is true
+      # and the only query error is "no such table" (StatementInvalid) — identical
+      # to a missing table in a live tenant, or to a freshly created tenant with
+      # no schema loaded (schema_load_strategy nil). A zero-tables heuristic would
+      # 404 valid-but-empty tenants; there is no authoritative catalog (unlike
+      # pg_database / information_schema) to distinguish dropped from unpopulated.
+      # Auto-create is also load-bearing — create_tenant relies on it — so it
+      # cannot be disabled to force a clean missing-file error. SQLite file-per-
+      # tenant is a dev/test strategy, not a multi-process target, so the
+      # cross-process drop gap this guards barely applies. See the design doc.
+
       protected
 
       def create_tenant(tenant)
