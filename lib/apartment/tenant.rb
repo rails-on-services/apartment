@@ -109,6 +109,25 @@ module Apartment
         require_tenant!
       end
 
+      # Establish the default/pinned tenant context for the block, then restore
+      # the prior context (including nil) on exit or raise. Enters default via
+      # direct Current assignment — the guard-exempt path that reset/switch! use
+      # — so it is NOT blocked by default_tenant_switch_allowed = false. Use for
+      # pinned/global work (e.g. writing app-wide cache keys).
+      def with_default_tenant
+        raise(ArgumentError, 'Apartment::Tenant.with_default_tenant requires a block') unless block_given?
+
+        previous = Current.tenant
+        begin
+          Current.tenant = Apartment.config&.default_tenant
+          Current.previous_tenant = previous
+          yield
+        ensure
+          Current.tenant = previous
+          Current.previous_tenant = nil
+        end
+      end
+
       # Initialize: resolve excluded_models shim, then process pinned models.
       def init
         resolve_excluded_models_shim

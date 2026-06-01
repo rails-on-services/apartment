@@ -728,4 +728,51 @@ RSpec.describe(Apartment::Tenant) do
       described_class.switch('tenant1') { expect(proc.call).to(eq('tenant1')) }
     end
   end
+
+  describe '.with_default_tenant' do
+    it 'requires a block' do
+      expect { described_class.with_default_tenant }
+        .to(raise_error(ArgumentError, /requires a block/))
+    end
+
+    it 'does not clobber the current context when called without a block' do
+      described_class.switch!('tenant1')
+      expect { described_class.with_default_tenant }.to(raise_error(ArgumentError))
+      expect(described_class.current).to(eq('tenant1'))
+    end
+
+    it 'runs the block in the default tenant' do
+      described_class.switch!('tenant1')
+      described_class.with_default_tenant do
+        expect(described_class.current).to(eq('public'))
+        expect(described_class.in_default_tenant?).to(be(true))
+      end
+    end
+
+    it 'restores the prior tenant on normal exit' do
+      described_class.switch!('tenant1')
+      described_class.with_default_tenant { :noop }
+      expect(described_class.current).to(eq('tenant1'))
+    end
+
+    it 'restores prior context (including nil) on raise' do
+      Apartment::Current.reset
+      expect do
+        described_class.with_default_tenant { raise('boom') }
+      end.to(raise_error('boom'))
+      expect(Apartment::Current.tenant).to(be_nil)
+    end
+
+    it 'bypasses the strict-mode default_tenant switch guard' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = 'public'
+        c.default_tenant_switch_allowed = false
+      end
+      Apartment.adapter = mock_adapter
+      Apartment::Current.reset
+      expect { described_class.with_default_tenant { :ok } }.not_to(raise_error)
+    end
+  end
 end
