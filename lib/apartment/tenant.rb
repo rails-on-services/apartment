@@ -82,6 +82,26 @@ module Apartment
         !default.nil? && current.to_s == default.to_s
       end
 
+      # Guard: raise unless the effective tenant is a real, non-default tenant.
+      # Returns the normalized tenant name on success (a documented convenience;
+      # the cache recipe uses cache_namespace, not this return, for the proc).
+      def require_tenant!
+        return current.to_s if in_tenant?
+
+        raise(Apartment::TenantRequired, current)
+      end
+
+      # Guard: raise unless the effective tenant is the default tenant. Returns
+      # the normalized default name on success. Raises DefaultTenantNotConfigured
+      # when no default_tenant is configured (a nil keyspace is a silent leak).
+      def require_default_tenant!
+        default = Apartment.config&.default_tenant
+        raise(Apartment::DefaultTenantNotConfigured) if default.nil?
+        return default.to_s if current.to_s == default.to_s
+
+        raise(Apartment::DefaultTenantRequired.new(current, default))
+      end
+
       # Initialize: resolve excluded_models shim, then process pinned models.
       def init
         resolve_excluded_models_shim

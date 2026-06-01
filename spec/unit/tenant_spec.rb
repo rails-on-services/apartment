@@ -663,4 +663,51 @@ RSpec.describe(Apartment::Tenant) do
       expect(described_class.in_default_tenant?).to(be(false))
     end
   end
+
+  describe '.require_tenant! / .require_default_tenant! (raising guards)' do
+    it 'require_tenant! returns the normalized name inside a real tenant' do
+      described_class.switch!('tenant1')
+      expect(described_class.require_tenant!).to(eq('tenant1'))
+    end
+
+    it 'require_tenant! raises TenantRequired on default-by-inertia' do
+      Apartment::Current.reset
+      expect { described_class.require_tenant! }
+        .to(raise_error(Apartment::TenantRequired, /non-default tenant/))
+    end
+
+    it 'require_tenant! raises TenantRequired on explicit switch!(default)' do
+      described_class.switch!('public')
+      expect { described_class.require_tenant! }
+        .to(raise_error(Apartment::TenantRequired))
+    end
+
+    it 'require_default_tenant! returns the default name when in default' do
+      described_class.switch!('public')
+      expect(described_class.require_default_tenant!).to(eq('public'))
+    end
+
+    it 'require_default_tenant! passes on default-by-inertia' do
+      Apartment::Current.reset
+      expect(described_class.require_default_tenant!).to(eq('public'))
+    end
+
+    it 'require_default_tenant! raises DefaultTenantRequired in a real tenant' do
+      described_class.switch!('tenant1')
+      expect { described_class.require_default_tenant! }
+        .to(raise_error(Apartment::DefaultTenantRequired, /"public"/))
+    end
+
+    it 'require_default_tenant! raises DefaultTenantNotConfigured when no default set' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :database_name
+        c.tenants_provider = -> { %w[tenant1] }
+        c.default_tenant = nil
+      end
+      Apartment.adapter = mock_adapter
+      Apartment::Current.reset
+      expect { described_class.require_default_tenant! }
+        .to(raise_error(Apartment::DefaultTenantNotConfigured))
+    end
+  end
 end
