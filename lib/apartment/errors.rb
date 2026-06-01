@@ -118,8 +118,8 @@ module Apartment
     def initialize(message = nil)
       super(
         message ||
-        'require_default_tenant! needs a configured Apartment.config.default_tenant; ' \
-        'none is set. A pinned keyspace requires an explicitly named default tenant.'
+          'require_default_tenant! needs a configured Apartment.config.default_tenant; ' \
+          'none is set. A pinned keyspace requires an explicitly named default tenant.'
       )
     end
   end

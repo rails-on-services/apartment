@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 module Apartment
-  module Tenant
-    class << self
+  module Tenant # rubocop:disable Metrics/ModuleLength
+    class << self # rubocop:disable Metrics/ClassLength
       # Switch to a tenant for the duration of the block.
       # Guaranteed cleanup via ensure — tenant context is always restored.
       #
