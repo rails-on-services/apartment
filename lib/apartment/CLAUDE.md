@@ -42,10 +42,12 @@ lib/apartment/
 
 `switch(tenant) { ... }` sets `Current.tenant` via ensure block. Delegates lifecycle ops (`create`, `drop`, `migrate`, `seed`) to `Apartment.adapter`. No thread-local state — uses `CurrentAttributes` for fiber safety.
 
-**Predicates and strict-mode guard (4.0.0.alpha3)**:
-- `tenant_switched?` reads `Current.tenant` directly (NOT `Tenant.current`), so it ignores the `default_tenant` fallback. Use when "did this code explicitly enter a tenant?" matters more than "what tenant is effectively active?".
-- `assert_tenant_switched!(message: nil)` raises `ApartmentError` when `Current.tenant` is `nil`. Test-time discipline; `message:` kwarg supports richer failure context. (Renamed from `inside_tenant?` / `assert_inside_tenant!`, no aliases.)
-- `switch(name) { ... }` calls `guard_default_tenant_switch!`, which raises when `Apartment.config.default_tenant_switch_allowed` is `false` AND `name == default_tenant`. `switch!` and `reset` are exempt by design — they remain the unguarded paths back to the default tenant. The flag defaults to `true` (permissive) for all strategies; new PG `:schema` apps wanting strict semantics opt in. See `docs/testing.md`.
+**Tenant-context guard family — two axes (#427)**:
+- **Explicitness axis** (raw `Current.tenant`, ignores the `default_tenant` fallback): `tenant_switched?` / `assert_tenant_switched!(message:)`. Answers "did this code explicitly enter a tenant?" — test discipline. Renamed from `inside_tenant?` / `assert_inside_tenant!` (no aliases).
+- **Identity axis** (effective `Tenant.current`, `to_s`-normalized): `in_tenant?` / `require_tenant!` (real, non-default; `require_tenant!` returns the name and raises `TenantRequired`), `in_default_tenant?` / `require_default_tenant!` (default; returns the name, raises `DefaultTenantRequired` in a real tenant or `DefaultTenantNotConfigured` when no default is set). `cache_namespace` wraps `require_tenant!` for fail-closed namespace procs; `with_default_tenant { }` enters the default/pinned context (guard-exempt, restore-on-raise). For runtime routed/pinned decisions (cache, jobs). See `docs/caching.md` and `docs/designs/tenant-aware-caching.md`.
+
+**Strict-mode switch guard (4.0.0.alpha3)**:
+- `switch(name) { ... }` calls `guard_default_tenant_switch!`, which raises when `Apartment.config.default_tenant_switch_allowed` is `false` AND `name == default_tenant`. `switch!`, `reset`, and `with_default_tenant` are exempt by design — they remain the unguarded paths back to the default tenant. The flag defaults to `true` (permissive) for all strategies; new PG `:schema` apps wanting strict semantics opt in. See `docs/testing.md`.
 
 ### config.rb — Configuration
 

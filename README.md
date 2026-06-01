@@ -352,6 +352,13 @@ For automatic tenant propagation:
 - [apartment-sidekiq](https://github.com/rails-on-services/apartment-sidekiq)
 - [apartment-activejob](https://github.com/rails-on-services/apartment-activejob)
 
+A job that forgets to switch runs in the default tenant — for `Rails.cache` and
+other `Tenant.current`-derived resources that silently contaminates another
+tenant's keyspace. Guard routed work with `Apartment::Tenant.require_tenant!`
+(raises unless a real, non-default tenant is active) and pinned/global work with
+`require_default_tenant!`. See [Tenant-Aware Caching](docs/caching.md) for the
+routed-vs-pinned model and the two-store recipe.
+
 ## Convenience Methods
 
 `Apartment.tenant_names` returns the current tenant list (delegates to `config.tenants_provider.call`). Preserves the v3 API so existing call sites work without changes.
