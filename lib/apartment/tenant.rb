@@ -130,6 +130,12 @@ module Apartment
         default = Apartment.config&.default_tenant
         raise(Apartment::DefaultTenantNotConfigured) if default.nil?
 
+        # Already explicitly in the default context — entering it again is a
+        # no-op, so skip the assign/restore and leave previous_tenant untouched.
+        # Raw equality (not in_default_tenant?): ambient nil still takes the full
+        # path below, so tenant_switched? inside the block is unchanged.
+        return yield if Current.tenant == default
+
         previous = Current.tenant
         begin
           Current.tenant = default
