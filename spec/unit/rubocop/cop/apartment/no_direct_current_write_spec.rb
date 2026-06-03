@@ -26,6 +26,27 @@ RSpec.describe(RuboCop::Cop::Apartment::NoDirectCurrentWrite, :config) do
     RUBY
   end
 
+  it 'flags an or-assign (||=) — the idiomatic set-if-unset bypass' do
+    expect_offense(<<~RUBY)
+      Apartment::Current.tenant ||= 'acme'
+                         ^^^^^^ Do not write `Apartment::Current.tenant` directly; use the block-form `Apartment::Tenant.switch(tenant) { ... }`.
+    RUBY
+  end
+
+  it 'flags an and-assign (&&=) to previous_tenant' do
+    expect_offense(<<~RUBY)
+      Apartment::Current.previous_tenant &&= 'x'
+                         ^^^^^^^^^^^^^^^ Do not write `Apartment::Current.previous_tenant` directly; use the block-form `Apartment::Tenant.switch(tenant) { ... }`.
+    RUBY
+  end
+
+  it 'flags an op-assign (+=) to tenant' do
+    expect_offense(<<~RUBY)
+      Apartment::Current.tenant += 'x'
+                         ^^^^^^ Do not write `Apartment::Current.tenant` directly; use the block-form `Apartment::Tenant.switch(tenant) { ... }`.
+    RUBY
+  end
+
   it 'ignores the block-form switch' do
     expect_no_offenses("Apartment::Tenant.switch('acme') { :work }")
   end
@@ -37,6 +58,7 @@ RSpec.describe(RuboCop::Cop::Apartment::NoDirectCurrentWrite, :config) do
   it 'ignores an unrelated Current constant' do
     expect_no_offenses("Foo::Current.tenant = 'x'")
     expect_no_offenses("Current.tenant = 'x'")
+    expect_no_offenses("Foo::Current.tenant ||= 'x'")
   end
 
   it 'respects an inline disable' do

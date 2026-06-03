@@ -86,6 +86,15 @@ with_default_tenant for global work)."`
 No autocorrect: the fix wraps surrounding code in a block, which a cop cannot
 synthesize safely.
 
+Covers plain assignment (`=`) and operator assignment (`||=`, `&&=`, `+=` — these
+parse as `or_asgn`/`and_asgn`/`op_asgn` around a reader send, so the cop adds
+`on_or_asgn`/`on_and_asgn`/`on_op_asgn` handlers alongside `on_send`). `||=` is the
+idiomatic "set tenant if unset" and was the most plausible bypass of an
+`=`-only matcher. **Documented limitations** (deliberately not chased — they signal
+deliberate evasion, not ordinary style): multiple assignment, safe navigation
+(`&.tenant=`), dynamic dispatch (`public_send(:tenant=, …)`), the bulk mutators
+`Apartment::Current.set(…)` / `.reset`, and aliased receivers.
+
 #### `Apartment/PreferBlockSwitch` (warning, no autocorrect)
 
 Flags `Apartment::Tenant.switch!(…)`. Does **not** flag `reset` (the sanctioned
