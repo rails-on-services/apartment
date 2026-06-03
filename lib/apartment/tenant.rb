@@ -136,8 +136,11 @@ module Apartment
         # so a symbol/string default mismatch still short-circuits. Ambient nil
         # (nil.to_s == '') never matches a real default, so it stays on the full
         # path below and tenant_switched? inside the block is unchanged.
-        # NOTE: assumes the block does not itself switch tenant context (the
-        # pinned/global-cache contract); a block that does is not restored here.
+        #
+        # This path has no ensure, so it relies on the block restoring any context
+        # it changes — always true for the block form `switch(t) { }`, which is the
+        # universal contract here. Only the discouraged non-block mutations
+        # (`switch!`, raw `Current.tenant =`) would leave a tenant uncleaned.
         return yield if Current.tenant.to_s == default.to_s
 
         previous = Current.tenant

@@ -860,6 +860,20 @@ RSpec.describe(Apartment::Tenant) do
       expect(Apartment::Current).not_to(have_received(:tenant=))
     end
 
+    it 'leaves context intact when the block uses the block-form switch (the contract the short-circuit relies on)' do
+      # The short-circuit path has no ensure. Block-form switch self-restores, so
+      # a best-practice block leaves Current.tenant on the default afterward. (A
+      # bare switch!/Current.tenant= would leak, but those are anti-patterns.)
+      described_class.switch!('public')
+
+      described_class.with_default_tenant do
+        described_class.switch('tenant1') { :inner_work }
+        expect(described_class.current).to(eq('public'))
+      end
+
+      expect(described_class.current).to(eq('public'))
+    end
+
     it 'still enters from ambient nil (raw predicate, not effective identity)' do
       Apartment::Current.tenant = nil
 

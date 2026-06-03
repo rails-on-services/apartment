@@ -104,6 +104,20 @@ non-stacking, immediately-preceding" semantics of `previous_tenant` — there is
 meaningful "previous" when you never actually moved. A test pins this behavior so
 it is a decision, not an accident.
 
+### No `ensure` on the short-circuit path — relies on block-form discipline
+
+The short-circuit returns before the `begin/ensure`, so it does not restore
+`Current.tenant` after the block. That is sound because the block form
+`switch(t) { }` restores any context it enters via its own `ensure` — the
+universal contract in this codebase — so a best-practice block leaves the default
+intact. The only way to leak is a non-block mutation inside the block (`switch!`,
+raw `Current.tenant =`); both are discouraged anti-patterns, and the alternative
+(wrapping the short-circuit in its own restoring `ensure`) would add machinery
+purely to protect code that shouldn't exist. A positive test pins the block-form
+case; the method comment names the assumption. The panel review (Codex, Cursor)
+raised this edge; the resolution is to keep the short-circuit and document the
+contract rather than defend the anti-pattern.
+
 ### Scope boundary
 
 `with_default_tenant` only. `switch` is untouched: it is the general-purpose path,
