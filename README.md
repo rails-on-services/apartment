@@ -373,6 +373,28 @@ If tenant switching raises unexpected errors, verify that `tenants_provider` ret
 
 See the [upgrade guide](docs/upgrading-to-v4.md) for a complete list of breaking changes and migration steps.
 
+## RuboCop cops
+
+Apartment ships two optional RuboCop cops that enforce the block-form
+tenant-switching discipline. Enable them in your application's `.rubocop.yml`:
+
+```yaml
+require: rubocop/apartment
+inherit_gem:
+  ros-apartment: config/default.yml
+```
+
+- **`Apartment/NoDirectCurrentWrite`** (error) — bans assigning
+  `Apartment::Current.tenant` / `.previous_tenant` directly. Change tenant context
+  with `Apartment::Tenant.switch(tenant) { ... }` (or `with_default_tenant` for
+  global work), which guarantees a restore via `ensure`.
+- **`Apartment/PreferBlockSwitch`** (warning) — nudges `Apartment::Tenant.switch!`
+  toward the block form. `reset` is not flagged.
+
+Both match the qualified `Apartment::` receiver only. Scope them to your
+application code with the standard `Exclude:` keys if needed. See
+[`docs/designs/rubocop-cops.md`](docs/designs/rubocop-cops.md) for the rationale.
+
 ## Contributing
 
 1. Check [existing issues](https://github.com/rails-on-services/apartment/issues) and [discussions](https://github.com/rails-on-services/apartment/discussions)
