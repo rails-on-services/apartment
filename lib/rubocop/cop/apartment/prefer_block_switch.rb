@@ -17,6 +17,10 @@ module RuboCop
         MSG = 'Use the block-form `Apartment::Tenant.switch(tenant) { ... }` ' \
               'instead of `switch!`.'
 
+        # Only invoke on_send for switch! — keeps the cop off the hot path
+        # (RuboCop would otherwise call on_send for every method call linted).
+        RESTRICT_ON_SEND = %i[switch!].freeze
+
         # @!method tenant_bang_switch?(node)
         def_node_matcher :tenant_bang_switch?, <<~PATTERN
           (send (const (const {nil? cbase} :Apartment) :Tenant) :switch! ...)

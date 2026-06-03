@@ -17,6 +17,10 @@ module RuboCop
         MSG = 'Do not write `Apartment::Current.%<attr>s` directly; use the ' \
               'block-form `Apartment::Tenant.switch(tenant) { ... }`.'
 
+        # Only invoke on_send for these setters — keeps the cop off the hot path
+        # (RuboCop would otherwise call on_send for every method call linted).
+        RESTRICT_ON_SEND = %i[tenant= previous_tenant=].freeze
+
         # @!method current_attr_write?(node)
         def_node_matcher :current_attr_write?, <<~PATTERN
           (send (const (const {nil? cbase} :Apartment) :Current) {:tenant= :previous_tenant=} _)
