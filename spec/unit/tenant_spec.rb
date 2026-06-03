@@ -829,5 +829,46 @@ RSpec.describe(Apartment::Tenant) do
       # the switch block unwinds back to no explicit tenant
       expect(Apartment::Current.tenant).to(be_nil)
     end
+
+    it 'short-circuits when already explicitly in the default, leaving previous_tenant untouched' do
+      described_class.switch!('public')
+      Apartment::Current.previous_tenant = 'sentinel'
+
+      # The assign/restore branch is skipped: Current.tenant= is never called
+      # during the no-op self-entry, so the sentinel previous_tenant survives.
+      allow(Apartment::Current).to(receive(:tenant=).and_call_original)
+
+      result = described_class.with_default_tenant do
+        expect(described_class.current).to(eq('public'))
+        :block_value
+      end
+
+      expect(result).to(eq(:block_value))
+      expect(Apartment::Current).not_to(have_received(:tenant=))
+      expect(Apartment::Current.previous_tenant).to(eq('sentinel'))
+    end
+
+    it 'still enters from ambient nil (raw predicate, not effective identity)' do
+      Apartment::Current.tenant = nil
+
+      described_class.with_default_tenant do
+        # Proves we did NOT broaden to in_default_tenant?: from ambient nil the
+        # full assign path runs, so the explicitness axis sees an entered tenant.
+        expect(described_class.current).to(eq('public'))
+        expect(described_class.tenant_switched?).to(be(true))
+      end
+
+      expect(Apartment::Current.tenant).to(be_nil)
+    end
+
+    it 'still enters from a real tenant and restores it on exit' do
+      described_class.switch!('tenant1')
+
+      described_class.with_default_tenant do
+        expect(described_class.current).to(eq('public'))
+      end
+
+      expect(described_class.current).to(eq('tenant1'))
+    end
   end
 end
