@@ -166,7 +166,10 @@ preserves the prior context); otherwise saves the prior `Current.tenant` and
 restores it (including `nil`) in `ensure`, on both normal exit and raise. Nesting
 restores `Current.tenant` to the enclosing value at each level; `Current.previous_tenant`
 is reset to `nil` on exit (single-level, non-stacking — the same contract as the
-existing `switch` primitives, not a deeper stack).
+existing `switch` primitives, not a deeper stack). As an optimization, a call made
+while `Current.tenant` already equals the default is a no-op: it `yield`s in place
+without re-assigning `Current.tenant` and leaves `previous_tenant` untouched (raw
+equality, so ambient `nil` still enters the default normally).
 It must NOT be a plain `switch(config.default_tenant) { }`:
 under strict mode (`default_tenant_switch_allowed = false`),
 `guard_default_tenant_switch!` raises on the block form into default by design —
