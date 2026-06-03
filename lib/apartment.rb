@@ -25,6 +25,12 @@ loader.ignore("#{__dir__}/apartment/tasks")
 loader.ignore("#{__dir__}/apartment/cli.rb")
 loader.ignore("#{__dir__}/apartment/cli")
 
+# RuboCop cops live under lib/rubocop and load only via RuboCop's `require:`
+# (config), never through Apartment's autoloader. Ignore avoids Zeitwerk mapping
+# lib/rubocop to a `Rubocop` constant (wrong casing vs RuboCop) — same rationale
+# as the cli.rb / cli ignores above.
+loader.ignore("#{__dir__}/rubocop")
+
 # Collapse concerns/ so Zeitwerk maps lib/apartment/concerns/model.rb
 # to Apartment::Model (not Apartment::Concerns::Model). Mirrors the
 # Rails convention for app/models/concerns/.
