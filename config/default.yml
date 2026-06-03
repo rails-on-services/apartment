@@ -1,0 +1,9 @@
+Apartment/NoDirectCurrentWrite:
+  Description: 'Use the block-form switch instead of writing Apartment::Current directly.'
+  Enabled: true
+  Severity: error
+
+Apartment/PreferBlockSwitch:
+  Description: 'Prefer the block-form Apartment::Tenant.switch over switch!.'
+  Enabled: true
+  Severity: warning
