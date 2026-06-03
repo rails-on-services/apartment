@@ -116,7 +116,8 @@ module Apartment
       # Establish the default/pinned tenant context for the block. On exit or
       # raise, restores the prior Current.tenant (including nil) and resets
       # Current.previous_tenant to nil — same single-level (non-stacking) contract
-      # as switch/switch!. Enters default via a direct Current.tenant assignment
+      # as switch/switch! (except a call already in the default context, which is
+      # the no-op fast path below). Enters default via a direct Current.tenant assignment
       # that bypasses guard_default_tenant_switch!, so it is NOT blocked by
       # default_tenant_switch_allowed = false. Use for pinned/global work (e.g.
       # writing app-wide cache keys).
@@ -129,6 +130,14 @@ module Apartment
 
         default = Apartment.config&.default_tenant
         raise(Apartment::DefaultTenantNotConfigured) if default.nil?
+
+        # Fast path: already in the default context, so entering it is a no-op —
+        # skip the assign/restore, leaving previous_tenant untouched. to_s matches
+        # the sibling guards (symbol/string default); ambient nil ('') never matches
+        # a real default, so it takes the full path below. No ensure here: relies on
+        # the block restoring its own context, true for block-form switch. See
+        # docs/designs/with-default-tenant-short-circuit.md.
+        return yield if Current.tenant.to_s == default.to_s
 
         previous = Current.tenant
         begin
