@@ -132,9 +132,13 @@ module Apartment
 
         # Already explicitly in the default context — entering it again is a
         # no-op, so skip the assign/restore and leave previous_tenant untouched.
-        # Raw equality (not in_default_tenant?): ambient nil still takes the full
-        # path below, so tenant_switched? inside the block is unchanged.
-        return yield if Current.tenant == default
+        # Normalizes with to_s like the sibling guards (in_default_tenant? etc.),
+        # so a symbol/string default mismatch still short-circuits. Ambient nil
+        # (nil.to_s == '') never matches a real default, so it stays on the full
+        # path below and tenant_switched? inside the block is unchanged.
+        # NOTE: assumes the block does not itself switch tenant context (the
+        # pinned/global-cache contract); a block that does is not restored here.
+        return yield if Current.tenant.to_s == default.to_s
 
         previous = Current.tenant
         begin

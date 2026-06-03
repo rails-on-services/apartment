@@ -7,8 +7,9 @@
 ## TL;DR
 
 When `with_default_tenant` is called while `Current.tenant` is *already* the
-default, skip the enter/restore work and `yield` in place. The skip fires only on
-an exact raw match (`Current.tenant == default`), so it is a pure no-op
+default, skip the enter/restore work and `yield` in place. The predicate reads
+**raw** `Current.tenant` (not effective `current`), `to_s`-normalized like the
+sibling guards (`Current.tenant.to_s == default.to_s`), so it is a pure no-op
 elimination: no guard, on either axis, changes meaning. The one observable effect
 — a no-op self-entry no longer clobbers `Current.previous_tenant` — is the
 intended, more-correct contract and is pinned by a test.
@@ -40,8 +41,9 @@ default = Apartment.config&.default_tenant
 raise(Apartment::DefaultTenantNotConfigured) if default.nil?
 
 # Already explicitly in the default context — entering it again is a no-op,
-# so skip the assign/restore (and leave previous_tenant untouched).
-return yield if Current.tenant == default
+# so skip the assign/restore (and leave previous_tenant untouched). to_s
+# normalization matches the sibling guards (symbol/string default).
+return yield if Current.tenant.to_s == default.to_s
 
 previous = Current.tenant
 begin
@@ -54,10 +56,16 @@ ensure
 end
 ```
 
-### Why raw equality, not effective identity
+### Why raw `Current.tenant`, not effective identity
 
 The predicate reads **raw** `Current.tenant`, not `in_default_tenant?` (effective
-`current`). This is deliberate and is the crux of the design.
+`current`). This is deliberate and is the crux of the design. It is `to_s`-normalized
+on both sides — matching `in_default_tenant?` / `require_default_tenant!` /
+`guard_default_tenant_switch!`, which all compare `…to_s == default.to_s` because
+`default_tenant` is a plain accessor that accepts a symbol or a string — but "raw"
+here means it reads `Current.tenant` directly, *not* the `Current.tenant || default`
+fallback. `nil.to_s` is `''`, which never equals a (validated non-empty) default, so
+normalization does not pull the ambient-`nil` case into the short-circuit.
 
 Apartment's guards split into two axes (the `#427` model):
 

@@ -848,6 +848,18 @@ RSpec.describe(Apartment::Tenant) do
       expect(Apartment::Current.previous_tenant).to(eq('sentinel'))
     end
 
+    it 'short-circuits across a symbol/string mismatch (normalizes like the sibling guards)' do
+      # default_tenant is the string 'public'; entering with a symbol-valued
+      # Current.tenant is still the same tenant. The predicate must normalize
+      # with to_s (as in_default_tenant?/require_default_tenant! do), not raw ==.
+      described_class.switch!(:public)
+      allow(Apartment::Current).to(receive(:tenant=).and_call_original)
+
+      described_class.with_default_tenant { :noop }
+
+      expect(Apartment::Current).not_to(have_received(:tenant=))
+    end
+
     it 'still enters from ambient nil (raw predicate, not effective identity)' do
       Apartment::Current.tenant = nil
 
