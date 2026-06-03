@@ -1,6 +1,6 @@
 # `with_default_tenant` same-tenant short-circuit
 
-**Status:** Designed, pending implementation
+**Status:** Implemented (PR #432)
 **Scope:** `Apartment::Tenant.with_default_tenant` (one guard line + tests)
 **Related:** [[tenant-aware-caching]] (the guard family this method belongs to), `lib/apartment/tenant.rb`
 

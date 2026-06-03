@@ -168,8 +168,9 @@ restores `Current.tenant` to the enclosing value at each level; `Current.previou
 is reset to `nil` on exit (single-level, non-stacking — the same contract as the
 existing `switch` primitives, not a deeper stack). As an optimization, a call made
 while `Current.tenant` already equals the default is a no-op: it `yield`s in place
-without re-assigning `Current.tenant` and leaves `previous_tenant` untouched (raw
-equality, so ambient `nil` still enters the default normally).
+without re-assigning `Current.tenant` and leaves `previous_tenant` untouched (it
+compares the raw `Current.tenant` slot, `to_s`-normalized like the sibling guards,
+so ambient `nil` still enters the default normally).
 It must NOT be a plain `switch(config.default_tenant) { }`:
 under strict mode (`default_tenant_switch_allowed = false`),
 `guard_default_tenant_switch!` raises on the block form into default by design —
