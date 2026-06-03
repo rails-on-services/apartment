@@ -37,12 +37,20 @@ module Apartment
 
       # Current tenant name.
       def current
-        Current.tenant || Apartment.config&.default_tenant
+        Current.tenant || default_tenant
+      end
+
+      # The configured default tenant name (nil if Apartment is not configured).
+      # v4 relocated this value to Apartment.config.default_tenant; this reader
+      # restores the v3 Apartment::Tenant.default_tenant accessor so consumers
+      # that read the default tenant need not branch on the apartment version.
+      def default_tenant
+        Apartment.config&.default_tenant
       end
 
       # Reset to default tenant.
       def reset
-        switch!(Apartment.config&.default_tenant)
+        switch!(default_tenant)
       end
 
       # Predicate: was a tenant explicitly entered? (Explicitness axis.)
@@ -76,13 +84,13 @@ module Apartment
       # and false when no default_tenant is configured and no tenant is active.
       def in_tenant?
         c = current.to_s
-        !c.empty? && c != Apartment.config&.default_tenant.to_s
+        !c.empty? && c != default_tenant.to_s
       end
 
       # Predicate: is the effective tenant the default tenant?
       # (Identity axis.) False when no default_tenant is configured.
       def in_default_tenant?
-        default = Apartment.config&.default_tenant
+        default = default_tenant
         !default.nil? && current.to_s == default.to_s
       end
 
@@ -99,7 +107,7 @@ module Apartment
       # the normalized default name on success. Raises DefaultTenantNotConfigured
       # when no default_tenant is configured (a nil keyspace is a silent leak).
       def require_default_tenant!
-        default = Apartment.config&.default_tenant
+        default = default_tenant
         raise(Apartment::DefaultTenantNotConfigured) if default.nil?
         return default.to_s if current.to_s == default.to_s
 
@@ -127,7 +135,7 @@ module Apartment
       def with_default_tenant
         raise(ArgumentError, 'Apartment::Tenant.with_default_tenant requires a block') unless block_given?
 
-        default = Apartment.config&.default_tenant
+        default = default_tenant
         raise(Apartment::DefaultTenantNotConfigured) if default.nil?
 
         previous = Current.tenant
