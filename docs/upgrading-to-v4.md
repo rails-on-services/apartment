@@ -88,6 +88,8 @@ end
 
 v4 also adds the identity-axis guards for runtime (non-test) code: `require_tenant!` / `require_default_tenant!`, predicates `in_tenant?` / `in_default_tenant?`, `with_default_tenant { }`, and `cache_namespace`. See [Tenant-Aware Caching](./caching.md). The explicitness-axis methods `inside_tenant?` / `assert_inside_tenant!` were **renamed** to `tenant_switched?` / `assert_tenant_switched!` with no aliases.
 
+v4 relocated the configured default tenant to `Apartment.config.default_tenant`, but `Apartment::Tenant.default_tenant` remains available as a reader (it returns `Apartment.config&.default_tenant`). Code that read the default tenant on v3 keeps working unchanged.
+
 See [Testing with Apartment v4](./testing.md) for recipe-level guidance on strict discipline, cross-pool transaction visibility, and pinned-model cleanup.
 
 ### Models

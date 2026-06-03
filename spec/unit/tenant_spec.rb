@@ -96,6 +96,22 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
+  describe '.default_tenant' do
+    it 'returns the configured default tenant' do
+      expect(described_class.default_tenant).to(eq('public'))
+    end
+
+    it 'is independent of the current tenant context' do
+      described_class.switch!('tenant1')
+      expect(described_class.default_tenant).to(eq('public'))
+    end
+
+    it 'returns nil when no config is set' do
+      Apartment.clear_config
+      expect(described_class.default_tenant).to(be_nil)
+    end
+  end
+
   describe '.reset' do
     it 'sets tenant to default_tenant' do
       Apartment::Current.tenant = 'tenant1'
