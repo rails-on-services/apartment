@@ -174,7 +174,7 @@ However, Rails' `PostgreSQLAdapter#configure_connection` still issues a one-time
   2. **Fallback**: Configure PgBouncer with `ignore_startup_parameters = search_path` or use `track_extra_parameters = search_path` (PgBouncer 1.20+, requires Citus 12+ for `GUC_REPORT` support on search_path).
   3. **Alternative**: Use `SET LOCAL search_path` inside each transaction (scoped to transaction, PgBouncer does not pin on `SET LOCAL`). This is closer to v3's approach but only executes once per transaction, not once per switch.
 
-The implementation should try approach (1) first and fall back to the Rails default if the database driver doesn't support connection string options. This is a significant improvement over v3 regardless — v3 issues `SET search_path` on every request; v4 issues it at most once per connection establishment.
+**Status (v4 alpha):** approach (1) is **not yet implemented** — the adapter currently sets `schema_search_path`, which Rails applies as a `SET` once per connection (see `resolve_connection_config` in `postgresql_schema_adapter.rb`). The intended direction is to try approach (1) first and fall back to the Rails default when the driver doesn't support connection-string options. Even unimplemented, this is a significant improvement over v3 regardless — v3 issues `SET search_path` on every request; v4 issues it at most once per connection establishment.
 
 ### Pool Resolution & Storage
 
@@ -922,14 +922,14 @@ No compatibility shims in v4 — clean break.
 
 | Issue | Status in v4 |
 |-------|-------------|
-| #302 PgBouncer/RDS Proxy session pinning | Improved: per-switch `SET` eliminated; connection-level config with libpq `options` avoids session pinning. See PgBouncer section for details. |
+| #302 PgBouncer/RDS Proxy session pinning | Improved: the per-*switch* `SET` is eliminated — v4 sets `schema_search_path` once per pooled connection at establishment, not on every request switch. Full unpinning via the libpq `options` path is documented but **not yet implemented** (the adapter still sets `schema_search_path`, which Rails applies as a `SET`), so a connection that runs that `SET` can still pin once. See PgBouncer section. |
 | #239 Concurrency in specs | Solved: `CurrentAttributes` provides fiber isolation; per-tenant pools eliminate the shared `Thread.current` slot the v3 design depended on |
 | #199 `load_async` ignores tenant | Improved: when the user opts into `async_query_executor`, `FutureResult` captures the tenant pool at schedule time. Default config runs `load_async` synchronously. Consumer-fiber access (preload, `after_find` callbacks, lazy assoc, nested-async) must stay inside the same `Tenant.switch`. `eager_load` is worker-safe (folds into main query). See "Async query correctness" |
 | #304 ActionController::Live | Resolved via Bucket 1 (prepend `Live#process` with `Apartment::Patches::LiveTenantPropagation`, backporting rails/rails#56902). See `docs/designs/rails-boundary-tenancy.md` § Worked example: ActionController::Live. Works on Rails 7.2 / 8.0 / 8.1.x under both `:thread` and `:fiber` isolation. |
 | #323 Connection leaks under load | Solved: pools cached in `Concurrent::Map`, lazy creation, eviction |
 | #341 Rails 8.1 `public.` prefix | Solved: schema dumper patch strips prefix for tenant loading |
-| #303 Missing `create_schema` in schema.rb | Solved: `include_schemas_in_dump` config option |
-| #321 `gen_random_uuid()` not found | Solved: `persistent_schemas` includes extension schema by default |
+| #303 Missing `create_schema` in schema.rb | Addressed: v4 drops the v3 suppression patch (#276), so Rails' native `create_schema` dumping for non-tenant schemas applies unmodified. `include_schemas_in_dump` is an *additional* Rails 8.1+ knob that keeps listed schemas' tables schema-qualified in the dump. |
+| #321 `gen_random_uuid()` not found | Addressed: install the extension into a schema listed in `persistent_schemas` (opt-in; defaults to `[]`) so it stays on every tenant's search_path — or install into `pg_catalog`, or use PG 13+ where `gen_random_uuid` is in core. Not an automatic default. |
 | #339 Ruby 3.3 SyntaxError | Non-issue: fresh codebase, no anonymous block forwarding in nested contexts |
 | #314 ActiveStorage multitenancy | Out of scope: document patterns, potential companion gem |
 
