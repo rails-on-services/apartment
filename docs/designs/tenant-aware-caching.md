@@ -144,8 +144,14 @@ teaching "a bang returns a String":
 Apartment::Tenant.cache_namespace         # => "acme"
 ```
 
-There is no `pinned_cache_namespace` counterpart: pinned stores use a *static*
-namespace string, so no helper is needed.
+There is no `pinned_cache_namespace` counterpart, and none is needed: a pinned
+namespace must be **tenant-independent** — not derived from `Apartment::Tenant.current`.
+"Tenant-independent" is not the same as "a literal constant": a per-deploy prefix like
+`"#{BUILD_VERSION}/global"` is still pinned, because it never varies by tenant. Two
+corollaries: do not "pin" a routed namespace by substituting `default_tenant` for the
+current tenant (that couples the cache keyspace to a schema name); and if a pinned
+namespace genuinely must be computed from tenant context, wrap that computation in
+`with_default_tenant`.
 
 #### `with_default_tenant`
 

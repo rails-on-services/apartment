@@ -77,7 +77,8 @@ TENANT_CACHE = ActiveSupport::Cache::RedisCacheStore.new(
   namespace: -> { Apartment::Tenant.cache_namespace }
 )
 
-# Pinned store — STATIC namespace, never a tenant lambda. Global keys only.
+# Pinned store — tenant-INDEPENDENT namespace (a constant, or a per-deploy prefix
+# like "#{BUILD_VERSION}/global"); never a tenant lambda. Global keys only.
 PINNED_CACHE = ActiveSupport::Cache::RedisCacheStore.new(namespace: 'pinned')
 ```
 
