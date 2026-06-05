@@ -99,35 +99,72 @@ RSpec.describe('v4 Fiber safety integration', :integration,
     end
   end
 
-  # Exercises scheduled fibers under a real Fiber::Scheduler implementation
-  # (e.g., async gem). Standard MRI does not define Fiber::Scheduler as a
-  # concrete class, so this skips when the constant is absent.
+  # Exercises Apartment under a real Fiber::Scheduler. MRI ships the
+  # Fiber::Scheduler *interface* but no concrete implementation; the async
+  # gem provides one (Async::Scheduler) and is declared as a dev dep for
+  # exactly this spec. Without it, this context skips — that path is reached
+  # only in degraded local setups; CI's appraisal gemfiles all carry async.
+  #
+  # Depends on the outer `before` setting `isolation_level = :fiber`.
+  # CurrentAttributes' per-fiber store is what makes Tenant.current and
+  # connection_pool routing fiber-local. Under :thread the test would
+  # silently degrade and look like a tenant-leak bug.
+  #
+  # SCOPE NOTE: this test verifies per-fiber storage and pool routing while
+  # both fibers are scheduled by Async. It does NOT force interleaving —
+  # `task.sleep(0.01)` is the conventional Async yield point but assertions
+  # would also pass under sequential execution (each scheduled fiber holds
+  # its own context regardless of yield order). A Queue-handoff barrier was
+  # considered and rejected as over-engineering: it would only catch a
+  # narrow regression class (task.sleep silently failing to yield AND fiber
+  # isolation simultaneously regressing) and the AR-query assertions below
+  # already catch the apartment-relevant failure modes.
   context 'Fiber.scheduler integration' do
-    it 'tenant state does not leak across scheduled fibers' do
+    before do
+      require('async')
+    rescue LoadError => e
+      skip("requires async gem: #{e.message}")
+    end
+
+    it 'Apartment::Current and connection_pool routing are per-fiber under Async::Scheduler' do
       results = []
       mutex = Mutex.new
 
-      scheduler = Fiber::Scheduler.new if defined?(Fiber::Scheduler)
-      skip 'no built-in Fiber::Scheduler available' unless scheduler
-
-      Fiber.set_scheduler(scheduler)
-
-      Fiber.schedule do
-        Apartment::Tenant.switch('fiber_a') do
-          sleep(0.01) # yield to scheduler
-          mutex.synchronize { results << { fiber: :a, tenant: Apartment::Tenant.current } }
+      Async do |task|
+        task.async do
+          Apartment::Tenant.switch('fiber_a') do
+            Widget.create!(name: 'a_widget')
+            task.sleep(0.01) # conventional Async yield point
+            # Widget.count + .first route through Apartment's
+            # ConnectionHandling prepend, which reads Current.tenant. A
+            # CurrentAttributes or routing leak across fibers would surface
+            # here as wrong-count or wrong-name (SQLite file-per-tenant
+            # isolation makes the failure mode observable).
+            mutex.synchronize do
+              results << {
+                fiber: :a,
+                tenant: Apartment::Tenant.current,
+                count: Widget.count,
+                name: Widget.first&.name,
+              }
+            end
+          end
         end
-      end
-
-      Fiber.schedule do
-        Apartment::Tenant.switch('fiber_b') do
-          sleep(0.01) # yield to scheduler
-          mutex.synchronize { results << { fiber: :b, tenant: Apartment::Tenant.current } }
+        task.async do
+          Apartment::Tenant.switch('fiber_b') do
+            Widget.create!(name: 'b_widget')
+            task.sleep(0.01)
+            mutex.synchronize do
+              results << {
+                fiber: :b,
+                tenant: Apartment::Tenant.current,
+                count: Widget.count,
+                name: Widget.first&.name,
+              }
+            end
+          end
         end
-      end
-
-      Fiber.scheduler.close
-      Fiber.set_scheduler(nil)
+      end.wait
 
       a_result = results.find { |r| r[:fiber] == :a }
       b_result = results.find { |r| r[:fiber] == :b }
@@ -136,6 +173,10 @@ RSpec.describe('v4 Fiber safety integration', :integration,
       expect(b_result).not_to(be_nil, 'Fiber B did not produce a result')
       expect(a_result[:tenant]).to(eq('fiber_a'))
       expect(b_result[:tenant]).to(eq('fiber_b'))
+      expect(a_result[:count]).to(eq(1))
+      expect(b_result[:count]).to(eq(1))
+      expect(a_result[:name]).to(eq('a_widget'))
+      expect(b_result[:name]).to(eq('b_widget'))
     end
   end
 

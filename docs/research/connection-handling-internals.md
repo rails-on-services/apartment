@@ -147,7 +147,7 @@ The prefix is configurable via `config.shard_key_prefix` (default: `"apartment"`
 ### Data isolation guarantee
 
 Each tenant gets its own `ConnectionPool` with tenant-specific config baked in at creation time:
-- **PostgreSQL (schema strategy)**: `schema_search_path: "acme,ext,public"` — the connection can only see tables in these schemas.
+- **PostgreSQL (schema strategy)**: `schema_search_path: '"acme","ext","public"'` — the connection can only see tables in these schemas.
 - **PostgreSQL/MySQL (database strategy)**: `database: "acme_production"` — the connection points at a different database entirely.
 - **SQLite**: `database: "storage/acme.sqlite3"` — a different file.
 

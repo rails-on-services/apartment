@@ -79,7 +79,7 @@ module Apartment
       end
 
       def rollback_all
-        tenants = Apartment.config.tenants_provider.call
+        tenants = Apartment.tenant_names
         failed = []
         tenants.each do |t|
           rollback_single(t)

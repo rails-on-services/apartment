@@ -74,4 +74,188 @@ RSpec.describe(Apartment::Elevators::Generic) do
         .to(raise_error(NotImplementedError, /parse_tenant_name must be implemented/))
     end
   end
+
+  describe 'tenant validation' do
+    let(:app) { ->(_env) { [200, {}, ['ok']] } }
+    let(:env) { Rack::MockRequest.env_for('http://acme.example.com/') }
+
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+      end
+    end
+
+    it 'switches when the resolved tenant is valid' do
+      switched = nil
+      allow(Apartment::Tenant).to(receive(:switch)) do |name, &blk|
+        switched = name
+        blk.call
+      end
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+      elevator.call(env)
+      expect(switched).to(eq('acme'))
+    end
+
+    it 'raises TenantNotFound when the resolved tenant is invalid and no handler is set' do
+      elevator = described_class.new(app, ->(_req) { 'ghost' })
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound, /ghost/))
+    end
+
+    it 'calls tenant_not_found_handler when configured, returning its Rack response' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = ->(tenant, _request) { [404, {}, ["no #{tenant}"]] }
+      end
+      elevator = described_class.new(app, ->(_req) { 'ghost' })
+      expect(elevator.call(env)).to(eq([404, {}, ['no ghost']]))
+    end
+
+    it 'does not validate when the processor returns nil (default tenant)' do
+      elevator = described_class.new(app, ->(_req) {})
+      expect(elevator.call(env)).to(eq([200, {}, ['ok']]))
+    end
+
+    it 'treats the default tenant as always valid' do
+      switched = nil
+      allow(Apartment::Tenant).to(receive(:switch)) do |name, &blk|
+        switched = name
+        blk.call
+      end
+      elevator = described_class.new(app, ->(_req) { 'public' })
+      elevator.call(env)
+      expect(switched).to(eq('public'))
+    end
+
+    it 'routes a TenantNotFound raised during resolution through the handler' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = ->(_tenant, _request) { [404, {}, ['routed']] }
+      end
+      processor = ->(_req) { raise(Apartment::TenantNotFound, 'unmapped host') }
+      elevator = described_class.new(app, processor)
+      expect(elevator.call(env)).to(eq([404, {}, ['routed']]))
+    end
+
+    it 'raises TenantNotFound with the tenant name intact, not a nested message' do
+      elevator = described_class.new(app, ->(_req) { 'ghost' })
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound) do |error|
+        expect(error.tenant).to(eq('ghost'))
+        expect(error.message).to(eq("Tenant 'ghost' not found"))
+      end)
+    end
+
+    it 'passes the resolved tenant, not the host, when resolution raises TenantNotFound' do
+      received = nil
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = lambda { |tenant, _request|
+          received = tenant
+          [404, {}, []]
+        }
+      end
+      processor = ->(_req) { raise(Apartment::TenantNotFound, 'resolved-name') }
+      described_class.new(app, processor).call(env)
+      expect(received).to(eq('resolved-name'))
+    end
+  end
+
+  # The validator can hold a stale positive after another process drops a
+  # tenant; the switch then proceeds and the app's first query blows up. The
+  # fail-safe catches an adapter-classified "container gone" error, evicts the
+  # name from this process, and routes through the not-found path — turning a
+  # lingering-drop 500 into a 404. See issue #414.
+  describe 'missing-tenant fail-safe' do
+    let(:app) { ->(_env) { [200, {}, ['ok']] } }
+    let(:env) { Rack::MockRequest.env_for('http://acme.example.com/') }
+    # Stand-in for an adapter-specific "container gone" error class.
+    let(:db_error_class) { Class.new(StandardError) }
+    let(:validator) { instance_double(Apartment::TenantValidator, call: true, evict: nil) }
+
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+      end
+      allow(Apartment).to(receive(:tenant_validator).and_return(validator))
+    end
+
+    def stub_adapter(gone:)
+      adapter = instance_double(Apartment::Adapters::AbstractAdapter,
+                                failsafe_error_classes: [db_error_class])
+      allow(adapter).to(receive(:tenant_container_gone?).and_return(gone))
+      allow(Apartment).to(receive(:adapter).and_return(adapter))
+      adapter
+    end
+
+    it 'evicts and routes through the not-found path on a confirmed missing container' do
+      stub_adapter(gone: true)
+      allow(Apartment::Tenant).to(receive(:switch).with('acme').and_raise(db_error_class, 'schema gone'))
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound, /acme/))
+      expect(validator).to(have_received(:evict).with('acme'))
+    end
+
+    it 'returns the tenant_not_found_handler response on a confirmed missing container' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.default_tenant = 'public'
+        c.tenants_provider = -> { %w[acme] }
+        c.tenant_not_found_handler = ->(tenant, _request) { [404, {}, ["gone: #{tenant}"]] }
+      end
+      stub_adapter(gone: true)
+      allow(Apartment::Tenant).to(receive(:switch).with('acme').and_raise(db_error_class, 'schema gone'))
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+
+      expect(elevator.call(env)).to(eq([404, {}, ['gone: acme']]))
+    end
+
+    it 'still 404s without evicting when the validator cannot evict (validation disabled / custom callable)' do
+      stub_adapter(gone: true)
+      # config.tenant_validator = false resolves to a bare lambda with no #evict;
+      # the fail-safe must still convert the confirmed drop to a 404, not raise
+      # NoMethodError trying to evict.
+      allow(Apartment).to(receive(:tenant_validator).and_return(->(_name) { true }))
+      allow(Apartment::Tenant).to(receive(:switch).with('acme').and_raise(db_error_class, 'schema gone'))
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+
+      expect { elevator.call(env) }.to(raise_error(Apartment::TenantNotFound, /acme/))
+    end
+
+    it 're-raises the original error when the container still exists (not a drop)' do
+      stub_adapter(gone: false)
+      allow(Apartment::Tenant).to(receive(:switch).with('acme').and_raise(db_error_class, 'real bug'))
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+
+      expect { elevator.call(env) }.to(raise_error(db_error_class, 'real bug'))
+      expect(validator).not_to(have_received(:evict))
+    end
+
+    it 'does not classify errors outside the adapter failsafe set' do
+      adapter = stub_adapter(gone: true)
+      allow(Apartment::Tenant).to(receive(:switch).with('acme').and_raise(RuntimeError, 'unrelated'))
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+
+      expect { elevator.call(env) }.to(raise_error(RuntimeError, 'unrelated'))
+      expect(adapter).not_to(have_received(:tenant_container_gone?))
+    end
+
+    it 'leaves the happy path unwrapped when the adapter declares no failsafe errors' do
+      adapter = instance_double(Apartment::Adapters::AbstractAdapter, failsafe_error_classes: [])
+      allow(Apartment).to(receive(:adapter).and_return(adapter))
+      allow(Apartment::Tenant).to(receive(:switch).with('acme').and_yield)
+      elevator = described_class.new(app, ->(_req) { 'acme' })
+
+      expect(elevator.call(env)).to(eq([200, {}, ['ok']]))
+    end
+  end
 end

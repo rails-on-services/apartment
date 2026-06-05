@@ -7,7 +7,7 @@ require_relative 'configs/mysql_config'
 module Apartment
   # Configuration object for Apartment v4.
   # Created via Apartment.configure block; validated after the block yields.
-  class Config
+  class Config # rubocop:disable Metrics/ClassLength
     VALID_STRATEGIES = %i[schema database_name shard database_config].freeze
     VALID_ENVIRONMENTIFY_STRATEGIES = [nil, :prepend, :append].freeze
 
@@ -15,19 +15,23 @@ module Apartment
                 :environmentify_strategy, :excluded_models
 
     attr_accessor :tenants_provider, :default_tenant,
+                  :default_tenant_switch_allowed,
                   :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
                   :seed_after_create, :seed_data_file,
                   :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
                   :elevator, :elevator_options,
-                  :tenant_not_found_handler, :active_record_log, :sql_query_tags,
+                  :tenant_not_found_handler, :tenant_validator,
+                  :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
-                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations
+                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
+                  :force_separate_pinned_pool, :test_fixture_cleanup
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
       @tenants_provider = nil
       @default_tenant = nil
+      @default_tenant_switch_allowed = true
       @excluded_models = []
       @tenant_pool_size = 5
       @pool_idle_timeout = 300
@@ -41,6 +45,7 @@ module Apartment
       @elevator = nil
       @elevator_options = {}
       @tenant_not_found_handler = nil
+      @tenant_validator = nil
       @active_record_log = false
       @sql_query_tags = false
       @postgres_config = nil
@@ -50,6 +55,8 @@ module Apartment
       @app_role = nil
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
+      @force_separate_pinned_pool = false
+      @test_fixture_cleanup = true
     end
 
     def excluded_models=(list)
@@ -105,10 +112,27 @@ module Apartment
       freeze
     end
 
+    # Apply derived defaults that depend on user-set values. Runs after the
+    # configure block yields and before validate!, so validate! stays read-only.
+    def apply_defaults!
+      # PostgreSQL's default schema is 'public'; avoid forcing every user to set it.
+      @default_tenant ||= 'public' if @tenant_strategy == :schema
+    end
+
     # Validate configuration completeness and consistency.
     # Raises ConfigurationError on invalid state.
     def validate! # rubocop:disable Metrics/AbcSize
       raise(ConfigurationError, 'tenant_strategy is required') unless @tenant_strategy
+
+      if @default_tenant.is_a?(String) && @default_tenant.strip.empty?
+        raise(ConfigurationError, 'default_tenant cannot be an empty string')
+      end
+
+      unless [true, false].include?(@default_tenant_switch_allowed)
+        raise(ConfigurationError,
+              'default_tenant_switch_allowed must be true or false, got: ' \
+              "#{@default_tenant_switch_allowed.inspect}")
+      end
 
       unless @tenants_provider.respond_to?(:call)
         raise(ConfigurationError, 'tenants_provider must be a callable (e.g., -> { Tenant.pluck(:name) })')
@@ -117,6 +141,8 @@ module Apartment
       if @postgres_config && @mysql_config
         raise(ConfigurationError, 'Cannot configure both Postgres and MySQL at the same time')
       end
+
+      @postgres_config&.validate!
 
       unless @tenant_pool_size.is_a?(Integer) && @tenant_pool_size.positive?
         raise(ConfigurationError, "tenant_pool_size must be a positive integer, got: #{@tenant_pool_size.inspect}")
@@ -152,6 +178,28 @@ module Apartment
       unless [true, false].include?(@check_pending_migrations)
         raise(ConfigurationError,
               "check_pending_migrations must be true or false, got: #{@check_pending_migrations.inspect}")
+      end
+
+      unless [true, false].include?(@force_separate_pinned_pool)
+        raise(ConfigurationError,
+              "force_separate_pinned_pool must be true or false, got: #{@force_separate_pinned_pool.inspect}")
+      end
+
+      unless [true, false].include?(@test_fixture_cleanup)
+        raise(ConfigurationError,
+              "test_fixture_cleanup must be true or false, got: #{@test_fixture_cleanup.inspect}")
+      end
+
+      unless @tenant_validator.nil? || @tenant_validator == false || @tenant_validator.respond_to?(:call)
+        raise(ConfigurationError,
+              'tenant_validator must be nil, false, or a callable, ' \
+              "got: #{@tenant_validator.inspect}")
+      end
+
+      if @tenant_not_found_handler && !@tenant_not_found_handler.respond_to?(:call)
+        raise(ConfigurationError,
+              'tenant_not_found_handler must be nil or a callable, ' \
+              "got: #{@tenant_not_found_handler.inspect}")
       end
 
       return if @shard_key_prefix.is_a?(String) && @shard_key_prefix.match?(/\A[a-z_][a-z0-9_]*\z/)

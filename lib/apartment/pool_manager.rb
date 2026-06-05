@@ -23,6 +23,13 @@ module Apartment
       pool
     end
 
+    # Read a pool without updating its idle timestamp. PoolReaper uses this
+    # to inspect an eviction candidate; +get+ would reset the very idleness
+    # the reaper is measuring.
+    def peek(tenant_key)
+      @pools[tenant_key]
+    end
+
     # Delete pool first, then timestamp. This ordering prevents a concurrent
     # #get from orphaning a timestamp (get checks @pools, skips touch if absent).
     def remove(tenant_key)
@@ -87,6 +94,14 @@ module Apartment
         total_pools: @pools.size,
         tenants: @pools.keys,
       }
+    end
+
+    # Yields each tracked pool as +[tenant_key, pool]+. Snapshot semantics
+    # follow Concurrent::Map#each_pair: keys observed during iteration are
+    # those present at the time the iterator visits them. Read-only; do not
+    # mutate the manager from inside the block.
+    def each_pair(&)
+      @pools.each_pair(&)
     end
 
     # Disconnect all pools before clearing to prevent connection leaks.

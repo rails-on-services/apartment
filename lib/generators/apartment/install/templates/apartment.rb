@@ -17,6 +17,13 @@ Apartment.configure do |config|
   # The default tenant (used on boot and between requests).
   # config.default_tenant = 'public'
 
+  # Strict tenant discipline. When false, Apartment::Tenant.switch(default_tenant)
+  # raises — apps must use Tenant.reset (block-less) or Tenant.switch!(name) for
+  # explicit re-entry into the default tenant. Catches accidental block-form
+  # switches into the shared schema. Defaults to true for backward compatibility;
+  # recommended for new PostgreSQL :schema apps that want strict semantics.
+  # config.default_tenant_switch_allowed = false
+
   # Models that live in the shared/default schema (not per-tenant).
   # The recommended approach is to declare this in the model itself:
   #
@@ -36,8 +43,9 @@ Apartment.configure do |config|
 
   # == Elevator (Request Tenant Detection) =================================
 
-  # The Railtie auto-inserts the elevator as middleware.
-  # No manual insertion into config.middleware is needed.
+  # The Railtie auto-inserts the elevator after ActionDispatch::Callbacks.
+  # For custom positioning, skip config.elevator and use
+  # config.middleware.insert_before in config/application.rb instead.
   #
   # config.elevator = :subdomain
   # config.elevator_options = {}

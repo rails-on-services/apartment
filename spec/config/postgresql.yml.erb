@@ -1,14 +1,14 @@
 connections:
   postgresql:
     adapter: postgresql
-    database: apartment_postgresql_test
+    database: apartment_v4_test
     username: postgres
     min_messages: WARNING
     host: localhost
     port: 5432
 <% if defined?(JRUBY_VERSION) %>
     driver: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/apartment_postgresql_test
+    url: jdbc:postgresql://localhost:5432/apartment_v4_test
     timeout: 5000
     pool: 5
 <% else %>

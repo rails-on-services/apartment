@@ -161,6 +161,12 @@ RSpec.describe('v4 Coverage gaps integration', :integration,
       sleep(0.02)
       Apartment::Tenant.switch('lru_6') { Widget.create!(name: 'most_recent') }
 
+      # Mirror the request/job boundary that releases sticky leases in
+      # production. Without this the in-use guard correctly skips every
+      # pool — none of them are evictable while the test thread holds
+      # checked-out connections.
+      ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+
       # Directly invoke run_cycle to avoid timing-dependent background thread.
       Apartment.pool_reaper.run_cycle
 

@@ -60,7 +60,7 @@ The generated initializer at `config/initializers/apartment.rb` configures Apart
 Apartment.configure do |config|
   config.tenant_strategy = :schema          # :schema (PostgreSQL) or :database_name (MySQL/SQLite)
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
+  config.default_tenant = 'public'          # auto-defaults for :schema; required for :database_name
 end
 ```
 
@@ -112,7 +112,7 @@ config.elevator = :subdomain
 config.elevator_options = {}
 ```
 
-The Railtie auto-inserts elevator middleware. No manual `config.middleware.use` needed.
+The Railtie auto-inserts elevator middleware after `ActionDispatch::Callbacks` (just before cookies/sessions in full mode; works in API mode too).
 
 See the [Elevators](#elevators) section for available options.
 
@@ -217,7 +217,14 @@ Apartment.configure do |config|
 end
 ```
 
-The Railtie inserts the elevator as middleware automatically. You do not need `config.middleware.use` or `config.middleware.insert_before`.
+The Railtie inserts the elevator after `ActionDispatch::Callbacks` automatically. In the full middleware stack this places it just before cookies, sessions, and authentication. In API mode (where cookies/sessions are absent), `Callbacks` is still present so the elevator works without changes.
+
+If you need different positioning, skip `config.elevator` and insert manually:
+
+```ruby
+# config/application.rb
+config.middleware.insert_before 'Warden::Manager', Apartment::Elevators::Subdomain
+```
 
 ### Custom Elevator
 
@@ -304,6 +311,28 @@ Workaround: add `include Apartment::Model` and `pin_tenant` on the abstract clas
 
 The common pattern of `ApplicationRecord` using `connects_to` with multiple roles (writing/reading) on the same database works correctly; Apartment keys pools by `tenant:role` and respects Rails' role routing.
 
+## ActionController::Live Streaming
+
+Apartment v4 handles tenant propagation across `ActionController::Live`'s spawned streaming thread automatically, under both `:thread` and `:fiber` isolation. Including `ActionController::Live` in your controller is sufficient — no additional configuration:
+
+```ruby
+class StreamingController < ApplicationController
+  include ActionController::Live
+
+  def show
+    response.headers['Content-Type'] = 'text/event-stream'
+    # Apartment::Tenant.current returns the request's tenant here,
+    # even though we're now executing on the OS thread Rails spawned
+    # for streaming.
+    response.stream.write("data: #{{ tenant: Apartment::Tenant.current }.to_json}\n\n")
+  ensure
+    response.stream.close
+  end
+end
+```
+
+How it works: Apartment prepends `ActionController::Live#process` with a patch that backports [rails/rails#56902](https://github.com/rails/rails/pull/56902) to released Rails versions — it points `Thread.current.active_support_execution_state` at the request fiber's hash for the duration of the request, so Rails' own `share_with` carries all `CurrentAttributes` (apartment's tenant plus any app-defined ones) into the spawned streaming thread. User-spawned threads or fibers *inside* a Live action (`Thread.new`, `Async { }`, raw `Fiber.new`) escape the patch and need explicit `Apartment::Tenant.switch` wrapping. See the [upgrading guide](docs/upgrading-to-v4.md) and [`docs/designs/rails-boundary-tenancy.md`](docs/designs/rails-boundary-tenancy.md).
+
 ## Background Workers
 
 Use block-scoped switching in jobs:
@@ -323,6 +352,19 @@ For automatic tenant propagation:
 - [apartment-sidekiq](https://github.com/rails-on-services/apartment-sidekiq)
 - [apartment-activejob](https://github.com/rails-on-services/apartment-activejob)
 
+A job that forgets to switch runs in the default tenant — for `Rails.cache` and
+other `Tenant.current`-derived resources that silently contaminate another
+tenant's keyspace. Guard routed work with `Apartment::Tenant.require_tenant!`
+(raises unless a real, non-default tenant is active) and pinned/global work with
+`require_default_tenant!`. See [Tenant-Aware Caching](docs/caching.md) for the
+routed-vs-pinned model and the two-store recipe.
+
+## Convenience Methods
+
+`Apartment.tenant_names` returns the current tenant list (delegates to `config.tenants_provider.call`). Preserves the v3 API so existing call sites work without changes.
+
+`Apartment.excluded_models` returns the excluded models list (delegates to `config.excluded_models`). Deprecated in v4; use `Apartment::Model` + `pin_tenant` instead.
+
 ## Troubleshooting
 
 If tenant switching raises unexpected errors, verify that `tenants_provider` returns valid tenant names and that the tenant exists in the database.
@@ -330,6 +372,28 @@ If tenant switching raises unexpected errors, verify that `tenants_provider` ret
 ## Upgrading from v3
 
 See the [upgrade guide](docs/upgrading-to-v4.md) for a complete list of breaking changes and migration steps.
+
+## RuboCop cops
+
+Apartment ships two optional RuboCop cops that enforce the block-form
+tenant-switching discipline. Enable them in your application's `.rubocop.yml`:
+
+```yaml
+require: rubocop/apartment
+inherit_gem:
+  ros-apartment: config/default.yml
+```
+
+- **`Apartment/NoDirectCurrentWrite`** (error) — bans assigning
+  `Apartment::Current.tenant` / `.previous_tenant` directly. Change tenant context
+  with `Apartment::Tenant.switch(tenant) { ... }` (or `with_default_tenant` for
+  global work), which guarantees a restore via `ensure`.
+- **`Apartment/PreferBlockSwitch`** (warning) — nudges `Apartment::Tenant.switch!`
+  toward the block form. `reset` is not flagged.
+
+Both match the qualified `Apartment::` receiver only. Scope them to your
+application code with the standard `Exclude:` keys if needed. See
+[`docs/designs/rubocop-cops.md`](docs/designs/rubocop-cops.md) for the rationale.
 
 ## Contributing
 

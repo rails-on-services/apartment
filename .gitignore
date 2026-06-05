@@ -8,7 +8,6 @@ pkg/*
 .idea
 *.sw[pno]
 spec/config/database.yml
-spec/dummy/config/database.yml
 cookbooks
 tmp
 spec/dummy/db/*.sqlite3
@@ -20,3 +19,7 @@ spec/dummy/db/*.sqlite3
 # Firecrawl working data
 .firecrawl/
 coverage/
+# code-graph-mcp index (generated, per-machine)
+.code-graph/
+# Repomix packed output (generated, can be 10MB+)
+repomix-output.*

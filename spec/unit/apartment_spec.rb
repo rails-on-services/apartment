@@ -54,6 +54,102 @@ RSpec.describe(Apartment) do
     end
   end
 
+  describe '.tenant_names' do
+    it 'returns the result of calling config.tenants_provider' do
+      tenants = %w[acme widgets]
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { tenants }
+      end
+
+      expect(described_class.tenant_names).to(eq(%w[acme widgets]))
+    end
+
+    it 'raises ConfigurationError when not configured' do
+      described_class.clear_config
+      expect { described_class.tenant_names }.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+
+    it 'raises ConfigurationError when tenants_provider returns a non-Enumerable' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { 42 }
+      end
+
+      expect do
+        described_class.tenant_names
+      end.to(raise_error(Apartment::ConfigurationError, /tenants_provider must return an Enumerable/))
+    end
+
+    it 'returns the override when Current.tenant_override is set' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { %w[ambient] }
+      end
+
+      Apartment::Tenant.with_tenants_provider(%w[overridden]) do
+        expect(described_class.tenant_names).to(eq(%w[overridden]))
+      end
+      expect(described_class.tenant_names).to(eq(%w[ambient]))
+    end
+  end
+
+  describe '.reset_tenant_pools!' do
+    # Regression: reset_tenant_pools! is a pool-lifecycle method. It must not
+    # touch Apartment::Current — that bag holds execution context (tenant,
+    # previous_tenant, migrating, tenant_override), none of which is pool
+    # state. A blanket Current.reset here clobbered the tenant_override set
+    # by a with_tenants around-hook, silently breaking tenant iteration for
+    # the whole example. See docs/designs/fixture-pool-lifecycle.md.
+    it 'preserves a with_tenants override so tenant_names still scopes to it' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { %w[ambient] }
+      end
+
+      Apartment::Tenant.with_tenants('acme', 'widgets') do
+        described_class.reset_tenant_pools!
+        expect(described_class.tenant_names).to(eq(%w[acme widgets]))
+      end
+    end
+
+    it 'does not reset Current tenant context' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      Apartment::Current.tenant = 'acme'
+      Apartment::Current.previous_tenant = 'public'
+      Apartment::Current.migrating = true
+      Apartment::Current.tenant_override = %w[acme widgets]
+
+      described_class.reset_tenant_pools!
+
+      expect(Apartment::Current.tenant).to(eq('acme'))
+      expect(Apartment::Current.previous_tenant).to(eq('public'))
+      expect(Apartment::Current.migrating).to(be(true))
+      expect(Apartment::Current.tenant_override).to(eq(%w[acme widgets]))
+    end
+  end
+
+  describe '.excluded_models' do
+    it 'delegates to config.excluded_models' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.excluded_models = %w[Account]
+      end
+
+      expect(described_class.excluded_models).to(eq(%w[Account]))
+    end
+
+    it 'raises ConfigurationError when not configured' do
+      described_class.clear_config
+      expect { described_class.excluded_models }.to(raise_error(Apartment::ConfigurationError, /not configured/))
+    end
+  end
+
   describe '.clear_config' do
     it 'resets the adapter' do
       described_class.configure do |config|
@@ -65,6 +161,71 @@ RSpec.describe(Apartment) do
       described_class.clear_config
 
       expect { described_class.adapter }.to(raise_error(Apartment::ConfigurationError))
+    end
+
+    it 'restores convention-path table_name_prefix on pinned models' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('ConventionTeardown', klass)
+      allow(klass).to(receive(:table_name_prefix).and_return(''))
+      allow(klass).to(receive(:table_name_prefix=))
+      allow(klass).to(receive(:reset_table_name))
+
+      ConventionTeardown.pin_tenant
+      klass.apartment_mark_processed!(:convention, 'myapp_')
+
+      described_class.clear_config
+
+      expect(klass).to(have_received(:table_name_prefix=).with('myapp_'))
+      expect(klass).to(have_received(:reset_table_name))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'restores explicit-path table_name on pinned models' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('ExplicitTeardown', klass)
+      allow(klass).to(receive(:table_name=))
+
+      ExplicitTeardown.pin_tenant
+      klass.apartment_mark_processed!(:explicit, 'custom_jobs')
+
+      described_class.clear_config
+
+      expect(klass).to(have_received(:table_name=).with('custom_jobs'))
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'handles separate-pool path (nil qualification_path) without error' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('SeparatePoolTeardown', klass)
+
+      SeparatePoolTeardown.pin_tenant
+      klass.apartment_mark_processed!
+
+      expect { described_class.clear_config }.not_to(raise_error)
+      expect(klass.apartment_pinned_processed?).to(be(false))
+    end
+
+    # pin_tenant runs once, when a model's class body loads — it never re-runs.
+    # Apartment.pinned_models is therefore the only record that a model is
+    # pinned. clear_config must keep it: discarding it leaves every pinned model
+    # registered-but-unprocessed after the next configure (it cannot rediscover
+    # a class whose body already ran), which is the bug this guards against.
+    it 'keeps pinned models registered across clear_config' do
+      klass = Class.new(ActiveRecord::Base) do
+        include Apartment::Model
+      end
+      stub_const('PinnedAcrossClear', klass)
+      PinnedAcrossClear.pin_tenant
+
+      described_class.clear_config
+
+      expect(described_class.pinned_models).to(include(PinnedAcrossClear))
     end
   end
 
@@ -314,6 +475,69 @@ RSpec.describe(Apartment) do
 
       result = described_class.send(:detect_database_adapter)
       expect(result).to(eq('postgresql'))
+    end
+  end
+
+  describe '.tenant_validator' do
+    it 'returns an always-true callable when config.tenant_validator is false' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.tenant_validator = false
+      end
+      expect(described_class.tenant_validator.call('anything')).to(be(true))
+    end
+
+    it 'returns the configured callable when one is set' do
+      custom = ->(name) { name == 'acme' }
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.tenant_validator = custom
+      end
+      expect(described_class.tenant_validator).to(equal(custom))
+    end
+
+    it 'returns a built-in TenantValidator when unset, memoized per process' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      first = described_class.tenant_validator
+      expect(first).to(be_a(Apartment::TenantValidator))
+      expect(described_class.tenant_validator).to(equal(first))
+    end
+
+    it 'discards the built-in validator on clear_config' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      first = described_class.tenant_validator
+      described_class.clear_config
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      expect(described_class.tenant_validator).not_to(equal(first))
+    end
+
+    it 'builds the built-in validator once under concurrent first access' do
+      described_class.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+      end
+      call_count = Concurrent::AtomicFixnum.new(0)
+      original = Apartment::TenantValidator.method(:new)
+      allow(Apartment::TenantValidator).to(receive(:new)) do
+        call_count.increment
+        sleep(0.02) # widen the race window so an unsynchronized ||= is caught
+        original.call
+      end
+
+      Array.new(20) { Thread.new { described_class.tenant_validator } }.each(&:join)
+
+      expect(call_count.value).to(eq(1))
     end
   end
 end

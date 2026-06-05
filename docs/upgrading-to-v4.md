@@ -10,13 +10,15 @@
 
 ## What Changed and Why
 
-v4 replaces the thread-local tenant switching model with pool-per-tenant architecture: each tenant gets a dedicated connection pool, eliminating cross-thread tenant leakage (a persistent problem in ActionCable, Sidekiq, and fiber-based servers). Tenant context is tracked via `ActiveSupport::CurrentAttributes`, making it fiber-safe by default. Configuration is immutable after boot (`Config#freeze!` runs after `Apartment.configure`). Global models use a declarative `pin_tenant` call on each class instead of a centralized config list.
+v4 replaces the thread-local tenant switching model with pool-per-tenant architecture: each tenant gets a dedicated connection pool, eliminating cross-thread tenant leakage (a persistent problem in ActionCable, Sidekiq, and fiber-based servers). Tenant context is tracked via `ActiveSupport::CurrentAttributes`, fiber-safe under `:fiber` isolation (Rails' default is `:thread`; see Connection Model below). Configuration is immutable after boot (`Config#freeze!` runs after `Apartment.configure`). Global models use a declarative `pin_tenant` call on each class instead of a centralized config list.
 
 ## Breaking Changes
 
 ### Configuration
 
-`config.tenant_names` has been removed. Use `config.tenants_provider` instead; it must be a callable (proc or lambda).
+`config.tenant_names` has been removed. Use `config.tenants_provider` instead; it must be a callable (proc or lambda). The convenience method `Apartment.tenant_names` still works — it is now the single resolver used internally by `Tenant.each`, `Migrator`, `SchemaCache`, and the CLI commands. It honors a per-block override set via `Apartment::Tenant.with_tenants_provider` / `Apartment::Tenant.with_tenants` when one is active, and validates that the resolved value responds to `:each` (raising `ConfigurationError` otherwise — previously this check ran only in `Tenant.each`).
+
+The block override and the configured provider accept different input shapes by design. `config.tenants_provider` is callable-only: production tenant lists are nearly always backed by a query that should resolve at access time, and the static-list shape from v3 (`config.tenant_names = [...]`) was removed deliberately. `with_tenants_provider` additionally accepts a String, Symbol, or Array of String/Symbol because its primary use case is test-suite ergonomics, where a literal list is the natural call shape — `Tenant.with_tenants('acme', 'widgets')` reads better than wrapping every spec in a lambda. The contract that consumers see — what `Apartment.tenant_names` returns — is identical regardless of source: an object responding to `:each`, validated at resolution.
 
 `config.tenant_strategy` is now required. Supported values: `:schema` (PostgreSQL schema-per-tenant) and `:database_name` (separate database per tenant). Additional strategies (`:shard`, `:database_config`) are reserved for future use and will raise `AdapterNotFound` if configured today.
 
@@ -38,9 +40,10 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
 end
 ```
+
+`default_tenant` auto-defaults to `'public'` for `:schema` strategy, matching v3 behavior. If you previously set it explicitly, you can remove the line. If your primary schema is something other than `public` (e.g., `shared`), set `config.default_tenant` to match. For `:database_name` strategy, you still need to set it.
 
 ### Tenant API
 
@@ -59,9 +62,35 @@ Apartment::Tenant.switch(tenant) do
 end
 ```
 
-`switch!` still exists for console/REPL use but is discouraged in application code.
+`switch!` still exists for console/REPL use but is discouraged in application code. `switch!` is **not deprecated** — it remains the correct primitive for non-block scopes (suite bootstrap, `before(:context)` hooks, structural test setup where an `around` can't reach in). The "prefer blocks" guidance applies when a block is natural.
 
 `Apartment::Tenant.current` is unchanged between v3 and v4.
+
+### New v4 predicates and guard (optional)
+
+Two new predicates and a config flag landed in 4.0.0.alpha3 to support strict tenant discipline. All are opt-in; defaults preserve existing behavior.
+
+```ruby
+# Predicate: was a tenant explicitly entered?
+Apartment::Tenant.tenant_switched?          # reads Current.tenant directly, ignores default fallback
+
+# Test-time assertion: raise when no explicit tenant is active
+Apartment::Tenant.assert_tenant_switched!
+Apartment::Tenant.assert_tenant_switched!(message: 'spec must declare a tenant')
+
+# Config: opt-in guard on switch(default_tenant) { ... }
+Apartment.configure do |config|
+  config.default_tenant_switch_allowed = false  # raises on switch(default_tenant) block form
+end
+```
+
+`Tenant.reset` and `Tenant.switch!` bypass the guard by design — they are the documented paths back to the default tenant under strict mode. Defaults to `true` (permissive) for all strategies; opt in to `false` for new PostgreSQL `:schema` apps that want strict semantics from day one.
+
+v4 also adds the identity-axis guards for runtime (non-test) code: `require_tenant!` / `require_default_tenant!`, predicates `in_tenant?` / `in_default_tenant?`, `with_default_tenant { }`, and `cache_namespace`. See [Tenant-Aware Caching](./caching.md). The explicitness-axis methods `inside_tenant?` / `assert_inside_tenant!` were **renamed** to `tenant_switched?` / `assert_tenant_switched!` with no aliases.
+
+v4 relocated the configured default tenant to `Apartment.config.default_tenant`, but `Apartment::Tenant.default_tenant` remains available as a reader (it returns `Apartment.config&.default_tenant`). Code that read the default tenant on v3 keeps working unchanged.
+
+See [Testing with Apartment v4](./testing.md) for recipe-level guidance on strict discipline, cross-pool transaction visibility, and pinned-model cleanup.
 
 ### Models
 
@@ -91,7 +120,7 @@ end
 
 ### Middleware
 
-The v4 Railtie auto-inserts elevator middleware when `config.elevator` is set. Remove any manual `config.middleware.use` or `config.middleware.insert_before` lines from your application config.
+The v4 Railtie auto-inserts elevator middleware after `ActionDispatch::Callbacks` when `config.elevator` is set. Remove any manual `config.middleware.use` or `config.middleware.insert_before` lines from your application config. If you need custom middleware positioning, skip `config.elevator` and use the standard Rails `config.middleware.insert_before` API directly.
 
 Configure via symbol:
 
@@ -104,18 +133,78 @@ end
 
 Available elevators: `:subdomain`, `:first_subdomain`, `:domain`, `:host`, `:host_hash`, `:header`, `:generic`.
 
+### Elevator Tenant Validation
+
+Elevators now validate the resolved tenant before switching. An unknown subdomain (or any other unresolved tenant) raises `Apartment::TenantNotFound` — which the Railtie maps to a 404 — instead of failing deep in the first query with an opaque 500.
+
+Validation runs by default via a built-in in-process validator. To disable it, or to supply your own:
+
+```ruby
+Apartment.configure do |config|
+  config.tenant_validator = false              # disable validation
+  # config.tenant_validator = ->(name) { ... } # or supply a custom callable
+end
+```
+
+Configure `config.tenant_not_found_handler` for a custom not-found response instead of the default 404. See `docs/designs/elevator-tenant-validation.md` for the full design.
+
+If your elevator subclass already rejects unknown tenants in `parse_tenant_name` (e.g., filtering against a shared cache of valid names), the validator is structurally redundant — set `config.tenant_validator = false`. See the design doc's *When to disable validation* section.
+
+If you provision tenants outside `Apartment::Tenant.create` / `.drop` (raw `psql`, `pg_restore`, a separate schema-cloning job), call `Apartment::Lifecycle.notify_created(name)` / `notify_dropped(name)` after the schema is live. The lifecycle calls publish the `create.apartment` / `drop.apartment` notifications the validator subscribes to, so the new tenant is valid on the very next request instead of waiting for rebuild-on-miss. In-process only — multi-process propagation needs a custom validator (see the design doc's *Multi-process deployments* section).
+
 ### Connection Model
 
 v4 uses pool-per-tenant instead of thread-local switching. Each tenant gets a dedicated `ActiveRecord::ConnectionAdapters::ConnectionPool` managed by `Apartment::PoolManager`.
 
-Tenant context is stored in `Apartment::Current` (an `ActiveSupport::CurrentAttributes` subclass), which is fiber-safe by default. If your app uses fibers (e.g., Falcon server), ensure your Rails config sets:
+Tenant context is stored in `Apartment::Current` (an `ActiveSupport::CurrentAttributes` subclass). Rails' default `ActiveSupport::IsolatedExecutionState.isolation_level` is `:thread`; v4 recommends `:fiber` for any fiber-aware concurrency. Set it in your Rails config:
 
 ```ruby
 # config/application.rb
 config.active_support.isolation_level = :fiber
 ```
 
-The Railtie emits a boot-time warning if `isolation_level` is `:thread`.
+The Railtie emits a boot-time warning when `isolation_level` is `:thread`.
+
+Two caveats apply at `:fiber`:
+
+- **`ActionController::Live`**: works out of the box under both `:thread` and `:fiber` isolation. Apartment v4 prepends `ActionController::Live#process` with `Apartment::Patches::LiveTenantPropagation`, which mirrors `Fiber.current.active_support_execution_state` onto `Thread.current`'s accessor for the duration of the request. Rails' own `share_with` then finds the right data and propagates *all* `CurrentAttributes` (apartment's tenant plus any app-defined ones) into the spawned streaming thread. No user code changes required for the standard case. This is a backport of [rails/rails#56902](https://github.com/rails/rails/pull/56902) and will become a redundant no-op once that change reaches a stable Rails release. Caveats:
+  - **User-spawned threads or fibers inside a Live action** (`Thread.new { ... }`, `Async {}`, raw `Fiber.new`) are not covered and still need explicit `Apartment::Tenant.switch` wrapping — same contract `:fiber` isolation imposes everywhere else.
+  - **`CurrentAttributes` mutations inside the streaming thread leak back to the parent fiber.** Rails' `share_with` performs a shallow `.dup` of the execution-state hash, so both the parent request fiber and the spawned streaming thread end up holding the same `Record` object by reference. If your Live action body mutates a `CurrentAttribute` (e.g., `Current.user = other_user`), that mutation is visible on the parent fiber after `process` returns. This is Rails' behavior, not introduced by the patch, but it's worth knowing about: prefer reading from `CurrentAttributes` inside the stream, not writing to them.
+
+  See [`docs/designs/rails-boundary-tenancy.md`](designs/rails-boundary-tenancy.md).
+- Child fibers spawned inside a request (`Fiber.new { ... }.resume`) get their own attribute store and do not inherit the parent fiber's `CurrentAttributes` — see [rails/rails#48279](https://github.com/rails/rails/issues/48279) (closed as "not planned"). Use `Apartment::Tenant.switch` inside the child fiber, not before it.
+
+### Pinned Model Connections
+
+In v3, pinned (excluded) models always received their own connection pool via `establish_connection`. This meant they never participated in the same database transaction as tenant-scoped models.
+
+v4 fixes this for strategies where the database engine supports cross-schema/database queries on a single connection:
+
+| Strategy | Pinned model connection in v4 |
+|---|---|
+| PostgreSQL schema | Shares tenant connection (qualified table name) |
+| MySQL / Trilogy | Shares tenant connection (qualified table name) |
+| PostgreSQL database-per-tenant | Separate pool (unchanged from v3) |
+| SQLite | Separate pool (unchanged from v3) |
+
+For PG schema and MySQL/Trilogy, pinned models now use the tenant's connection pool with a fully qualified table name (e.g. `public.delayed_jobs`). This means pinned model writes participate in the same transaction as tenant DML.
+
+**Action required if you relied on the old behavior:**
+
+If your code assumes that pinned model writes survive a tenant transaction rollback (e.g., enqueuing a job and deliberately rolling back tenant data), set `force_separate_pinned_pool: true` in your Apartment config:
+
+```ruby
+Apartment.configure do |config|
+  config.force_separate_pinned_pool = true
+  # ...
+end
+```
+
+`after_commit` callbacks still fire as before. The difference is that pinned model writes are now inside the tenant transaction, so an `ActiveRecord::Rollback` that aborts the transaction will also roll back pinned model writes. Apps using `after_commit` for job enqueueing are unaffected.
+
+For PG database-per-tenant and SQLite, pinned model behavior is unchanged from v3. For MySQL multi-server setups where tenant databases are on different hosts, set `force_separate_pinned_pool: true`.
+
+`pin_tenant` defers processing until the class body closes (when called after `Apartment.activate!`), so `self.table_name`, `table_name_prefix`, and `table_name_suffix` can appear anywhere in the class body. No ordering requirement between `pin_tenant` and table name configuration. For readability, declare table name configuration first thing in the class body, even before `include`/`prepend` statements. This works for standard `class MyModel < ApplicationRecord` definitions (source-parsed files loaded by Zeitwerk). For `MyModel = Class.new(ApplicationRecord) { ... }` style, the deferral cannot fire; call `Apartment.process_pinned_model(MyModel)` explicitly after assigning the constant.
 
 Key config options for pool tuning:
 
@@ -143,7 +232,6 @@ end
 Apartment.configure do |config|
   config.tenant_strategy = :schema
   config.tenants_provider = -> { Customer.pluck(:subdomain) }
-  config.default_tenant = 'public'
 
   # Optional: auto-load schema into new tenants
   # config.schema_load_strategy = :schema_rb
@@ -272,7 +360,7 @@ end
 1. Run your full test suite
 2. Check connection pool behavior under load in staging: `Apartment::Tenant.pool_stats` returns per-tenant pool metrics
 3. Monitor for `FrozenError` exceptions, which indicate code attempting to mutate config after boot
-4. Verify elevator middleware position with `Rails.application.middleware` (should appear before session middleware)
+4. Verify elevator middleware position with `Rails.application.middleware` (should appear after `ActionDispatch::Callbacks`)
 
 ## connects_to Compatibility
 

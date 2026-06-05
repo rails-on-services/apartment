@@ -96,37 +96,83 @@ module Apartment
         end
       end
 
-      # Process all pinned models — establish separate connections pinned to default tenant.
+      # Whether pinned models can share the tenant's connection pool using
+      # qualified table names instead of establish_connection.
+      #
+      # Returns false by default (separate pool). Subclasses override to
+      # return true when the engine supports cross-schema/database queries,
+      # gated by config.force_separate_pinned_pool.
+      def shared_pinned_connection?
+        false
+      end
+
+      # Request-path fail-safe contract. The elevator wraps the
+      # tenant switch; on one of these error classes it asks
+      # #tenant_container_gone? whether the tenant's storage actually vanished (a
+      # cross-process drop) rather than an app-level failure. An empty list
+      # disables the rescue, so an adapter that does not implement the seams
+      # never converts an error into a 404.
+      def failsafe_error_classes
+        []
+      end
+
+      # Whether +error+, raised while serving +tenant+, means the tenant's
+      # container (schema/database/file) no longer exists — so the validator
+      # should evict the name and the request should 404 instead of surfacing a
+      # 500. Composed from a cheap error-shape check and an authoritative
+      # existence probe, both conservative by default so the base adapter never
+      # reclassifies. Subclasses override the seams.
+      def tenant_container_gone?(error, tenant)
+        return false unless container_error?(unwrap_db_error(error))
+
+        !tenant_container_exists?(tenant)
+      end
+
+      # Qualify a pinned model's table_name so it targets the default
+      # tenant's tables from any tenant connection. Subclasses must
+      # implement when shared_pinned_connection? returns true.
+      def qualify_pinned_table_name(_klass)
+        raise(NotImplementedError,
+              "#{self.class}#qualify_pinned_table_name must be implemented when shared_pinned_connection? is true")
+      end
+
+      # Process all pinned models. When shared_pinned_connection? is true, qualifies
+      # table names for shared pool routing. Otherwise, establishes separate connections.
       def process_pinned_models
         return if Apartment.pinned_models.empty?
 
         Apartment.pinned_models.each do |klass|
           process_pinned_model(klass)
+        rescue StandardError => e
+          raise(Apartment::ConfigurationError,
+                "Failed to process pinned model #{klass.name}: #{e.class}: #{e.message}")
         end
       end
 
       # Process a single pinned model. Called by process_pinned_models (batch)
       # and by Apartment::Model.pin_tenant (when activated? is true).
+      #
+      # When shared_pinned_connection? is true, qualifies the table name so
+      # the model uses the tenant's pool (preserving transactional integrity).
+      # Otherwise, establishes a separate connection pool (required when
+      # cross-database queries are impossible).
       def process_pinned_model(klass)
-        # Idempotent: skip if already processed. Uses a class-level flag rather
-        # than connection_specification_name comparison — the spec name differs
-        # from ActiveRecord::Base for ApplicationRecord subclasses even before
-        # establish_connection, so it's not a reliable "already processed" signal.
-        return if klass.instance_variable_get(:@apartment_connection_established)
+        # Ensure the concern is included — models registered via the
+        # excluded_models shim may not have it yet. Uses apartment_mark_pinned!
+        # (not pin_tenant) to avoid recursion back into process_pinned_model.
+        unless klass.respond_to?(:apartment_pinned_processed?)
+          klass.include(Apartment::Model)
+          klass.apartment_mark_pinned!
+        end
 
-        # Use base_config (the adapter's raw connection config) rather than
-        # resolve_connection_config(default_tenant). For database-per-tenant
-        # strategies (MySQL, SQLite), resolve_connection_config would set the
-        # database key to the default tenant NAME (e.g. 'default'), not the
-        # actual default database (e.g. 'apartment_v4_test'). base_config
-        # points to the real default database.
-        klass.establish_connection(base_config)
-        klass.instance_variable_set(:@apartment_connection_established, true)
+        return if klass.apartment_pinned_processed?
 
-        return unless Apartment.config.tenant_strategy == :schema
-
-        table = klass.table_name.split('.').last
-        klass.table_name = "#{default_tenant}.#{table}"
+        if shared_pinned_connection?
+          qualify_pinned_table_name(klass)
+        else
+          klass.establish_connection(pinned_model_config)
+          klass.apartment_mark_processed!
+        end
       end
 
       # Deprecated: use process_pinned_models instead.
@@ -169,6 +215,28 @@ module Apartment
 
       private
 
+      # --- Missing-tenant fail-safe seams -------------------------------------
+
+      # Does +error+ look like a missing-container error for this engine?
+      # Base: never, so the default adapter classifies nothing.
+      def container_error?(_error)
+        false
+      end
+
+      # Authoritative check that the tenant's container exists. Base: assume it
+      # does, so an unimplemented adapter never evicts a live tenant.
+      def tenant_container_exists?(_tenant)
+        true
+      end
+
+      # ConnectionHandling wraps non-Apartment errors raised during pool
+      # resolution in Apartment::ApartmentError with the original as #cause; the
+      # schema-strategy query error arrives unwrapped. Inspect the cause when
+      # present so both shapes classify the same.
+      def unwrap_db_error(error)
+        error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error
+      end
+
       def grant_tenant_privileges(tenant)
         app_role = Apartment.config.app_role
         return unless app_role
@@ -189,6 +257,20 @@ module Apartment
       # Connection config with string keys (used by subclasses to build tenant configs).
       def base_config
         connection_config.transform_keys(&:to_s)
+      end
+
+      # Connection config for pinned models on the separate-pool path.
+      # For schema strategy, pins schema_search_path to the default tenant
+      # (plus persistent schemas) so the connection resolves tables and FK
+      # constraints in the correct schema.
+      # For database strategies, returns base_config unchanged.
+      def pinned_model_config
+        config = base_config
+        return config unless Apartment.config.tenant_strategy == :schema
+
+        persistent = Apartment.config.postgres_config&.persistent_schemas || []
+        search_path = [default_tenant, *persistent].map { |s| %("#{s}") }.join(',')
+        config.merge('schema_search_path' => search_path)
       end
 
       def rails_env

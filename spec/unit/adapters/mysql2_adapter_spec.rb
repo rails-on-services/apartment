@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'active_record' # defines ActiveRecord::NoDatabaseError/StatementInvalid for the fail-safe contract specs
 require_relative '../../../lib/apartment/adapters/mysql2_adapter'
 require_relative '../../../lib/apartment/adapters/trilogy_adapter'
 
@@ -11,15 +12,6 @@ unless defined?(ActiveRecord::Base)
       def self.connection
         raise('stub: override with allow in tests')
       end
-    end
-  end
-end
-
-# Minimal Rails stub for environmentify tests.
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
     end
   end
 end
@@ -99,6 +91,51 @@ RSpec.shared_examples('a MySQL adapter') do
 
       expect(adapter.connection_config).to(eq(connection_config))
       expect(adapter.connection_config[:database]).to(eq('myapp'))
+    end
+  end
+
+  describe '#shared_pinned_connection?' do
+    it 'returns true (MySQL supports cross-database queries on same server)' do
+      expect(adapter.shared_pinned_connection?).to(be(true))
+    end
+
+    it 'returns false when force_separate_pinned_pool is true' do
+      reconfigure(force_separate_pinned_pool: true)
+      expect(adapter.shared_pinned_connection?).to(be(false))
+    end
+  end
+
+  describe '#qualify_pinned_table_name' do
+    it 'qualifies convention-named model with database name from base_config' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('MysqlPinned', klass)
+
+      expect(klass).to(receive(:table_name_prefix=).with('myapp.'))
+      expect(klass).to(receive(:reset_table_name))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+
+    it 'qualifies explicit table_name with database name from base_config' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('MysqlExplicit', klass)
+      klass.instance_variable_set(:@table_name, 'custom_jobs')
+      allow(klass).to(receive_messages(compute_table_name: 'mysql_explicits', table_name: 'custom_jobs'))
+
+      expect(klass).to(receive(:table_name=).with('myapp.custom_jobs'))
+
+      adapter.qualify_pinned_table_name(klass)
+    end
+
+    it 'strips existing database prefix before re-qualifying' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('MysqlRequalify', klass)
+      klass.instance_variable_set(:@table_name, 'old_db.jobs')
+      allow(klass).to(receive_messages(compute_table_name: 'mysql_requalifies', table_name: 'old_db.jobs'))
+
+      expect(klass).to(receive(:table_name=).with('myapp.jobs'))
+
+      adapter.qualify_pinned_table_name(klass)
     end
   end
 
@@ -209,6 +246,20 @@ RSpec.shared_examples('a MySQL adapter') do
       expect(connection).to(receive(:execute).with('DROP DATABASE IF EXISTS `test_acme`'))
 
       adapter.drop('acme')
+    end
+  end
+
+  describe 'missing-tenant fail-safe contract' do
+    it 'declares NoDatabaseError plus the wrapped ApartmentError as failsafe classes' do
+      expect(adapter.failsafe_error_classes).to(eq([ActiveRecord::NoDatabaseError, Apartment::ApartmentError]))
+    end
+
+    it 'classifies only NoDatabaseError as a container error' do
+      aggregate_failures do
+        expect(adapter.send(:container_error?, ActiveRecord::NoDatabaseError.new('gone'))).to(be(true))
+        expect(adapter.send(:container_error?, ActiveRecord::StatementInvalid.new('bug'))).to(be(false))
+        expect(adapter.send(:container_error?, RuntimeError.new('x'))).to(be(false))
+      end
     end
   end
 end

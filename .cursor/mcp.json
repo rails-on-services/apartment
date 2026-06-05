@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rails-mcp-server": {
+      "command": "rails-mcp-server",
+      "args": []
+    }
+  }
+}

@@ -18,11 +18,13 @@ Elevators are Rack middleware that automatically detect tenant from HTTP request
 
 ## Critical Positioning Requirement
 
-**Rule**: Elevators MUST be positioned before session/authentication middleware.
+**Rule**: Elevators MUST run before session/authentication middleware.
 
 **Why**: Session data is tenant-specific. Loading session before establishing tenant context causes data leakage.
 
-**How to verify**: `Rails.application.middleware` lists order. Elevator should appear before `ActionDispatch::Session` and `Warden::Manager`.
+**Default position**: The Railtie auto-inserts the elevator after `ActionDispatch::Callbacks`, which places it before cookies, sessions, and auth in both full and API-only mode.
+
+**How to verify**: `Rails.application.middleware` lists order. Elevator should appear after `ActionDispatch::Callbacks` and before `ActionDispatch::Session` / `Warden::Manager`.
 
 **See**: Configuration examples in README.md
 
@@ -163,7 +165,7 @@ Different applications have different caching strategies (Redis, Memcached, Rail
 
 **Cause**: Session loaded before tenant switched
 
-**Fix**: Reposition elevator before session middleware
+**Fix**: Verify elevator appears after `ActionDispatch::Callbacks` and before session middleware via `Rails.application.middleware`
 
 ### Pitfall: Database Queries in parse_tenant_name
 

@@ -16,6 +16,7 @@ Do NOT use `docs/superpowers/specs/` or `docs/superpowers/plans/` — those are 
 **Key documents:**
 - `docs/designs/apartment-v4.md` — v4 design spec
 - `docs/designs/v4-railtie-test-infra.md` — Railtie + test infrastructure design
+- `docs/designs/elevator-tenant-validation.md` — Elevator tenant validation + missing-tenant fail-safe (shipped; see Key Patterns)
 - `docs/plans/apartment-v4/phase-2-adapters.md` — Current phase plan (includes deferred review items)
 
 ## Where to Start
@@ -63,14 +64,14 @@ DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec
 DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/ --tag rbac
 ```
 
-**CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1 × PG 16+18, MySQL 8.4, SQLite3. See `.github/workflows/ci.yml`.
+**CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1/main × PG 16+18, MySQL 8.4, SQLite3. Rails main is a canary (`continue-on-error`). See `.github/workflows/ci.yml`.
 
 ## Core Concepts
 
 **Multi-tenancy via database isolation**: One app, many customers, data fully separated.
 - **PostgreSQL (schemas)**: Namespaces in single DB. Fast (<1ms switch), scales to 100+ tenants.
 - **MySQL (databases)**: Separate DB per tenant. Complete isolation, slower switching.
-- **Elevators**: Rack middleware extracts tenant from request. Must be before session middleware.
+- **Elevators**: Rack middleware extracts tenant from request. Auto-inserted after `ActionDispatch::Callbacks` (before sessions/auth).
 - **Pinned models**: Global tables declared with `Apartment::Model` + `pin_tenant`. Bypasses tenant routing. Use `has_many :through`, not HABTM. Replaces `excluded_models` (deprecated in v4).
 
 See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strategy trade-offs, `docs/elevators.md` for middleware rationale.
@@ -82,11 +83,18 @@ See `docs/architecture.md` for v3 design decisions, `docs/adapters.md` for strat
 - **Callbacks**: `ActiveSupport::Callbacks` on `:create` and `:switch` for logging/notification hooks.
 - **Dynamic tenant discovery**: `tenants_provider` is a callable (proc/lambda) that queries the database at runtime.
 - **Tenant name validation**: `TenantNameValidator` does pure in-memory format checks (no DB queries). Enforced in `AbstractAdapter#create` and `ConnectionHandling#connection_pool`. Engine-specific rules for PG identifiers, MySQL names, SQLite paths.
+- **Elevator tenant validation + missing-tenant fail-safe** (design: `docs/designs/elevator-tenant-validation.md`): distinct from name-format validation above. `Apartment::TenantValidator` is a process-local memoized set of valid tenant names; the elevator returns a 404 for an unknown tenant instead of a deep 500. The **request-path fail-safe is shipped** across every catalog-backed engine — PG schema-per-tenant, PG database-per-tenant, MySQL/Trilogy. A tenant dropped by another process self-heals to a 404 within one request per worker: the elevator wraps the switch, and on an adapter-declared error class a strict classifier (`tenant_container_gone?` → `container_error?` + an authoritative `to_regnamespace`/`pg_database`/`information_schema` probe) confirms the drop, evicts the stale positive, and 404s; anything it cannot positively classify re-raises. SQLite is a **reasoned exclusion** (no sound "container gone" signal — a dropped file auto-recreates empty), documented in the adapter, a unit guard, and the design doc.
+  - **Remaining (deferred on purpose):** only the opt-in cross-process **transport seam** — the proactive pub/sub path that would propagate creates/drops without waiting for a request to trip the fail-safe (closing create-latency and the residual warm-pool / SQLite cases). The reactive fail-safe is the evidence base for whether the proactive seam earns a shipped dependency, and no adopter has yet reported a gap it would close. The escape hatch (a custom `tenant_validator` backed by a dedicated, un-namespaced store) remains available in the meantime.
+- **Tenant-aware caching + context guards** (design: `docs/designs/tenant-aware-caching.md`, guide: `docs/caching.md`): cache splits into **routed** (per-tenant, key MUST carry the tenant) vs **pinned** (global, key MUST NOT) — the same distinction `pin_tenant` draws for models. Non-request code (jobs, rake, cable) that forgets to switch silently writes routed data into the default keyspace. Guard it with `Apartment::Tenant.require_tenant!` (real, non-default) / `require_default_tenant!` (default/pinned), predicates `in_tenant?` / `in_default_tenant?`, `with_default_tenant { }`, and `cache_namespace` (fail-closed namespace proc). The two axes: **explicitness** (`tenant_switched?` / `assert_tenant_switched!`, raw `Current.tenant`, test discipline — renamed from `inside_tenant?` / `assert_inside_tenant!`) vs **identity** (the `in_`/`require_` family, effective `Tenant.current`). Use the two-store cache recipe so pinned keys don't fragment across tenant keyspaces. Apartment owns the discipline, not the store.
+
+## Code style
+
+Prefer **SOLID** and explicit APIs over **metaprogramming** unless there is a concrete reason to break SOLID. Metaprogramming can be concise but is easy to misuse because it is powerful (e.g. ad hoc `instance_variable_*` on arbitrary classes). When state or behavior must live on models, use a concern and named public class methods; keep ivar details encapsulated inside that layer (adapters should not reach into AR classes). See `lib/apartment/CLAUDE.md` (`concerns/model.rb`) for pinned-model APIs (`apartment_pinned?`, `apartment_explicit_table_name?`, `apartment_mark_processed!`, `apartment_restore!`, etc.).
 
 ## Testing
 
 ```bash
-bundle exec rspec spec/unit/                    # v4 unit tests (585 specs)
+bundle exec rspec spec/unit/                    # v4 unit tests
 bundle exec appraisal rspec spec/unit/          # across all Rails versions
 ```
 

@@ -15,6 +15,25 @@ plugins:
   - rubocop-rake
   - rubocop-rspec
 
+# Apartment's own shipped cops. require uses a repo-relative path because the
+# gem's lib is not on RuboCop's load path when linting in-repo; downstream apps
+# use `require: rubocop/apartment` (the installed gem's lib is on the load path).
+require:
+  - ./lib/rubocop/apartment
+
+inherit_from:
+  - config/default.yml
+
+Apartment/NoDirectCurrentWrite:
+  Exclude:
+    - lib/apartment/**/*
+    - spec/**/*
+
+Apartment/PreferBlockSwitch:
+  Exclude:
+    - lib/apartment/**/*
+    - spec/**/*
+
 Gemspec/RequiredRubyVersion:
   Exclude:
     - 'ros-apartment.gemspec'

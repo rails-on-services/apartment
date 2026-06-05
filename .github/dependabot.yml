@@ -1,0 +1,43 @@
+# Dependabot config — security updates only.
+#
+# `open-pull-requests-limit: 0` disables version updates without affecting
+# security updates: per GitHub docs, security updates are not subject to that
+# limit and fire whenever a Dependabot Security Advisory matches a dependency
+# in the lockfile.
+#
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/optimizing-pr-creation-version-updates
+
+version: 2
+updates:
+  - package-ecosystem: "bundler"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    labels:
+      - "security"
+      - "dependencies"
+    commit-message:
+      prefix: "security"
+      include: "scope"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    labels:
+      - "security"
+      - "ci"
+    commit-message:
+      prefix: "security(ci)"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"

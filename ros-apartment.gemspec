@@ -13,7 +13,7 @@ Gem::Specification.new do |s|
                     'through schema-based or database-based isolation strategies.'
   s.email         = ['ryan@influitive.com', 'brad@influitive.com', 'rui.p.baltazar@gmail.com', 'mauricio@campusesp.com']
 
-  s.files = %w[ros-apartment.gemspec README.md] + `git ls-files -- lib`.split("\n")
+  s.files = %w[ros-apartment.gemspec README.md] + `git ls-files -- lib config`.split("\n")
   s.require_paths = ['lib']
 
   s.homepage = 'https://github.com/rails-on-services/apartment'

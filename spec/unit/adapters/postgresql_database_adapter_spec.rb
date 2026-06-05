@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'active_record' # defines ActiveRecord::NoDatabaseError/StatementInvalid for the fail-safe contract specs
 require_relative '../../../lib/apartment/adapters/postgresql_database_adapter'
 
 # Minimal ActiveRecord stubs for SQL execution tests.
@@ -10,15 +11,6 @@ unless defined?(ActiveRecord::Base)
       def self.connection
         raise('stub: override with allow in tests')
       end
-    end
-  end
-end
-
-# Minimal Rails stub for environmentify tests.
-unless defined?(Rails)
-  module Rails
-    def self.env
-      'test'
     end
   end
 end
@@ -171,6 +163,20 @@ RSpec.describe(Apartment::Adapters::PostgresqlDatabaseAdapter) do
       expect(connection).to(receive(:execute).with('DROP DATABASE IF EXISTS "test_acme"'))
 
       adapter.drop('acme')
+    end
+  end
+
+  describe 'missing-tenant fail-safe contract' do
+    it 'declares NoDatabaseError plus the wrapped ApartmentError as failsafe classes' do
+      expect(adapter.failsafe_error_classes).to(eq([ActiveRecord::NoDatabaseError, Apartment::ApartmentError]))
+    end
+
+    it 'classifies only NoDatabaseError as a container error' do
+      aggregate_failures do
+        expect(adapter.send(:container_error?, ActiveRecord::NoDatabaseError.new('gone'))).to(be(true))
+        expect(adapter.send(:container_error?, ActiveRecord::StatementInvalid.new('bug'))).to(be(false))
+        expect(adapter.send(:container_error?, RuntimeError.new('x'))).to(be(false))
+      end
     end
   end
 end

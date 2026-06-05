@@ -1,5 +1,12 @@
 # frozen_string_literal: true
 
+# Default RAILS_ENV to 'test' before any spec loads. The rails_stub hardcodes
+# Rails.env to 'test' (see spec/support/rails_stub.rb); specs that load real
+# Rails (railtie_spec.rb) would otherwise get Rails' own default of
+# 'development', diverging from the stubbed contract and breaking adapter
+# specs that compute environmentified names from Rails.env.
+ENV['RAILS_ENV'] ||= 'test'
+
 if ENV['COVERAGE']
   require 'simplecov'
   SimpleCov.start do
@@ -24,10 +31,19 @@ rescue LoadError
 end
 
 require 'apartment'
+require_relative 'support/rails_stub'
 
 RSpec.configure do |config|
   config.after do
     Apartment.clear_config
     Apartment::Current.reset
+  end
+
+  # Apartment.pinned_models is a process-lifetime registry — clear_config keeps
+  # it (see spec/CLAUDE.md). Example groups whose assertions depend on exactly
+  # which models are pinned tag themselves :isolate_pinned_models for a clean
+  # registry per example.
+  config.before(:each, :isolate_pinned_models) do
+    Apartment.pinned_models.clear
   end
 end

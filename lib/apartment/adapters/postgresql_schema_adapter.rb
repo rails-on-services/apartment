@@ -12,12 +12,46 @@ module Apartment
     # Apartment.config.postgres_config. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class PostgresqlSchemaAdapter < AbstractAdapter
+      def shared_pinned_connection?
+        !Apartment.config.force_separate_pinned_pool
+      end
+
+      def qualify_pinned_table_name(klass)
+        if klass.apartment_explicit_table_name?
+          original = klass.table_name
+          table = original.sub(/\A[^.]+\./, '')
+          klass.table_name = "#{default_tenant}.#{table}"
+          klass.apartment_mark_processed!(:explicit, original)
+        else
+          original_prefix = klass.table_name_prefix
+          klass.table_name_prefix = "#{default_tenant}."
+          klass.reset_table_name
+          klass.apartment_mark_processed!(:convention, original_prefix)
+        end
+      end
+
       def resolve_connection_config(tenant, base_config: nil)
         config = base_config || send(:base_config)
         persistent = Apartment.config.postgres_config&.persistent_schemas || []
-        search_path = [tenant, *persistent].join(',')
+        search_path = [tenant, *persistent].map { |s| %("#{s}") }.join(',')
 
         config.merge('schema_search_path' => search_path)
+      end
+
+      # The schema-strategy missing-tenant error: a dropped schema is not caught
+      # at switch time (search_path accepts a non-existent schema silently) — it
+      # surfaces on the first query as ActiveRecord::StatementInvalid
+      # (PG::UndefinedTable, 42P01). That is the same shape as a missing table in
+      # a *live* schema, so #tenant_container_exists? does the disambiguating
+      # to_regnamespace check.
+      #
+      # ApartmentError is included because ConnectionHandling wraps errors raised
+      # during pool resolution (e.g. the dev-mode pending-migration check, which
+      # queries schema_migrations in the gone schema) as ApartmentError with the
+      # StatementInvalid as #cause; #container_error? then unwraps and classifies
+      # it the same as the query-time case, and re-raises any other ApartmentError.
+      def failsafe_error_classes
+        [ActiveRecord::StatementInvalid, Apartment::ApartmentError]
       end
 
       protected
@@ -33,6 +67,27 @@ module Apartment
       end
 
       private
+
+      # Any StatementInvalid is a candidate; the authoritative call is the
+      # existence probe below, so a missing table in a live schema (same 42P01)
+      # correctly re-raises rather than 404ing.
+      def container_error?(error)
+        error.is_a?(ActiveRecord::StatementInvalid)
+      end
+
+      # Authoritative existence check, run on the DEFAULT connection: the
+      # elevator's switch ensure-block has already restored Current.tenant before
+      # the fail-safe rescue runs, so ActiveRecord::Base.connection targets the
+      # default pool rather than the gone tenant. to_regnamespace returns NULL for
+      # a missing schema. If the probe itself errors (e.g. the database is down),
+      # we cannot prove the schema is gone — report it as existing so the original
+      # error re-raises instead of masking infrastructure failure as a 404.
+      def tenant_container_exists?(tenant)
+        conn = ActiveRecord::Base.connection
+        conn.select_value("SELECT to_regnamespace(#{conn.quote(tenant)}) IS NOT NULL")
+      rescue StandardError
+        true
+      end
 
       def grant_privileges(tenant, connection, role_name) # rubocop:disable Metrics/MethodLength
         quoted_schema = connection.quote_table_name(tenant)

@@ -125,6 +125,16 @@ Opt-in via `COVERAGE=1 bundle exec rspec spec/unit/`. Reports to `coverage/` (gi
 
 **Selection**: Via `DB` environment variable (`DB=postgresql`, `DB=mysql`, `DB=sqlite3`)
 
+### CI hard-fail flags for self-required deps
+
+Some specs self-require a heavy dep in a `begin/rescue LoadError` so they skip gracefully when the dep isn't loadable. The risk: if the targeted CI job's bundle silently loses the dep, the spec keeps skipping and covers nothing. Three `*_REQUIRED` env vars turn that skip into a hard failure in the job that's *supposed* to load the dep:
+
+- `RSPEC_RAILS_REQUIRED=1` — `spec/unit/rspec_rails_lifecycle_spec.rb` (needs rspec-rails)
+- `RAILTIE_SPEC_REQUIRED=1` — `spec/unit/railtie_spec.rb` (needs rails + apartment/railtie)
+- `REQUEST_LIFECYCLE_REQUIRED=1` — `spec/integration/v4/request_lifecycle_spec.rb` (needs the dummy app)
+
+Pattern: `begin require('<dep>'); rescue LoadError => e; raise if ENV['<FLAG>']; warn '...'; ... end`. CI's relevant job sets the flag; everywhere else the skip remains graceful. When adding a new self-required spec, mirror this idiom and add the flag here so the convention stays discoverable.
+
 ## Shared Examples (spec/examples/)
 
 **Why shared examples?**: Apartment promises a unified API regardless of database. Without shared examples, behavior could diverge between PostgreSQL and MySQL implementations.
@@ -245,6 +255,14 @@ Query `information_schema.schemata` (PostgreSQL) or `SHOW DATABASES` (MySQL) to 
 **Causes**: Creating/dropping tenants repeatedly, not using transactions, running full migrations
 
 **Solutions**: Use transactional fixtures, cache test tenant creation in `before(:suite)`, share tenants for read-only tests. See `spec_helper.rb` for patterns.
+
+### Issue: Pinned-Model Assertions Leak Across Examples
+
+**Symptom**: A spec asserting on what `process_pinned_models` handles (the count, or which classes) passes in isolation but fails in the full suite.
+
+**Cause**: `Apartment.pinned_models` is a process-lifetime registry. `pin_tenant` runs once — when a model's class body loads — and never re-runs, so `clear_config` deliberately keeps the registry (discarding it would strand every pinned model unprocessed after the next `configure`; the global `after { clear_config }` in `spec_helper.rb` does not reset it). Test models pinned by earlier examples therefore persist into later ones.
+
+**Solution**: Tag count-sensitive example groups `:isolate_pinned_models` — a `spec_helper.rb` hook clears the registry before each such example. See `spec/unit/adapters/abstract_adapter_spec.rb` for the reference pattern. Most specs tolerate the leak and need no action.
 
 ## Test Coverage
 

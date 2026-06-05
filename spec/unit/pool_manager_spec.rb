@@ -60,6 +60,24 @@ RSpec.describe(Apartment::PoolManager) do
     end
   end
 
+  describe '#peek' do
+    it 'returns the pool for an existing tenant' do
+      manager.fetch_or_create('tenant_a') { 'pool_a' }
+      expect(manager.peek('tenant_a')).to(eq('pool_a'))
+    end
+
+    it 'returns nil for unknown tenants' do
+      expect(manager.peek('unknown')).to(be_nil)
+    end
+
+    it 'does not reset seconds_idle on access' do
+      manager.fetch_or_create('tenant_a') { 'pool_a' }
+      manager.instance_variable_get(:@timestamps)['tenant_a'] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - 600
+      manager.peek('tenant_a')
+      expect(manager.stats_for('tenant_a')[:seconds_idle]).to(be_within(1).of(600))
+    end
+  end
+
   describe '#remove' do
     it 'removes a tracked pool' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }

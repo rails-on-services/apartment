@@ -2,72 +2,270 @@
 
 require 'spec_helper'
 
-# Railtie loads automatically when Rails is present (via lib/apartment.rb).
-# Without Rails, Apartment::Railtie is not defined — skip gracefully.
-RSpec.describe('Apartment::Railtie') do
-  before do
-    skip 'requires Rails (run via appraisal)' unless defined?(Apartment::Railtie)
+# spec_helper.rb deliberately does not load Rails — the gem suite is
+# Rails-free (see spec/support/rails_stub.rb). This spec self-requires
+# Rails and the Railtie so it actually runs; without that, every example
+# silently pended under `bundle exec rspec spec/unit/`. When Rails is
+# absent the spec still skips gracefully; RAILTIE_SPEC_REQUIRED turns
+# the skip into a hard failure in CI, where the Rails bundle must be
+# present. Same idiom as spec/unit/rspec_rails_lifecycle_spec.rb and
+# REQUEST_LIFECYCLE_REQUIRED.
+railtie_loaded =
+  begin
+    require('rails')
+    require('apartment/railtie')
+    true
+  rescue LoadError => e
+    raise if ENV['RAILTIE_SPEC_REQUIRED']
+
+    warn "[railtie_spec] skipping: #{e.message}"
+    false
   end
 
-  describe '.resolve_elevator_class' do
-    it 'resolves :subdomain to Apartment::Elevators::Subdomain' do
-      klass = Apartment::Railtie.resolve_elevator_class(:subdomain)
-      expect(klass).to(eq(Apartment::Elevators::Subdomain))
+if railtie_loaded
+  RSpec.describe('Apartment::Railtie') do
+    describe '.resolve_elevator_class' do
+      it 'resolves :subdomain to Apartment::Elevators::Subdomain' do
+        klass = Apartment::Railtie.resolve_elevator_class(:subdomain)
+        expect(klass).to(eq(Apartment::Elevators::Subdomain))
+      end
+
+      it 'resolves :domain to Apartment::Elevators::Domain' do
+        klass = Apartment::Railtie.resolve_elevator_class(:domain)
+        expect(klass).to(eq(Apartment::Elevators::Domain))
+      end
+
+      it 'resolves :host to Apartment::Elevators::Host' do
+        klass = Apartment::Railtie.resolve_elevator_class(:host)
+        expect(klass).to(eq(Apartment::Elevators::Host))
+      end
+
+      it 'raises ConfigurationError for unknown elevator' do
+        expect { Apartment::Railtie.resolve_elevator_class(:nonexistent) }
+          .to(raise_error(Apartment::ConfigurationError, /Unknown elevator.*nonexistent/))
+      end
+
+      it 'includes available elevators in the error message' do
+        expect { Apartment::Railtie.resolve_elevator_class(:nonexistent) }
+          .to(raise_error(Apartment::ConfigurationError, /subdomain/))
+      end
+
+      it 'passes through a class without resolution' do
+        klass = Apartment::Railtie.resolve_elevator_class(Apartment::Elevators::Subdomain)
+        expect(klass).to(eq(Apartment::Elevators::Subdomain))
+      end
+
+      it 'passes through any custom class' do
+        custom_class = Class.new(Apartment::Elevators::Generic)
+        klass = Apartment::Railtie.resolve_elevator_class(custom_class)
+        expect(klass).to(eq(custom_class))
+      end
+
+      it 'resolves :header to Apartment::Elevators::Header' do
+        klass = Apartment::Railtie.resolve_elevator_class(:header)
+        expect(klass).to(eq(Apartment::Elevators::Header))
+      end
     end
 
-    it 'resolves :domain to Apartment::Elevators::Domain' do
-      klass = Apartment::Railtie.resolve_elevator_class(:domain)
-      expect(klass).to(eq(Apartment::Elevators::Domain))
+    describe '.insert_elevator_middleware' do
+      let(:middleware_stack) { double('MiddlewareStack') }
+      let(:elevator_class) { Apartment::Elevators::Subdomain }
+
+      before do
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { [] }
+          config.elevator = :subdomain
+        end
+      end
+
+      it 'inserts after ActionDispatch::Callbacks' do
+        expect(middleware_stack).to(receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class))
+        Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class)
+      end
+
+      it 'forwards kwargs to insert_after' do
+        expect(middleware_stack).to(
+          receive(:insert_after).with(ActionDispatch::Callbacks, elevator_class, foo: :bar)
+        )
+        Apartment::Railtie.insert_elevator_middleware(middleware_stack, elevator_class, foo: :bar)
+      end
     end
 
-    it 'resolves :host to Apartment::Elevators::Host' do
-      klass = Apartment::Railtie.resolve_elevator_class(:host)
-      expect(klass).to(eq(Apartment::Elevators::Host))
+    describe '.header_trust_warning?' do
+      it 'returns true for Header with trusted: false' do
+        expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, {})).to(be(true))
+      end
+
+      it 'returns false for Header with trusted: true' do
+        expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, { trusted: true })).to(be(false))
+      end
+
+      it 'returns true for Header subclass with trusted: false' do
+        subclass = Class.new(Apartment::Elevators::Header)
+        expect(Apartment::Railtie.header_trust_warning?(subclass, {})).to(be(true))
+      end
+
+      it 'returns false for non-Header elevator' do
+        expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Subdomain, {})).to(be(false))
+      end
     end
 
-    it 'raises ConfigurationError for unknown elevator' do
-      expect { Apartment::Railtie.resolve_elevator_class(:nonexistent) }
-        .to(raise_error(Apartment::ConfigurationError, /Unknown elevator.*nonexistent/))
+    # End-to-end coverage of the warning path: the predicate's return value is
+    # tested above, but those tests would still pass if the middleware
+    # initializer stopped calling the predicate or stopped emitting the
+    # warning. Run the initializer directly and assert on stderr.
+    describe 'apartment.middleware initializer Header trust warning' do
+      let(:middleware_stack) { double('MiddlewareStack', insert_after: nil) }
+      let(:app) { double('App', middleware: middleware_stack) }
+      let(:initializer) { Apartment::Railtie.initializers.find { |i| i.name == 'apartment.middleware' } }
+
+      def configure_with(elevator:, elevator_options: {})
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { [] }
+          config.elevator = elevator
+          config.elevator_options = elevator_options
+        end
+      end
+
+      it 'emits the warning for :header without trusted: true' do
+        configure_with(elevator: :header)
+        expect { initializer.run(app) }.to(output(/Header elevator with trusted: false/).to_stderr)
+      end
+
+      it 'does not emit the warning for :header with trusted: true' do
+        configure_with(elevator: :header, elevator_options: { trusted: true })
+        expect { initializer.run(app) }.not_to(output(/Header elevator/).to_stderr)
+      end
+
+      it 'does not emit the warning for a non-Header elevator' do
+        configure_with(elevator: :subdomain)
+        expect { initializer.run(app) }.not_to(output(/Header elevator/).to_stderr)
+      end
     end
 
-    it 'includes available elevators in the error message' do
-      expect { Apartment::Railtie.resolve_elevator_class(:nonexistent) }
-        .to(raise_error(Apartment::ConfigurationError, /subdomain/))
+    describe '.deactivate_pool_reaper_in_test_env!' do
+      it 'stops Apartment.pool_reaper when Rails.env.test? is true' do
+        reaper = instance_double(Apartment::PoolReaper, stop: nil)
+        allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+        allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+        Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+        expect(reaper).to(have_received(:stop))
+      end
+
+      it 'emits reaper_stopped.apartment with reason :test_env when it stops the reaper' do
+        reaper = instance_double(Apartment::PoolReaper, stop: nil)
+        allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+        allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+        events = []
+        sub = ActiveSupport::Notifications.subscribe('reaper_stopped.apartment') { |e| events << e }
+
+        Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+        expect(events.size).to(eq(1))
+        expect(events.first.payload).to(eq(reason: :test_env))
+      ensure
+        ActiveSupport::Notifications.unsubscribe(sub) if sub
+      end
+
+      it 'does nothing outside the test environment' do
+        reaper = instance_double(Apartment::PoolReaper, stop: nil)
+        allow(Apartment).to(receive(:pool_reaper).and_return(reaper))
+        allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('production')))
+
+        Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+        expect(reaper).not_to(have_received(:stop))
+      end
+
+      it 'is a no-op when no reaper is configured' do
+        allow(Apartment).to(receive(:pool_reaper).and_return(nil))
+        allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+        expect { Apartment::Railtie.deactivate_pool_reaper_in_test_env! }.not_to(raise_error)
+      end
     end
 
-    it 'passes through a class without resolution' do
-      klass = Apartment::Railtie.resolve_elevator_class(Apartment::Elevators::Subdomain)
-      expect(klass).to(eq(Apartment::Elevators::Subdomain))
+    describe 'TenantNotFound rescue_responses mapping' do
+      # Unit specs do not boot a Rails::Application, so railtie initializers
+      # never run on their own — invoke the initializer block directly with a
+      # fake app whose config exposes config.action_dispatch.rescue_responses
+      # (the engine config that Rails main's action_dispatch.configure merges
+      # in + refreezes during boot).
+      let(:fake_app) do
+        engine_config = Struct.new(:rescue_responses).new({})
+        app_config = Struct.new(:action_dispatch).new(engine_config)
+        Struct.new(:config).new(app_config)
+      end
+      let(:initializer) do
+        Apartment::Railtie.initializers.find { |i| i.name == 'apartment.rescue_responses' }
+      end
+
+      it 'is registered' do
+        expect(initializer).not_to(be_nil)
+      end
+
+      it 'contributes to config.action_dispatch.rescue_responses (Rails-main path)' do
+        initializer.run(fake_app)
+        expect(fake_app.config.action_dispatch.rescue_responses['Apartment::TenantNotFound'])
+          .to(eq(:not_found))
+      end
+
+      it 'mutates ExceptionWrapper.rescue_responses directly when the hash is mutable (pre-main path)' do
+        responses = ActionDispatch::ExceptionWrapper.rescue_responses
+        skip 'this Rails freezes the default hash; the direct-mutation path does not apply' if responses.frozen?
+
+        responses.delete('Apartment::TenantNotFound')
+        initializer.run(fake_app)
+        expect(responses['Apartment::TenantNotFound']).to(eq(:not_found))
+      end
+
+      it 'does not raise when ExceptionWrapper.rescue_responses is frozen (Rails-main behavior)' do
+        responses = ActionDispatch::ExceptionWrapper.rescue_responses
+        previous = responses
+        ActionDispatch::ExceptionWrapper.rescue_responses = responses.dup.freeze
+
+        expect { initializer.run(fake_app) }.not_to(raise_error)
+      ensure
+        ActionDispatch::ExceptionWrapper.rescue_responses = previous
+      end
     end
 
-    it 'passes through any custom class' do
-      custom_class = Class.new(Apartment::Elevators::Generic)
-      klass = Apartment::Railtie.resolve_elevator_class(custom_class)
-      expect(klass).to(eq(custom_class))
-    end
+    describe 'apartment.live_tenancy initializer' do
+      before do
+        require 'action_controller'
+        require 'action_controller/metal/live'
+        require 'apartment/patches/live_tenant_propagation'
+      end
 
-    it 'resolves :header to Apartment::Elevators::Header' do
-      klass = Apartment::Railtie.resolve_elevator_class(:header)
-      expect(klass).to(eq(Apartment::Elevators::Header))
+      it 'is registered on the railtie by name' do
+        names = Apartment::Railtie.initializers.map(&:name)
+        expect(names).to(include('apartment.live_tenancy'))
+      end
+
+      it 'prepends Apartment::Patches::LiveTenantPropagation onto ActionController::Live when run' do
+        initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.live_tenancy' }
+        initializer.run
+
+        expect(ActionController::Live.ancestors).to(include(Apartment::Patches::LiveTenantPropagation))
+      end
+
+      it 'is idempotent — re-running does not double-prepend' do
+        initializer = Apartment::Railtie.initializers.find { |i| i.name == 'apartment.live_tenancy' }
+        initializer.run
+        first_count = ActionController::Live.ancestors.count(Apartment::Patches::LiveTenantPropagation)
+        initializer.run
+        second_count = ActionController::Live.ancestors.count(Apartment::Patches::LiveTenantPropagation)
+
+        expect(second_count).to(eq(first_count))
+      end
     end
   end
-
-  describe '.header_trust_warning?' do
-    it 'returns true for Header with trusted: false' do
-      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, {})).to(be(true))
-    end
-
-    it 'returns false for Header with trusted: true' do
-      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Header, { trusted: true })).to(be(false))
-    end
-
-    it 'returns true for Header subclass with trusted: false' do
-      subclass = Class.new(Apartment::Elevators::Header)
-      expect(Apartment::Railtie.header_trust_warning?(subclass, {})).to(be(true))
-    end
-
-    it 'returns false for non-Header elevator' do
-      expect(Apartment::Railtie.header_trust_warning?(Apartment::Elevators::Subdomain, {})).to(be(false))
-    end
+else
+  RSpec.describe('Apartment::Railtie') do
+    it('pins the Railtie contract') { skip('requires Rails (run via appraisal or with RAILTIE_SPEC_REQUIRED)') }
   end
 end
