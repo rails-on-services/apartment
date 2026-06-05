@@ -145,13 +145,16 @@ Apartment::Tenant.cache_namespace         # => "acme"
 ```
 
 There is no `pinned_cache_namespace` counterpart, and none is needed: a pinned
-namespace must be **tenant-independent** — not derived from `Apartment::Tenant.current`.
-"Tenant-independent" is not the same as "a literal constant": a per-deploy prefix like
-`"#{BUILD_VERSION}/global"` is still pinned, because it never varies by tenant. Two
-corollaries: do not "pin" a routed namespace by substituting `default_tenant` for the
-current tenant (that couples the cache keyspace to a schema name); and if a pinned
-namespace genuinely must be computed from tenant context, wrap that computation in
-`with_default_tenant`.
+namespace must be **tenant-independent** — it must not vary with
+`Apartment::Tenant.current`. That is broader than "a literal constant": a config/env
+value, or a per-deploy prefix like `"#{BUILD_VERSION}/global"`, is still pinned (though a
+deploy prefix cold-starts the whole pinned keyspace on each deploy). Prefer an explicit
+global prefix (`'pinned'`, `"#{BUILD_VERSION}/global"`) over reusing `default_tenant` as
+the namespace: the latter is tenant-independent but ties the global cache layout to the
+default schema's name and overlaps confusingly with default-context routed keys. To
+produce pinned *data* while inside a real tenant, wrap the cache **write/read** in
+`with_default_tenant` (see below) — never the namespace, which ActiveSupport re-evaluates
+on every cache op.
 
 #### `with_default_tenant`
 
@@ -245,7 +248,8 @@ TENANT_CACHE = ActiveSupport::Cache::RedisCacheStore.new(
   namespace: -> { Apartment::Tenant.cache_namespace }
 )
 
-# Pinned store — STATIC namespace, never a tenant lambda. Global keys only.
+# Pinned store — tenant-independent namespace (a constant or per-deploy prefix);
+# never resolves Apartment::Tenant.current. Global keys only.
 PINNED_CACHE = ActiveSupport::Cache::RedisCacheStore.new(namespace: 'pinned')
 ```
 
@@ -278,7 +282,7 @@ a loud one. Default the docs to the first; document the second as the strict opt
   tenant-namespaced store resolves to `acme:key` and misses permanently. Read pinned
   keys from `PINNED_CACHE`. (Per-call `namespace: nil` exists but is store-dependent
   and undercuts the fail-closed story — prefer the explicit store.)
-- **Pinned store fixes shape, not provenance.** A static `PINNED_CACHE` stops
+- **Pinned store fixes shape, not provenance.** A tenant-independent `PINNED_CACHE` stops
   *namespace fragmentation*, but does not stop tenant-derived data from being written
   globally while inside `acme`. Wrap producers of pinned values in
   `with_default_tenant` / assert `require_default_tenant!`.
