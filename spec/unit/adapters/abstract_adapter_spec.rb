@@ -95,6 +95,28 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       result = adapter.validated_connection_config('acme', base_config_override: nil)
       expect(result).to(eq('adapter' => 'postgresql', 'database' => 'acme', 'host' => 'localhost'))
     end
+
+    context 'tenant_pool_size' do
+      it 'does not inject a pool size when tenant_pool_size is nil (inherit base pool)' do
+        reconfigure(tenant_pool_size: nil)
+        result = adapter.validated_connection_config('acme')
+        expect(result).not_to(have_key('pool'))
+      end
+
+      it 'injects pool when tenant_pool_size is set' do
+        reconfigure(tenant_pool_size: 3)
+        result = adapter.validated_connection_config('acme')
+        expect(result).to(include('pool' => 3))
+      end
+
+      it 'overrides a pool size carried by the base config' do
+        reconfigure(tenant_pool_size: 2)
+        result = adapter.validated_connection_config(
+          'acme', base_config_override: { 'adapter' => 'postgresql', 'pool' => 25 }
+        )
+        expect(result).to(include('pool' => 2))
+      end
+    end
   end
 
   describe '#resolve_connection_config' do

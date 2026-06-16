@@ -7,7 +7,13 @@ module Apartment
   # Evicts idle and excess tenant pools on a background timer.
   # Complementary to ActiveRecord's ConnectionPool::Reaper which handles
   # intra-pool connection reaping — this handles inter-pool (tenant) eviction.
-  class PoolReaper
+  class PoolReaper # rubocop:disable Metrics/ClassLength
+    # Reap cadence (seconds) and the idle window (seconds) a pool must exceed
+    # before it is eligible for idle eviction. Decoupled so a deployment can
+    # reap frequently without shrinking the idle window. Exposed for
+    # introspection and wiring assertions.
+    attr_reader :interval, :idle_timeout
+
     # True when Rails' transactional-fixture machinery has pinned the pool
     # (ConnectionPool#pin_connection!, Rails 7.1+). Evicting or discarding a
     # pinned pool strands the fixture transaction; teardown then errors or
@@ -24,7 +30,8 @@ module Apartment
     end
 
     def initialize(pool_manager:, interval:, idle_timeout:, max_total: nil,
-                   default_tenant: nil, shard_key_prefix: nil, on_evict: nil)
+                   default_tenant: nil, shard_key_prefix: nil, on_evict: nil,
+                   overflow_policy: :evict_idle)
       raise(ArgumentError, 'interval must be a positive number') unless interval.is_a?(Numeric) && interval.positive?
       unless idle_timeout.is_a?(Numeric) && idle_timeout.positive?
         raise(ArgumentError, 'idle_timeout must be a positive number')
@@ -40,8 +47,27 @@ module Apartment
       @default_tenant = default_tenant
       @shard_key_prefix = shard_key_prefix
       @on_evict = on_evict
+      @overflow_policy = overflow_policy
       @mutex = Mutex.new
       @timer = nil
+    end
+
+    # Synchronously enforce max_total before a new tenant pool is admitted.
+    # Called by {PoolManager#fetch_or_create} under its creation lock (so the
+    # capacity check, eviction, and insert are atomic w.r.t. other creators).
+    # Evicts LRU idle (non-protected, non-default) pools until there is room for
+    # one more; if none can be freed, applies the overflow policy. A no-op when
+    # no cap is configured. See docs/designs/pool-admission-control.md.
+    def admit!(incoming_tenant_key)
+      return unless @max_total
+
+      loop do
+        break if @pool_manager.stats[:total_pools] < @max_total
+        break unless evict_one_for_admission(incoming_tenant_key)
+      end
+      return if @pool_manager.stats[:total_pools] < @max_total
+
+      apply_overflow_policy
     end
 
     def start
@@ -98,15 +124,55 @@ module Apartment
         next if default_tenant_pool?(tenant)
         next if protected_pool?(tenant, eviction_reason: :idle)
 
-        pool = @pool_manager.remove(tenant)
-        deregister_from_ar_handler(tenant)
-        Instrumentation.instrument(:evict, tenant: tenant, reason: :idle)
-        @on_evict&.call(tenant, pool)
+        evict_tenant(tenant, reason: :idle)
         count += 1
       rescue StandardError => e
         warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
       end
       count
+    end
+
+    # Single eviction primitive shared by the timer paths (idle/LRU) and the
+    # synchronous admission path: drop from the manager, deregister from AR's
+    # ConnectionHandler (which disconnects the pool), instrument, and fire the
+    # on_evict hook. The +reason+ flows into the :evict event payload.
+    def evict_tenant(tenant, reason:)
+      pool = @pool_manager.remove(tenant)
+      deregister_from_ar_handler(tenant)
+      Instrumentation.instrument(:evict, tenant: tenant, reason: reason)
+      @on_evict&.call(tenant, pool)
+      pool
+    end
+
+    # Evict the single LRU evictable pool to make room for an incoming one,
+    # skipping the incoming key, the default tenant, and pinned/in-use pools.
+    # Returns the evicted tenant key, or nil if nothing is evictable.
+    def evict_one_for_admission(incoming_tenant_key)
+      @pool_manager.lru_tenants(count: @pool_manager.stats[:total_pools]).each do |tenant|
+        next if tenant == incoming_tenant_key
+        next if default_tenant_pool?(tenant)
+        next if protected_pool?(tenant, eviction_reason: :admission)
+
+        evict_tenant(tenant, reason: :admission)
+        return tenant
+      rescue StandardError => e
+        warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant} for admission: #{e.class}: #{e.message}"
+      end
+      nil
+    end
+
+    # Applied when the cap can't be met by eviction (every other pool is pinned
+    # or in use). :evict_idle degrades to a soft cap — allow the new pool, surface
+    # the breach via :cap_unmet. :raise fails the admission so the caller sheds
+    # load. See docs/designs/pool-admission-control.md.
+    def apply_overflow_policy
+      current = @pool_manager.stats[:total_pools]
+      case @overflow_policy
+      when :raise
+        raise(Apartment::PoolCapacityReached.new(max_total: @max_total, current: current))
+      else
+        Instrumentation.instrument(:cap_unmet, max_total: @max_total, current: current, unevicted: 1)
+      end
     end
 
     def evict_lru
@@ -135,10 +201,7 @@ module Apartment
         next if default_tenant_pool?(tenant)
         next if protected_pool?(tenant, eviction_reason: :lru)
 
-        pool = @pool_manager.remove(tenant)
-        deregister_from_ar_handler(tenant)
-        Instrumentation.instrument(:evict, tenant: tenant, reason: :lru)
-        @on_evict&.call(tenant, pool)
+        evict_tenant(tenant, reason: :lru)
         evicted += 1
       rescue StandardError => e
         warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"

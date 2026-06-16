@@ -4,17 +4,25 @@ require 'concurrent'
 
 module Apartment
   class PoolManager
+    # Set by Apartment.configure to the PoolReaper when max_total_connections is
+    # configured. nil (no cap) keeps the lock-free compute_if_absent fast path.
+    attr_accessor :admission_controller
+
     def initialize
       @pools = Concurrent::Map.new
       @timestamps = Concurrent::Map.new
+      @create_mutex = Mutex.new
+      @admission_controller = nil
     end
 
     # Fetch an existing pool or create one via the block.
     # Timestamp is updated after pool creation to avoid orphaned timestamps if the block raises.
+    # When an admission controller is wired (a cap is configured), cold creates
+    # go through the bounded path so the pool count cannot exceed max_total.
     def fetch_or_create(tenant_key, &)
-      pool = @pools.compute_if_absent(tenant_key, &)
-      touch(tenant_key)
-      pool
+      return fetch_or_admit(tenant_key, &) if @admission_controller
+
+      touch_and_return(tenant_key, @pools.compute_if_absent(tenant_key, &))
     end
 
     def get(tenant_key)
@@ -118,6 +126,32 @@ module Apartment
     end
 
     private
+
+    # Capacity-bounded creation path. Serializes cold creates so the admission
+    # controller's capacity check + eviction + insert is atomic across creators;
+    # the new pool is only inserted after admit! confirms (or makes) room. The
+    # hot path (existing pool) stays lock-free in fetch_or_create. Establishing
+    # the connection under the lock is deliberate: it serializes only cold
+    # creates (once per tenant per worker) — the price of a hard count bound.
+    def fetch_or_admit(tenant_key)
+      existing = @pools[tenant_key]
+      return touch_and_return(tenant_key, existing) if existing
+
+      @create_mutex.synchronize do
+        cached = @pools[tenant_key]
+        return touch_and_return(tenant_key, cached) if cached
+
+        @admission_controller.admit!(tenant_key)
+        pool = yield
+        @pools[tenant_key] = pool
+        touch_and_return(tenant_key, pool)
+      end
+    end
+
+    def touch_and_return(tenant_key, pool)
+      touch(tenant_key)
+      pool
+    end
 
     def touch(tenant_key)
       @timestamps[tenant_key] = monotonic_now

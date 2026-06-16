@@ -37,6 +37,60 @@ RSpec.describe(Apartment::PoolManager) do
     end
   end
 
+  describe '#fetch_or_create with an admission controller' do
+    # A fake admission controller that records the keys it was asked to admit
+    # and can be told to evict a specific tenant inline (mirroring the reaper).
+    def controller(&admit)
+      admit ||= ->(_key) {}
+      ctrl = Object.new
+      ctrl.define_singleton_method(:admit!, &admit)
+      ctrl
+    end
+
+    it 'calls admit! before building a pool on the cold path' do
+      seen = []
+      manager.admission_controller = controller { |key| seen << key }
+
+      manager.fetch_or_create('acme') { 'pool_acme' }
+      expect(seen).to(eq(['acme']))
+    end
+
+    it 'does not call admit! when reusing an existing pool (hot path)' do
+      manager.fetch_or_create('acme') { 'pool_acme' }
+      seen = []
+      manager.admission_controller = controller { |key| seen << key }
+
+      result = manager.fetch_or_create('acme') { 'should_not_build' }
+      expect(result).to(eq('pool_acme'))
+      expect(seen).to(be_empty)
+    end
+
+    it 'evicts inline so the count stays within cap across a cold fan-out' do
+      # admit! removes the LRU pool whenever two are already tracked, capping at 2.
+      mgr = manager
+      manager.admission_controller = controller do |_key|
+        mgr.remove(mgr.lru_tenants(count: 1).first) if mgr.stats[:total_pools] >= 2
+      end
+
+      5.times { |i| manager.fetch_or_create("t#{i}") { "p#{i}" } }
+      expect(manager.stats[:total_pools]).to(be <= 2)
+    end
+
+    it 'does not store a pool and re-raises when the block raises under admission' do
+      manager.admission_controller = controller
+      expect { manager.fetch_or_create('bad') { raise('boom') } }
+        .to(raise_error(RuntimeError, 'boom'))
+      expect(manager.tracked?('bad')).to(be(false))
+    end
+
+    it 'propagates an admit! raise without building the pool' do
+      manager.admission_controller = controller { |_key| raise(Apartment::PoolCapacityReached.new(max_total: 1)) }
+      expect { manager.fetch_or_create('acme') { 'pool_acme' } }
+        .to(raise_error(Apartment::PoolCapacityReached))
+      expect(manager.tracked?('acme')).to(be(false))
+    end
+  end
+
   describe '#get' do
     it 'returns the pool for an existing tenant' do
       manager.fetch_or_create('tenant_a') { 'pool_a' }

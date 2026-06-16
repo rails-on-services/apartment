@@ -496,4 +496,118 @@ RSpec.describe(Apartment::PoolReaper) do
       expect(pool_manager.tracked?('stale')).to(be(false))
     end
   end
+
+  describe '#admit! (synchronous admission control)' do
+    # A pool with a leased connection — the reaper's in-use guard must protect
+    # it from admission eviction just as it protects it from timer eviction.
+    def in_use_pool(leased: true, open_tx: 0)
+      pool = Object.new
+      conn = Object.new
+      conn.define_singleton_method(:in_use?) { leased }
+      conn.define_singleton_method(:open_transactions) { open_tx }
+      pool.define_singleton_method(:connections) { [conn] }
+      pool
+    end
+
+    def stamp(tenant, seconds_ago)
+      pool_manager.instance_variable_get(:@timestamps)[tenant] =
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - seconds_ago
+    end
+
+    let(:reaper) do
+      described_class.new(
+        pool_manager: pool_manager,
+        interval: 0.05,
+        idle_timeout: 999,
+        max_total: 2,
+        default_tenant: 'public',
+        on_evict: on_evict
+      )
+    end
+
+    it 'is a no-op below capacity' do
+      pool_manager.fetch_or_create('a') { 'pool_a' }
+      reaper.admit!('incoming')
+      expect(disconnect_calls).to(be_empty)
+      expect(pool_manager.tracked?('a')).to(be(true))
+    end
+
+    it 'is a no-op when no cap is configured' do
+      uncapped = described_class.new(
+        pool_manager: pool_manager, interval: 0.05, idle_timeout: 999, on_evict: on_evict
+      )
+      3.times { |i| pool_manager.fetch_or_create("t#{i}") { "p#{i}" } }
+      uncapped.admit!('incoming')
+      expect(disconnect_calls).to(be_empty)
+    end
+
+    it 'evicts the LRU idle pool to make room when at capacity' do
+      pool_manager.fetch_or_create('old') { 'pool_old' }
+      stamp('old', 300)
+      pool_manager.fetch_or_create('recent') { 'pool_recent' }
+      stamp('recent', 10)
+
+      reaper.admit!('incoming')
+
+      expect(disconnect_calls).to(include('old'))
+      expect(pool_manager.tracked?('old')).to(be(false))
+      expect(pool_manager.tracked?('recent')).to(be(true))
+      expect(pool_manager.stats[:total_pools]).to(be < 2)
+    end
+
+    it 'drains prior overflow until strictly below the cap' do
+      4.times do |i|
+        pool_manager.fetch_or_create("t#{i}") { "p#{i}" }
+        stamp("t#{i}", 300 - i)
+      end
+      reaper.admit!('incoming')
+      expect(pool_manager.stats[:total_pools]).to(be < 2)
+    end
+
+    it 'never evicts the default tenant to make room' do
+      pool_manager.fetch_or_create('public') { 'pool_public' }
+      stamp('public', 9999)
+      pool_manager.fetch_or_create('evictable') { 'pool_e' }
+      stamp('evictable', 100)
+
+      reaper.admit!('incoming')
+
+      expect(pool_manager.tracked?('public')).to(be(true))
+      expect(disconnect_calls).not_to(include('public'))
+      expect(disconnect_calls).to(include('evictable'))
+    end
+
+    context 'when all evictable pools are in use (saturation)' do
+      before do
+        pool_manager.fetch_or_create('busy_a') { in_use_pool(leased: true) }
+        pool_manager.fetch_or_create('busy_b') { in_use_pool(leased: true) }
+        stamp('busy_a', 300)
+        stamp('busy_b', 200)
+      end
+
+      it 'with :evict_idle (default) allows overflow and emits cap_unmet' do
+        events = Concurrent::Array.new
+        ActiveSupport::Notifications.subscribe('cap_unmet.apartment') { |e| events << e }
+
+        expect { reaper.admit!('incoming') }.not_to(raise_error)
+        expect(disconnect_calls).to(be_empty)
+
+        cap_event = events.last
+        expect(cap_event).not_to(be_nil)
+        expect(cap_event.payload).to(include(max_total: 2))
+      ensure
+        ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
+      end
+
+      it 'with :raise raises PoolCapacityReached and evicts nothing' do
+        raising = described_class.new(
+          pool_manager: pool_manager, interval: 0.05, idle_timeout: 999,
+          max_total: 2, default_tenant: 'public', overflow_policy: :raise, on_evict: on_evict
+        )
+        expect { raising.admit!('incoming') }
+          .to(raise_error(Apartment::PoolCapacityReached, /capacity/))
+        expect(disconnect_calls).to(be_empty)
+      end
+    end
+  end
 end
