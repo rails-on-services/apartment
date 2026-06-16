@@ -136,7 +136,9 @@ The contract the gem already emits, written down once:
   (e.g. `evict` → `tenant`, `reason`; `skip_evict` → `busy_connections`, `open_transactions`;
   `cap_unmet` → `max_total`, `current`, `unevicted`).
 - **`PoolManager#stats`** — `total_pools`, `tenants`.
-- **The `PoolObserver` recipe** and the iteration-primitive table from B.
+- **The `PoolObserver` recipe** (ships in PR 1). The iteration-primitive table from B is
+  added in PR 3, alongside the `release_connection:` code it documents — so the doc never
+  references an option the gem hasn't shipped yet.
 
 ## Alternatives considered
 
@@ -173,6 +175,12 @@ The contract the gem already emits, written down once:
 
 ## PR sequence
 
-1. `config.reap_in_test` + railtie guard (A).
-2. `Tenant.each(release_connection:)` + iteration docs (B).
-3. `Apartment::PoolObserver` + `docs/observability.md` (C, D).
+Lead with the observer — it's what an adopter's hand-rolled telemetry module most directly
+replaces, and it's self-contained (subscribe + forward, no behavior change).
+
+1. **`Apartment::PoolObserver` + `docs/observability.md`** (event catalog, `PoolManager#stats`,
+   observer recipe) — C and the observability half of D.
+2. **`config.reap_in_test` + railtie guard** — A.
+3. **`Tenant.each(release_connection:)` + the iteration-primitive section** added to
+   `docs/observability.md` — B and the iteration half of D. The table ships with the
+   `release_connection:` code it documents.
