@@ -64,6 +64,40 @@ RSpec.describe(Apartment::PoolObserver) do
     end
   end
 
+  describe '#start_sampler! / #stop!' do
+    let(:stub_manager) { instance_double(Apartment::PoolManager, stats: { total_pools: 2, tenants: [] }) }
+
+    before { allow(Apartment).to(receive(:pool_manager).and_return(stub_manager)) }
+
+    it 'runs sample! on the configured interval' do
+      observer = described_class.new(sink: sink)
+      observer.start_sampler!(interval: 0.05)
+      sleep 0.15
+      observer.stop!
+
+      expect(samples.any? { |s| s.name == :tenant_pools_live }).to(be(true))
+    end
+
+    it 'stop! unsubscribes so later events no longer reach the sink' do
+      observer = described_class.install!(sink: sink)
+      observer.stop!
+      samples.clear
+
+      Apartment::Instrumentation.instrument(:evict, {})
+      expect(samples).to(be_empty)
+    end
+
+    it 'stop! halts the sampler' do
+      observer = described_class.new(sink: sink)
+      observer.start_sampler!(interval: 0.05)
+      observer.stop!
+      sleep 0.1
+      count = samples.size
+      sleep 0.1
+      expect(samples.size).to(eq(count))
+    end
+  end
+
   describe '#subscribe! / .install!' do
     subject(:observer) { described_class.install!(sink: sink) }
 

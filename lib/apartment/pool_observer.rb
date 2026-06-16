@@ -63,13 +63,19 @@ module Apartment
       warn_failure('sample!', e)
     end
 
-    # Temporary stub — replaced by full implementation in Task 4.
-    def start_sampler!(interval:); end # rubocop:disable Style/Semicolon
+    def start_sampler!(interval:)
+      @sampler&.shutdown
+      @sampler = Concurrent::TimerTask.new(execution_interval: interval) { sample! }
+      @sampler.execute
+      @sampler
+    end
 
-    # Temporary stub — replaced by full implementation in Task 4.
+    # Unsubscribe from all events and shut down the sampler. Safe to call twice.
     def stop!
-      @subscribers.each { |s| ActiveSupport::Notifications.unsubscribe(s) }
+      @subscribers.each { |subscriber| ActiveSupport::Notifications.unsubscribe(subscriber) }
       @subscribers.clear
+      @sampler&.shutdown
+      @sampler = nil
     end
 
     private
