@@ -98,6 +98,31 @@ RSpec.describe(Apartment::PoolObserver) do
     end
   end
 
+  describe 'error isolation' do
+    let(:boom_sink) { ->(_sample) { raise('sink boom') } }
+
+    after { @observer&.stop! }
+
+    it 'does not propagate when the sink raises on an event' do
+      @observer = described_class.install!(sink: boom_sink)
+      expect { Apartment::Instrumentation.instrument(:evict, {}) }.not_to(raise_error)
+    end
+
+    it 'does not propagate when the sink raises during sample!' do
+      allow(Apartment).to(receive(:pool_manager)
+        .and_return(instance_double(Apartment::PoolManager, stats: { total_pools: 1, tenants: [] })))
+      @observer = described_class.new(sink: boom_sink)
+      expect { @observer.sample! }.not_to(raise_error)
+    end
+
+    it 'does not propagate when backend_count raises' do
+      allow(Apartment).to(receive(:pool_manager)
+        .and_return(instance_double(Apartment::PoolManager, stats: { total_pools: 1, tenants: [] })))
+      @observer = described_class.new(sink: sink, backend_count: -> { raise('backend boom') })
+      expect { @observer.sample! }.not_to(raise_error)
+    end
+  end
+
   describe '#subscribe! / .install!' do
     subject(:observer) { described_class.install!(sink: sink) }
 
