@@ -231,12 +231,18 @@ What to do instead, depending on the call site:
 
 ### Pool reaper
 
-`Apartment::PoolReaper` evicts idle and excess tenant pools on a background timer. In production it bounds memory under high tenant counts; in test suites it's typically a liability — short runs, few tenants, no memory pressure, and an eviction mid-example can orphan transactional-fixture state. **The Railtie stops the reaper automatically when `Rails.env.test?`.** A suite that genuinely needs eviction (long-running parallel tenant churn, large fixtures) can opt back in:
+`Apartment::PoolReaper` evicts idle and excess tenant pools on a background timer. In production it bounds memory under high tenant counts; in test suites it's typically a liability — short runs, few tenants, no memory pressure, and an eviction mid-example can orphan transactional-fixture state. **The Railtie stops the reaper automatically when `Rails.env.test?`.**
+
+A suite (or a deployed process that runs under `Rails.env.test?` semantics) that needs the reaper on should set the config flag — it applies at boot, before the reaper is stopped:
 
 ```ruby
-# spec/rails_helper.rb
-Apartment.pool_reaper&.start
+Apartment.configure do |config|
+  # ...
+  config.reap_in_test = true   # don't auto-stop the reaper under Rails.env.test?
+end
 ```
+
+This applies to **every** `Rails.env.test?` process, including CI — where mid-example eviction can orphan transactional fixtures and surface as intermittent failures. Prefer it only when a real deployment runs test-env semantics; for a one-off local need, `Apartment.pool_reaper&.start` after boot is the manual escape hatch.
 
 The reaper is also defensive against transactional state when it does run. Two guards block eviction of a candidate pool:
 

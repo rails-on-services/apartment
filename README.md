@@ -30,7 +30,7 @@ Apartment uses **schema-per-tenant** (PostgreSQL) or **database-per-tenant** (My
 
 ## About ros-apartment
 
-This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Same `require 'apartment'`; v4 introduces a pool-per-tenant architecture that replaces the thread-local switching of v3. Tenant context is fiber-safe via `CurrentAttributes`, and connection pools are managed per tenant rather than swapping search paths on a shared connection. See the [upgrade guide](docs/upgrading-to-v4.md) for migration steps from v3.
+This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Same `require 'apartment'`; v4 introduces a pool-per-tenant architecture that replaces the thread-local switching of v3. Tenant context is fiber-safe via `CurrentAttributes`, and connection pools are managed per tenant rather than swapping search paths on a shared connection. For *why* v4 chose this model over the alternatives (including fully-qualified table names), see [`docs/designs/v4-connection-model-rationale.md`](docs/designs/v4-connection-model-rationale.md). See the [upgrade guide](docs/upgrading-to-v4.md) for migration steps from v3.
 
 ## Installation
 
@@ -108,6 +108,14 @@ All options are set in `config/initializers/apartment.rb` inside an `Apartment.c
 `max_total_connections`: ceiling on the number of live tenant pools; `nil` for unlimited (default: `nil`). Enforced synchronously at pool-creation time (see `pool_overflow_policy`) and trimmed continuously by the background reaper. Total backend connections ≈ `max_total_connections × tenant_pool_size`.
 
 `pool_overflow_policy`: behavior when a new pool would breach `max_total_connections` and every existing pool is pinned or in use (no idle pool to evict). `:evict_idle` (default) — allow the new pool, emit a `cap_unmet` notification (soft cap, prioritizes availability). `:raise` — raise `Apartment::PoolCapacityReached` (hard cap, sheds load). When an idle pool *is* available it is always evicted inline regardless of policy. See `docs/designs/pool-admission-control.md`.
+
+`reap_in_test`: keep the background reaper running under `Rails.env.test?` (default `false` — the Railtie stops it in test, where fixture transactions make mid-example eviction a liability). Set `true` if a deployed process can run under test-env semantics and must keep reaping — that's cleaner than guarding `RAILS_ENV` at boot to avoid silently leaking connections. It applies to *every* `Rails.env.test?` process, including CI, so enable it only when a real deployment needs it.
+
+### Observability
+
+Apartment emits `ActiveSupport::Notifications` for the pool lifecycle and ships
+`Apartment::PoolObserver`, a sink-agnostic subscriber + sampler. See
+[docs/observability.md](docs/observability.md).
 
 ### Elevator (Request Tenant Detection)
 
@@ -362,6 +370,22 @@ tenant's keyspace. Guard routed work with `Apartment::Tenant.require_tenant!`
 (raises unless a real, non-default tenant is active) and pinned/global work with
 `require_default_tenant!`. See [Tenant-Aware Caching](docs/caching.md) for the
 routed-vs-pinned model and the two-store recipe.
+
+## Iterating across tenants
+
+v4 keys a connection pool per `"tenant:role"`, so *switching* into a tenant creates a pool. Pick the lightest primitive for the work — the question is **does the block touch per-tenant-schema data?**
+
+| Need | Use | v4 cost |
+|---|---|---|
+| Names only (enqueue a job, build a list) | `Apartment.tenant_names.each { ... }` | No switch, no pool created |
+| Per-tenant-schema work (read/write tenant tables) | `Apartment::Tenant.each(release_connection: true) { ... }` | One pool per tenant; released between iterations |
+| Global/pinned data only | Don't switch — read it in the default context | Under shared pinned connections (PG schema, MySQL default), a switch routes pinned/global models *through* the tenant pool |
+
+Rules of thumb:
+
+- **Enqueueing jobs?** Don't switch — pass the tenant as a job argument (`Job.perform_async(tenant: name)`) and let your worker middleware switch when the job runs. Switching only to enqueue spins up a pool for nothing.
+- **Only need global/pinned data?** Don't switch. Under shared pinned connections a `switch` resolves pinned and excluded models through the *current tenant's* pool, so reading global data inside a switch still creates a tenant pool.
+- **Large fan-out doing real per-tenant work?** Pass `release_connection: true` to `Tenant.each` — it releases connections after each tenant so the reaper can evict finished tenants' pools mid-run. It matters for blocks that hold a connection (raw `ActiveRecord::Base.connection`, an open transaction, a long operation); modern query methods (`create!`, `where`, …) check the connection back in themselves (Rails 7.2+), so a fan-out of only those needs no release. **It releases *every* connection leased to the current thread (`clear_active_connections!(:all)`), so don't use it inside an outer transaction or while holding a connection for non-tenant work.**
 
 ## Convenience Methods
 

@@ -95,6 +95,10 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 **Shim compatibility:** `process_pinned_model` dynamically includes `Apartment::Model` on classes registered via the `excluded_models` shim that lack the concern. This is a runtime `include` on a partially-booted class — acceptable for the legacy shim path but new code should always use `include Apartment::Model` + `pin_tenant` explicitly.
 
+### pool_observer.rb — Observability (opt-in)
+
+Sink-agnostic subscriber for the pool events (`create`/`evict`/`cap_unmet`/`skip_evict`/`reaper_stopped`) + an optional `Concurrent::TimerTask` gauge sampler (`tenant_pools_live`, optional adopter `backend_count`). Normalizes each to a `Sample` and forwards to a caller `sink`; ships no transport. Error-isolated — never raises into instrumentation. See `docs/observability.md`.
+
 ### railtie.rb — v4 Rails Integration
 
 Three hooks in Rails boot order:

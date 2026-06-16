@@ -28,6 +28,7 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.shard_key_prefix).to(eq('apartment')) }
     it { expect(config.force_separate_pinned_pool).to(be(false)) }
     it { expect(config.test_fixture_cleanup).to(be(true)) }
+    it { expect(config.reap_in_test).to(be(false)) }
     it { expect(config.default_tenant_switch_allowed).to(be(true)) }
   end
 
@@ -208,6 +209,20 @@ RSpec.describe(Apartment::Config) do
       config.tenant_strategy = :schema
       config.tenants_provider = -> { [] }
       config.pool_overflow_policy = :raise
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'raises when reap_in_test is not a boolean' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.reap_in_test = 'yes'
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /reap_in_test/))
+    end
+
+    it 'accepts reap_in_test = true' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.reap_in_test = true
       expect { config.validate! }.not_to(raise_error)
     end
 

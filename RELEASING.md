@@ -11,7 +11,7 @@ This document describes the release process for the `ros-apartment` gem.
 | `3-4-stable` | v3 maintenance releases |
 | `4-0-stable` | v4 stable releases (created when v4.0.0 GA ships) |
 
-Features go to `main`. When a release is ready, push to the appropriate release branch. `rake release` (via the `gem-publish.yml` workflow) creates the tag and publishes to RubyGems.
+Features go to `main`. To publish, the release content has to land on a release branch — for the v4 line, by **merging `main` into `4-0-alpha`** (see Release Steps); for a maintenance branch on a different major version, by cherry-picking (see v3 Maintenance). The resulting push triggers `gem-publish.yml`, whose `rake release` step creates the tag and publishes to RubyGems.
 
 ## Who Can Release
 
@@ -19,92 +19,72 @@ Only the primary maintainer pushes to release branches. Release branches are lis
 
 ## Overview
 
-Releases are automated via GitHub Actions. Pushing to a release branch triggers `gem-publish.yml`, which runs `rake release` to create a git tag and publish to RubyGems using trusted publishing (no API key required).
+Releases are automated via GitHub Actions. While `main` is the v4 development line, `4-0-alpha` is a **publish gate that tracks `main`**: merging `main` into it triggers `gem-publish.yml`, which runs `rake release` to create a git tag and publish to RubyGems using trusted publishing (no API key required). Maintenance branches on a different major version (`3-4-stable`) are curated with cherry-picks instead, because they cannot track `main`.
 
-## Release Steps
+## Release Steps (v4 pre-releases — `4-0-alpha`)
 
-### 1. Prepare the release branch
+While `main` is the v4 development line, `4-0-alpha` simply tracks it: an alpha/beta/rc is "current `main`, published." You release by bumping the version on `main`, then merging `main` into `4-0-alpha`. No cherry-picking, no backport.
 
-For a new release track, create the branch from `main`:
+### 1. Bump the version on `main`
 
-```bash
-git checkout main
-git pull origin main
-git checkout -b 4-0-alpha    # or 4-0-stable, etc.
-```
-
-For a subsequent release, work on the existing branch:
-
-```bash
-git checkout 4-0-alpha
-git pull origin 4-0-alpha
-git cherry-pick <commit>      # backport fixes from main if needed
-```
-
-### 2. Bump the version
-
-Update `lib/apartment/version.rb` on the release branch:
+Update `lib/apartment/version.rb` on `main` — either in the feature PR that completes the release, or a standalone bump PR — and merge it:
 
 ```ruby
 module Apartment
-  VERSION = 'X.Y.Z'           # or 'X.Y.Z.alpha2', 'X.Y.Z.beta1', etc.
+  VERSION = '4.0.0.alpha4'    # SemVer + optional pre-release suffix
 end
 ```
 
-Follow [Semantic Versioning](https://semver.org/):
-- MAJOR (X): Breaking changes
-- MINOR (Y): New features, backwards compatible
-- PATCH (Z): Bug fixes, backwards compatible
+Follow [Semantic Versioning](https://semver.org/): MAJOR = breaking, MINOR = new features (compatible), PATCH = fixes (compatible). Pre-release suffixes: `.alpha1`, `.beta1`, `.rc1`.
 
-Pre-release suffixes: `.alpha1`, `.beta1`, `.rc1`
-
-### 3. Push to publish
-
-Commit the version bump and push:
+### 2. Open the release PR: `main` → `4-0-alpha`
 
 ```bash
-git add lib/apartment/version.rb
-git commit -m "Bump version to X.Y.Z"
-git push origin 4-0-alpha
+gh pr create --base 4-0-alpha --head main --title "Release v4.0.0.alpha4"
 ```
 
-The push triggers `gem-publish.yml`. `rake release` creates the `vX.Y.Z` tag and publishes the gem. No manual tag creation needed.
+**Merging this PR is the publish.** The merge pushes `main`'s commits onto `4-0-alpha`, which triggers `gem-publish.yml`; `rake release` creates the `v4.0.0.alpha4` tag and pushes the gem to RubyGems. Don't merge until you mean to ship — a published version number can be yanked but not reused.
 
-### 4. Verify the publish
+### 3. Verify the publish
 
-Monitor the workflow run. Verify at: https://rubygems.org/gems/ros-apartment
-
-### 5. Create GitHub Release
-
-1. Go to https://github.com/rails-on-services/apartment/releases/new
-2. Select the `vX.Y.Z` tag (created by `rake release`)
-3. Click "Generate release notes" for a starting point
-4. Edit the release notes to highlight key changes
-5. For pre-releases, check the "Set as a pre-release" checkbox
-6. Publish the release
-
-We use GitHub Releases as our changelog (no CHANGELOG.md file).
-
-### 6. Backport the version bump
-
-Cherry-pick the version bump back to `main` so the version file stays current:
+Watch the workflow run (Actions → "Publish to RubyGems"), then confirm the version is live:
 
 ```bash
-git checkout main
-git cherry-pick <version-bump-commit>
-git push origin main
+gem list -r --prerelease ros-apartment    # prereleases are hidden without --prerelease
 ```
 
-## v3 Maintenance Releases
+or the versions page: https://rubygems.org/gems/ros-apartment/versions
 
-Same process on the `3-4-stable` branch:
+### 4. Create the GitHub Release
 
-1. Cherry-pick or apply fixes to `3-4-stable`
-2. Bump version (e.g., `3.4.2`)
-3. Push to `3-4-stable`; `rake release` tags and publishes
+1. https://github.com/rails-on-services/apartment/releases/new
+2. Select the `v4.0.0.alpha4` tag (created by `rake release`)
+3. "Generate release notes", then edit to highlight key changes
+4. For pre-releases, check "Set as a pre-release"
+5. Publish
+
+GitHub Releases are our changelog (no `CHANGELOG.md` file).
+
+**No backport step** — the version bump originated on `main`, so `main` already carries it and `4-0-alpha` received it through the merge. The two branches agree by construction.
+
+### Why merge `main` instead of cherry-picking?
+
+While `main` *is* the v4 line, an alpha should be exactly "what's on `main`", so merging keeps them in lock-step with zero per-release curation. The trade-off: an alpha ships everything on `main` — keep not-yet-releasable work behind a flag or unmerged until it's ready. (A maintenance branch on a different major version can't merge `main` and uses cherry-pick instead — see v3 Maintenance. A future `4-0-stable` GA branch will likely also curate rather than track `main` wholesale.)
+
+### Why a branch and not a tag?
+
+`gem-publish.yml` triggers on a push to a release branch, never on `main` or on a tag. That's deliberate: `rake release` creates the version tag *itself*, so triggering on tag pushes would make the workflow re-trigger on its own tag. The release branch is the publish gate.
+
+## v3 Maintenance Releases (`3-4-stable`)
+
+`3-4-stable` carries a different major version than `main`, so it **cannot** track `main` by merge — you curate it with cherry-picks:
+
+1. Cherry-pick (or apply) the fixes onto `3-4-stable`
+2. Bump the version on `3-4-stable` (e.g., `3.4.5`)
+3. Push `3-4-stable`; `rake release` tags and publishes
 4. Create a GitHub Release noting it as a maintenance release
 
-Do not merge `3-4-stable` into `main`; they contain different major versions.
+Do not merge `3-4-stable` into `main` (or `main` into it); they contain different major versions.
 
 ### Version coordination
 
@@ -137,18 +117,18 @@ The `gem-publish.yml` workflow uses:
 
 ### Workflow fails with "tag already exists"
 
-The version in `version.rb` matches a tag that was already pushed. Either bump to a new version or delete the existing tag:
+The version in `version.rb` matches a tag that was already pushed. Either bump to a new version on `main` or delete the existing tag:
 
 ```bash
 git push origin --delete vX.Y.Z
 git tag -d vX.Y.Z
 ```
 
-Then push to the release branch again.
+Then re-run the publish (re-merge the release PR, or push the release branch again).
 
 ### Gem published but GitHub Release missing
 
-The GitHub Release is created manually (step 5). The gem is already available on RubyGems; the release is for documentation.
+The GitHub Release is created manually (Release Steps, step 4). The gem is already available on RubyGems; the release is for documentation.
 
 ### RubyGems trusted publishing fails
 
