@@ -188,15 +188,20 @@ if railtie_loaded
         expect { Apartment::Railtie.deactivate_pool_reaper_in_test_env! }.not_to(raise_error)
       end
 
-      it 'leaves the reaper running when config.reap_in_test is true' do
+      it 'leaves the reaper running (and emits no reaper_stopped) when config.reap_in_test is true' do
         reaper = instance_double(Apartment::PoolReaper, stop: nil)
         allow(Apartment).to(receive_messages(pool_reaper: reaper,
                                              config: instance_double(Apartment::Config, reap_in_test: true)))
         allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+        events = []
+        sub = ActiveSupport::Notifications.subscribe('reaper_stopped.apartment') { |e| events << e }
 
         Apartment::Railtie.deactivate_pool_reaper_in_test_env!
 
         expect(reaper).not_to(have_received(:stop))
+        expect(events).to(be_empty)
+      ensure
+        ActiveSupport::Notifications.unsubscribe(sub) if sub
       end
 
       it 'stops the reaper when config.reap_in_test is false' do

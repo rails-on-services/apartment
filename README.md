@@ -109,7 +109,7 @@ All options are set in `config/initializers/apartment.rb` inside an `Apartment.c
 
 `pool_overflow_policy`: behavior when a new pool would breach `max_total_connections` and every existing pool is pinned or in use (no idle pool to evict). `:evict_idle` (default) — allow the new pool, emit a `cap_unmet` notification (soft cap, prioritizes availability). `:raise` — raise `Apartment::PoolCapacityReached` (hard cap, sheds load). When an idle pool *is* available it is always evicted inline regardless of policy. See `docs/designs/pool-admission-control.md`.
 
-`reap_in_test`: keep the background reaper running under `Rails.env.test?` (default `false` — the Railtie stops it in test, where fixture transactions make mid-example eviction a liability). Set `true` if a deployed process can run under test-env semantics and must keep reaping — that's cleaner than guarding `RAILS_ENV` at boot to avoid silently leaking connections.
+`reap_in_test`: keep the background reaper running under `Rails.env.test?` (default `false` — the Railtie stops it in test, where fixture transactions make mid-example eviction a liability). Set `true` if a deployed process can run under test-env semantics and must keep reaping — that's cleaner than guarding `RAILS_ENV` at boot to avoid silently leaking connections. It applies to *every* `Rails.env.test?` process, including CI, so enable it only when a real deployment needs it.
 
 ### Observability
 
