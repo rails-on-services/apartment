@@ -379,13 +379,13 @@ v4 keys a connection pool per `"tenant:role"`, so *switching* into a tenant crea
 |---|---|---|
 | Names only (enqueue a job, build a list) | `Apartment.tenant_names.each { ... }` | No switch, no pool created |
 | Per-tenant-schema work (read/write tenant tables) | `Apartment::Tenant.each(release_connection: true) { ... }` | One pool per tenant; released between iterations |
-| Global/pinned data only | Don't switch — read it in the default context | A switch routes pinned/global models *through* the tenant pool |
+| Global/pinned data only | Don't switch — read it in the default context | Under shared pinned connections (PG schema, MySQL default), a switch routes pinned/global models *through* the tenant pool |
 
 Rules of thumb:
 
 - **Enqueueing jobs?** Don't switch — pass the tenant as a job argument (`Job.perform_async(tenant: name)`) and let your worker middleware switch when the job runs. Switching only to enqueue spins up a pool for nothing.
 - **Only need global/pinned data?** Don't switch. Under shared pinned connections a `switch` resolves pinned and excluded models through the *current tenant's* pool, so reading global data inside a switch still creates a tenant pool.
-- **Large fan-out doing real per-tenant work?** Pass `release_connection: true` to `Tenant.each` — it releases the connection after each tenant so the reaper can evict finished tenants' pools mid-run. It only matters for blocks that hold a connection (raw `ActiveRecord::Base.connection`, an open transaction, a long operation); modern query methods (`create!`, `where`, …) check the connection back in themselves (Rails 7.2+).
+- **Large fan-out doing real per-tenant work?** Pass `release_connection: true` to `Tenant.each` — it releases connections after each tenant so the reaper can evict finished tenants' pools mid-run. It matters for blocks that hold a connection (raw `ActiveRecord::Base.connection`, an open transaction, a long operation); modern query methods (`create!`, `where`, …) check the connection back in themselves (Rails 7.2+), so a fan-out of only those needs no release. **It releases *every* connection leased to the current thread (`clear_active_connections!(:all)`), so don't use it inside an outer transaction or while holding a connection for non-tenant work.**
 
 ## Convenience Methods
 
