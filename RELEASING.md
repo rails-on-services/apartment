@@ -45,6 +45,8 @@ gh pr create --base 4-0-alpha --head main --title "Release v4.0.0.alpha4"
 
 **Merging this PR is the publish.** The merge pushes `main`'s commits onto `4-0-alpha`, which triggers `gem-publish.yml`; `rake release` creates the `v4.0.0.alpha4` tag and pushes the gem to RubyGems. Don't merge until you mean to ship — a published version number can be yanked but not reused.
 
+> **⚠️ Always pick "Create a merge commit" — never squash or rebase this PR.** `4-0-alpha` is a publish gate that *tracks* `main`; a squash collapses `main`'s commits into one new parallel commit on `4-0-alpha`, so the branches diverge in history even though their content matches. That (a) breaks GitHub's release-notes generator, which walks per-commit/per-PR, and (b) leaves the next release's `main` → `4-0-alpha` diff re-listing everything already shipped. GitHub offers all three merge methods on this PR (the squash-only ruleset is scoped to `main`, not the release branches), so the choice is manual discipline. If a release PR is squashed by mistake, realign with `git push origin origin/main:refs/heads/4-0-alpha --force-with-lease` once the content is identical (this re-triggers `gem-publish.yml`, which no-op-fails on the already-published tag).
+
 ### 3. Verify the publish
 
 Watch the workflow run (Actions → "Publish to RubyGems"), then confirm the version is live:
