@@ -371,6 +371,22 @@ tenant's keyspace. Guard routed work with `Apartment::Tenant.require_tenant!`
 `require_default_tenant!`. See [Tenant-Aware Caching](docs/caching.md) for the
 routed-vs-pinned model and the two-store recipe.
 
+## Iterating across tenants
+
+v4 keys a connection pool per `"tenant:role"`, so *switching* into a tenant creates a pool. Pick the lightest primitive for the work — the question is **does the block touch per-tenant-schema data?**
+
+| Need | Use | v4 cost |
+|---|---|---|
+| Names only (enqueue a job, build a list) | `Apartment.tenant_names.each { ... }` | No switch, no pool created |
+| Per-tenant-schema work (read/write tenant tables) | `Apartment::Tenant.each(release_connection: true) { ... }` | One pool per tenant; released between iterations |
+| Global/pinned data only | Don't switch — read it in the default context | A switch routes pinned/global models *through* the tenant pool |
+
+Rules of thumb:
+
+- **Enqueueing jobs?** Don't switch — pass the tenant as a job argument (`Job.perform_async(tenant: name)`) and let your worker middleware switch when the job runs. Switching only to enqueue spins up a pool for nothing.
+- **Only need global/pinned data?** Don't switch. Under shared pinned connections a `switch` resolves pinned and excluded models through the *current tenant's* pool, so reading global data inside a switch still creates a tenant pool.
+- **Large fan-out doing real per-tenant work?** Pass `release_connection: true` to `Tenant.each` — it releases the connection after each tenant so the reaper can evict finished tenants' pools mid-run. It only matters for blocks that hold a connection (raw `ActiveRecord::Base.connection`, an open transaction, a long operation); modern query methods (`create!`, `where`, …) check the connection back in themselves (Rails 7.2+).
+
 ## Convenience Methods
 
 `Apartment.tenant_names` returns the current tenant list (delegates to `config.tenants_provider.call`). Preserves the v3 API so existing call sites work without changes.
