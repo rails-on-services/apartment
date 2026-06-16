@@ -26,7 +26,7 @@ module Apartment
                   :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
-                  :force_separate_pinned_pool, :test_fixture_cleanup
+                  :force_separate_pinned_pool, :test_fixture_cleanup, :reap_in_test
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
@@ -59,6 +59,7 @@ module Apartment
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
       @force_separate_pinned_pool = false
+      @reap_in_test = false
       @test_fixture_cleanup = true
     end
 
@@ -207,6 +208,11 @@ module Apartment
       unless [true, false].include?(@test_fixture_cleanup)
         raise(ConfigurationError,
               "test_fixture_cleanup must be true or false, got: #{@test_fixture_cleanup.inspect}")
+      end
+
+      unless [true, false].include?(@reap_in_test)
+        raise(ConfigurationError,
+              "reap_in_test must be true or false, got: #{@reap_in_test.inspect}")
       end
 
       unless @tenant_validator.nil? || @tenant_validator == false || @tenant_validator.respond_to?(:call)

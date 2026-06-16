@@ -187,6 +187,28 @@ if railtie_loaded
 
         expect { Apartment::Railtie.deactivate_pool_reaper_in_test_env! }.not_to(raise_error)
       end
+
+      it 'leaves the reaper running when config.reap_in_test is true' do
+        reaper = instance_double(Apartment::PoolReaper, stop: nil)
+        allow(Apartment).to(receive_messages(pool_reaper: reaper,
+                                             config: instance_double(Apartment::Config, reap_in_test: true)))
+        allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+        Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+        expect(reaper).not_to(have_received(:stop))
+      end
+
+      it 'stops the reaper when config.reap_in_test is false' do
+        reaper = instance_double(Apartment::PoolReaper, stop: nil)
+        allow(Apartment).to(receive_messages(pool_reaper: reaper,
+                                             config: instance_double(Apartment::Config, reap_in_test: false)))
+        allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+
+        Apartment::Railtie.deactivate_pool_reaper_in_test_env!
+
+        expect(reaper).to(have_received(:stop))
+      end
     end
 
     describe 'TenantNotFound rescue_responses mapping' do
