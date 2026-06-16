@@ -1,8 +1,8 @@
-# Pool Admission Control (max_total_connections as a real ceiling)
+# Pool Admission Control (enforcing max_total_connections at create time)
 
 ## TLDR
 
-`max_total_connections` was background GC, not a ceiling: `PoolManager#fetch_or_create`
+`max_total_connections` was background GC, not an enforced bound: `PoolManager#fetch_or_create`
 always registered a new pool, and the cap was enforced only later by the
 `PoolReaper`, which skips in-use/pinned pools. A create-heavy fan-out could exceed
 `max_total × pool_size` indefinitely. Fix: **synchronous admission control** — when a
@@ -85,11 +85,19 @@ that a saturation spike surfaces as request errors instead of a transient oversh
 ### Request-path latency trade-off
 
 Serializing cold creates under `@create_mutex` means concurrent first-touches of
-*different* tenants run one at a time, and `establish_connection` (DB I/O) is held under
-the lock. This is deliberate: a hard count bound requires serializing the check-and-add.
-It applies only when `max_total_connections` is set (opt-in), only to cold creates (once
-per tenant per worker), never to the hot reuse path. The alternative — a lock-free check
-— can't bound the count because two creators can both observe headroom and both add.
+*different* tenants run one at a time. The whole create block is held under the lock —
+not just `establish_connection`, but the pending-migration check and any per-tenant
+schema-cache file load that follow it in `ConnectionHandling`. This is deliberate: a hard
+count bound requires serializing the check-and-add. It applies only when
+`max_total_connections` is set (opt-in), only to cold creates (once per tenant per
+worker), never to the hot reuse path. The alternative — a lock-free check — can't bound
+the count because two creators can both observe headroom and both add. The widest case is
+a deploy cold-start burst, where many workers cold-create concurrently; size
+`max_total_connections` and the worker count with that window in mind.
+
+Blast radius of `:raise`: `PoolCapacityReached` propagates out of the create path, so it
+surfaces as a 500 in a web request or a failed job — intentional load-shedding, not a
+silent drop. `:evict_idle` (default) never fails a request.
 
 ## Alternatives considered
 
@@ -120,6 +128,30 @@ per tenant per worker), never to the hot reuse path. The alternative — a lock-
 - In scope: synchronous admission, the two policies, reuse of the reaper's eviction.
 - Out of scope: `:block` (deferred, above); the libpq `options` search_path change
   (issue #438); per-tenant pool sizing (issue A, shipped separately).
+
+## Known limitations & shared races
+
+- **`:evict_idle` is a tight soft cap, not a hard ceiling.** It bounds steady-state
+  growth (every admission evicts before it adds) but, when *every* pool is pinned or
+  in use, it admits the new pool and emits `:cap_unmet` rather than blocking or
+  failing. The count can therefore transiently exceed `max_total` under genuine
+  saturation. Adopters who need a hard ceiling (a fixed PgBouncer / RDS Proxy budget)
+  must set `pool_overflow_policy: :raise`.
+- **Eviction is best-effort (TOCTOU).** `admit!` reuses the reaper's `protected_pool?`
+  → `evict_tenant` sequence, which checks pinned/in-use then removes as separate steps.
+  A pool can become in-use in the sub-millisecond window between. This is the same
+  race the background reaper already has (see `docs/testing.md`, "Pool lifecycle in
+  tests") — admission adds a request-thread trigger but no new race class. Cost of an
+  unlucky race is an in-flight query error on that pool, not cross-tenant data loss
+  (pool config is tenant-specific; disconnect fails closed).
+- **Do not resolve tenant pools from eviction hooks or admission-time subscribers.**
+  `@create_mutex` is non-reentrant; a custom `on_evict` callback or `:evict`/`:cap_unmet`
+  subscriber that calls `ActiveRecord::Base.connection_pool` for an uncached tenant on
+  the creating thread would self-deadlock. The shipped paths don't do this.
+- **Cap accounting trusts `PoolManager`'s count.** A pool that AR registers but
+  `PoolManager` never stores (a post-`establish_connection` failure in
+  `ConnectionHandling`) would undercount toward the cap. `ConnectionHandling`
+  deregisters the shard on such failures so the count stays honest.
 
 ## Testing
 

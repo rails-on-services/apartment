@@ -610,4 +610,20 @@ RSpec.describe(Apartment::PoolReaper) do
       end
     end
   end
+
+  describe 'eviction race (timer vs admission target the same tenant)' do
+    it 'fires no :evict event and no on_evict when the pool was already removed' do
+      events = Concurrent::Array.new
+      ActiveSupport::Notifications.subscribe('evict.apartment') { |e| events << e }
+
+      # 'ghost' is absent from the manager — a racing evictor already removed it.
+      result = reaper.send(:evict_tenant, 'ghost', reason: :idle)
+
+      expect(result).to(be_nil)
+      expect(disconnect_calls).not_to(include('ghost'))
+      expect(events.any? { |e| e.payload[:tenant] == 'ghost' }).to(be(false))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('evict.apartment')
+    end
+  end
 end

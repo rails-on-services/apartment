@@ -124,8 +124,7 @@ module Apartment
         next if default_tenant_pool?(tenant)
         next if protected_pool?(tenant, eviction_reason: :idle)
 
-        evict_tenant(tenant, reason: :idle)
-        count += 1
+        count += 1 if evict_tenant(tenant, reason: :idle)
       rescue StandardError => e
         warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
       end
@@ -137,7 +136,12 @@ module Apartment
     # ConnectionHandler (which disconnects the pool), instrument, and fire the
     # on_evict hook. The +reason+ flows into the :evict event payload.
     def evict_tenant(tenant, reason:)
-      pool = @pool_manager.remove(tenant)
+      # The timer (no lock) and admission (under @create_mutex) use different
+      # locks, so both can target the same idle tenant. The loser's remove
+      # returns nil — bail before firing a duplicate :evict event or calling
+      # on_evict with a nil pool.
+      return nil unless (pool = @pool_manager.remove(tenant))
+
       deregister_from_ar_handler(tenant)
       Instrumentation.instrument(:evict, tenant: tenant, reason: reason)
       @on_evict&.call(tenant, pool)
@@ -201,8 +205,7 @@ module Apartment
         next if default_tenant_pool?(tenant)
         next if protected_pool?(tenant, eviction_reason: :lru)
 
-        evict_tenant(tenant, reason: :lru)
-        evicted += 1
+        evicted += 1 if evict_tenant(tenant, reason: :lru)
       rescue StandardError => e
         warn "[Apartment::PoolReaper] Failed to evict tenant #{tenant}: #{e.class}: #{e.message}"
       end
