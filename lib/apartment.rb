@@ -158,16 +158,7 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       @built_in_tenant_validator&.shutdown
       @built_in_tenant_validator = nil
       @config = new_config
-      @pool_manager = PoolManager.new
-      @pool_reaper = PoolReaper.new(
-        pool_manager: @pool_manager,
-        interval: new_config.pool_idle_timeout,
-        idle_timeout: new_config.pool_idle_timeout,
-        max_total: new_config.max_total_connections,
-        default_tenant: new_config.default_tenant,
-        shard_key_prefix: new_config.shard_key_prefix
-      )
-      @pool_reaper.start
+      setup_pools!(new_config)
       @config
     end
 
@@ -261,6 +252,25 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     def built_in_tenant_validator
       @built_in_tenant_validator ||
         BUILT_IN_VALIDATOR_MUTEX.synchronize { @built_in_tenant_validator ||= TenantValidator.new }
+    end
+
+    # Build the pool manager + reaper for a freshly-validated config and start
+    # the background reaper. When max_total_connections is set, wire the reaper
+    # as the pool manager's admission controller so cold creates are bounded
+    # synchronously; otherwise the manager keeps its lock-free create path.
+    def setup_pools!(new_config)
+      @pool_manager = PoolManager.new
+      @pool_reaper = PoolReaper.new(
+        pool_manager: @pool_manager,
+        interval: new_config.reaper_interval,
+        idle_timeout: new_config.pool_idle_timeout,
+        max_total: new_config.max_total_connections,
+        default_tenant: new_config.default_tenant,
+        shard_key_prefix: new_config.shard_key_prefix,
+        overflow_policy: new_config.pool_overflow_policy
+      )
+      @pool_manager.admission_controller = @pool_reaper if new_config.max_total_connections
+      @pool_reaper.start
     end
 
     # Safely tear down old state. Stops the reaper first (so it doesn't

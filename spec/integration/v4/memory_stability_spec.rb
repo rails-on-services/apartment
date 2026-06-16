@@ -185,4 +185,69 @@ RSpec.describe('v4 Memory stability integration', :integration,
                              "Expected #{expected_pools} pools after 200 switches, got #{final_pools}")
     end
   end
+
+  # ── Synchronous admission control: hard bound without the reaper ────
+  context 'synchronous admission control',
+          skip: (if V4IntegrationHelper.sqlite?
+                   'SQLite pool-per-tenant less meaningful with single-writer lock'
+                 else
+                   false
+                 end) do
+    let(:tmp_dir) { Dir.mktmpdir('apartment_admission') }
+    let(:tenants) { Array.new(12) { |i| "admit_#{i}" } }
+
+    before do
+      V4IntegrationHelper.ensure_test_database!
+      config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
+      V4IntegrationHelper.create_test_table!
+
+      Apartment.configure do |c|
+        c.tenant_strategy = V4IntegrationHelper.tenant_strategy
+        c.tenants_provider = -> { tenants }
+        c.default_tenant = V4IntegrationHelper.default_tenant
+        c.max_total_connections = 4
+        c.check_pending_migrations = false
+      end
+
+      Apartment.adapter = V4IntegrationHelper.build_adapter(config)
+      Apartment.activate!
+
+      tenants.each do |t|
+        Apartment.adapter.create(t)
+        Apartment::Tenant.switch(t) do
+          V4IntegrationHelper.create_test_table!('widgets', connection: ActiveRecord::Base.connection)
+        end
+      end
+    end
+
+    after do
+      V4IntegrationHelper.cleanup_tenants!(tenants, Apartment.adapter)
+      Apartment.clear_config
+      Apartment::Current.reset
+      FileUtils.rm_rf(tmp_dir)
+    end
+
+    it 'never exceeds max_total_connections during a cold fan-out, with the reaper stopped' do
+      stub_const('Widget', Class.new(ActiveRecord::Base) { self.table_name = 'widgets' })
+
+      # Setup primed 12 pools: each schema-creating switch held a sticky lease,
+      # so admission (default :evict_idle) correctly soft-overflowed rather than
+      # evicting in-use pools. Start the bounded fan-out from a clean slate so
+      # every switch is a cold create that exercises admission, and stop the
+      # timer so the bound is enforced by admission alone, not background GC.
+      ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+      Apartment.reset_tenant_pools!
+      Apartment.pool_reaper.stop
+
+      tenants.each do |t|
+        Apartment::Tenant.switch(t) { Widget.create!(name: 'x') }
+        # Release the sticky lease so each just-used pool is idle and evictable
+        # for the next admission (mirrors the request/job boundary).
+        ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+
+        count = Apartment.pool_manager.stats[:total_pools]
+        expect(count).to(be <= 4, "expected <= 4 pools after switching #{t}, got #{count}")
+      end
+    end
+  end
 end

@@ -1,5 +1,13 @@
 AllCops:
   NewCops: enable
+  # Pin both targets to the gemspec floor (activerecord/activesupport >= 7.2,
+  # required_ruby_version >= 3.3). RuboCop-rails otherwise auto-detects
+  # TargetRailsVersion from a Gemfile.lock, which is gitignored and absent in CI's
+  # rubocop job (it runs under an appraisal BUNDLE_GEMFILE, no root lock). Detection
+  # then silently falls back to Rails 5.0, where `Rails.env.local?` (7.1+) trips
+  # Rails/UnknownEnv. Pinning makes linting deterministic across local and CI.
+  TargetRubyVersion: 3.3
+  TargetRailsVersion: 7.2
   Exclude:
     - vendor/bundle/**/*
     - gemfiles/**/*.gemfile

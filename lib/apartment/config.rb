@@ -16,7 +16,8 @@ module Apartment
 
     attr_accessor :tenants_provider, :default_tenant,
                   :default_tenant_switch_allowed,
-                  :tenant_pool_size, :pool_idle_timeout, :max_total_connections,
+                  :tenant_pool_size, :pool_idle_timeout, :reaper_interval,
+                  :max_total_connections, :pool_overflow_policy,
                   :seed_after_create, :seed_data_file,
                   :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
@@ -33,9 +34,11 @@ module Apartment
       @default_tenant = nil
       @default_tenant_switch_allowed = true
       @excluded_models = []
-      @tenant_pool_size = 5
+      @tenant_pool_size = nil
       @pool_idle_timeout = 300
+      @reaper_interval = nil
       @max_total_connections = nil
+      @pool_overflow_policy = :evict_idle
       @seed_after_create = false
       @seed_data_file = nil
       @schema_load_strategy = nil
@@ -117,6 +120,9 @@ module Apartment
     def apply_defaults!
       # PostgreSQL's default schema is 'public'; avoid forcing every user to set it.
       @default_tenant ||= 'public' if @tenant_strategy == :schema
+      # Reap on the idle-timeout cadence unless an explicit interval decouples
+      # the two (reap more often without shrinking the idle window).
+      @reaper_interval = @pool_idle_timeout if @reaper_interval.nil?
     end
 
     # Validate configuration completeness and consistency.
@@ -144,17 +150,30 @@ module Apartment
 
       @postgres_config&.validate!
 
-      unless @tenant_pool_size.is_a?(Integer) && @tenant_pool_size.positive?
-        raise(ConfigurationError, "tenant_pool_size must be a positive integer, got: #{@tenant_pool_size.inspect}")
+      if @tenant_pool_size && (!@tenant_pool_size.is_a?(Integer) || @tenant_pool_size < 1)
+        raise(ConfigurationError,
+              "tenant_pool_size must be a positive integer or nil, got: #{@tenant_pool_size.inspect}")
       end
 
       unless @pool_idle_timeout.is_a?(Numeric) && @pool_idle_timeout.positive?
         raise(ConfigurationError, "pool_idle_timeout must be a positive number, got: #{@pool_idle_timeout.inspect}")
       end
 
+      # nil is valid pre-apply_defaults! (it derives from pool_idle_timeout); a
+      # set value must be a positive number.
+      if @reaper_interval && (!@reaper_interval.is_a?(Numeric) || !@reaper_interval.positive?)
+        raise(ConfigurationError, "reaper_interval must be a positive number or nil, got: #{@reaper_interval.inspect}")
+      end
+
       if @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
         raise(ConfigurationError,
               "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}")
+      end
+
+      unless %i[evict_idle raise].include?(@pool_overflow_policy)
+        raise(ConfigurationError,
+              'pool_overflow_policy must be :evict_idle or :raise, ' \
+              "got: #{@pool_overflow_policy.inspect}")
       end
 
       unless [nil, :schema_rb, :sql].include?(@schema_load_strategy)

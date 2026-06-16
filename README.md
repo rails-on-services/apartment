@@ -99,11 +99,15 @@ All options are set in `config/initializers/apartment.rb` inside an `Apartment.c
 
 ### Pool Settings
 
-`tenant_pool_size`: connections per tenant pool (default: 5).
+`tenant_pool_size`: max connections per tenant pool. Default `nil` — each tenant pool inherits the app's base pool size (`DB_POOL_SIZE` / `pool:` in `database.yml`). Set it to size tenant pools independently of the app pool (e.g. to bound total connections across many schema-per-tenant pools).
 
-`pool_idle_timeout`: seconds before an idle tenant pool is eligible for reaping (default: 300).
+`pool_idle_timeout`: seconds an idle tenant pool must exceed before it is eligible for reaping (default: 300).
 
-`max_total_connections`: hard cap across all tenant pools; nil for unlimited (default: nil).
+`reaper_interval`: seconds between background reap passes. Default `nil` — derives from `pool_idle_timeout`. Set it lower to reap more often without shrinking the idle window.
+
+`max_total_connections`: ceiling on the number of live tenant pools; `nil` for unlimited (default: `nil`). Enforced synchronously at pool-creation time (see `pool_overflow_policy`) and trimmed continuously by the background reaper. Total backend connections ≈ `max_total_connections × tenant_pool_size`.
+
+`pool_overflow_policy`: behavior when a new pool would breach `max_total_connections` and every existing pool is pinned or in use (no idle pool to evict). `:evict_idle` (default) — allow the new pool, emit a `cap_unmet` notification (soft cap, prioritizes availability). `:raise` — raise `Apartment::PoolCapacityReached` (hard cap, sheds load). When an idle pool *is* available it is always evicted inline regardless of policy. See `docs/designs/pool-admission-control.md`.
 
 ### Elevator (Request Tenant Detection)
 

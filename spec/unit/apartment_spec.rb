@@ -278,6 +278,50 @@ RSpec.describe(Apartment) do
       described_class.clear_config
       expect(described_class.pool_reaper).to(be_nil)
     end
+
+    it 'wires reaper_interval and pool_idle_timeout independently' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.pool_idle_timeout = 300
+        config.reaper_interval = 30
+      end
+      reaper = described_class.pool_reaper
+      expect(reaper.interval).to(eq(30))
+      expect(reaper.idle_timeout).to(eq(300))
+    end
+
+    it 'defaults the reaper interval to pool_idle_timeout for back-compat' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.pool_idle_timeout = 120
+      end
+      reaper = described_class.pool_reaper
+      expect(reaper.interval).to(eq(120))
+      expect(reaper.idle_timeout).to(eq(120))
+    end
+  end
+
+  describe 'pool admission control wiring' do
+    after { described_class.clear_config }
+
+    it 'leaves the pool manager uncapped when max_total_connections is nil' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+      expect(described_class.pool_manager.admission_controller).to(be_nil)
+    end
+
+    it 'wires the reaper as the admission controller when a cap is set' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.max_total_connections = 5
+      end
+      expect(described_class.pool_manager.admission_controller).to(eq(described_class.pool_reaper))
+    end
   end
 
   describe '.configure teardown protection' do

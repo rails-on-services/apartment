@@ -33,6 +33,26 @@ module Apartment
   # Raised when the tenant connection pool is exhausted.
   class PoolExhausted < ApartmentError; end
 
+  # Raised when admitting a new tenant pool would exceed max_total_connections
+  # and no idle pool can be evicted to make room, under the :raise overflow
+  # policy. Distinct from PoolExhausted (a single pool's connections) — this is
+  # the process-wide pool-count ceiling. See docs/designs/pool-admission-control.md.
+  class PoolCapacityReached < ApartmentError
+    attr_reader :max_total, :current
+
+    def initialize(max_total: nil, current: nil)
+      @max_total = max_total
+      @current = current
+      super(
+        "Tenant pool capacity reached: #{current.inspect} pools open, " \
+        "max_total_connections is #{max_total.inspect}, and no idle pool could " \
+        'be evicted to admit another (all pinned or in use). Raise ' \
+        'max_total_connections, reduce concurrent tenants, or set ' \
+        'pool_overflow_policy to :evict_idle to allow soft overflow.'
+      )
+    end
+  end
+
   # Raised when schema loading fails during tenant creation.
   class SchemaLoadError < ApartmentError; end
 

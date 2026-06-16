@@ -30,7 +30,8 @@ module Apartment
           strategy: Apartment.config.tenant_strategy,
           adapter_name: effective_base['adapter']
         )
-        resolve_connection_config(tenant, base_config: effective_base)
+        config = resolve_connection_config(tenant, base_config: effective_base)
+        apply_tenant_pool_size(config)
       end
 
       # Resolve a tenant-specific connection config hash.
@@ -257,6 +258,19 @@ module Apartment
       # Connection config with string keys (used by subclasses to build tenant configs).
       def base_config
         connection_config.transform_keys(&:to_s)
+      end
+
+      # Cap the tenant pool's max checkout size to Apartment.config.tenant_pool_size
+      # when configured. Defaults to nil — the tenant pool inherits the base/default
+      # pool's `pool:` (the app's DB_POOL_SIZE), preserving pre-4.0.0.alpha3 behavior.
+      # Set tenant_pool_size to size each per-tenant pool independently of the app pool
+      # (e.g. to bound total connections across many schema-per-tenant pools). The config
+      # is string-keyed here; HashConfig symbolizes it and reads `:pool` for the size.
+      def apply_tenant_pool_size(config)
+        size = Apartment.config.tenant_pool_size
+        return config unless size
+
+        config.merge('pool' => size)
       end
 
       # Connection config for pinned models on the separate-pool path.

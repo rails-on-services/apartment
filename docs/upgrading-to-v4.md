@@ -210,9 +210,11 @@ Key config options for pool tuning:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `tenant_pool_size` | 5 | Connections per tenant pool |
-| `pool_idle_timeout` | 300 | Seconds before idle pool eviction |
-| `max_total_connections` | nil | Hard cap across all tenant pools |
+| `tenant_pool_size` | nil | Max connections per tenant pool; nil inherits the app's base pool size |
+| `pool_idle_timeout` | 300 | Seconds an idle pool must exceed before it is eligible for reaping |
+| `reaper_interval` | nil | Seconds between reap passes; nil derives from `pool_idle_timeout` |
+| `max_total_connections` | nil | Ceiling on live tenant pools; enforced synchronously at create time |
+| `pool_overflow_policy` | `:evict_idle` | At-capacity-with-no-idle-pool behavior: `:evict_idle` (soft) or `:raise` (hard) |
 
 ## Migration Steps
 
@@ -385,7 +387,7 @@ Ensure these names match exactly what `Apartment::Tenant.create` received (case-
 
 ### Connection pool sizing
 
-Each tenant gets `tenant_pool_size` connections (default: 5). For apps with many tenants, set `max_total_connections` to cap total database connections:
+By default (`tenant_pool_size = nil`) each tenant pool inherits the app's base pool size. For apps with many tenants, set `tenant_pool_size` to size tenant pools independently and `max_total_connections` to bound the live pool count — total backend connections ≈ `max_total_connections × tenant_pool_size`:
 
 ```ruby
 Apartment.configure do |config|
@@ -394,7 +396,7 @@ Apartment.configure do |config|
 end
 ```
 
-Idle pools are evicted after `pool_idle_timeout` seconds (default: 300). The `PoolReaper` runs in the background and never evicts the default tenant's pool.
+`max_total_connections` is enforced synchronously at pool-creation time: a new pool that would breach the cap first evicts the least-recently-used *idle* pool inline. When every pool is pinned or in use, `pool_overflow_policy` decides — `:evict_idle` (default) allows the pool and emits a `cap_unmet` notification; `:raise` raises `Apartment::PoolCapacityReached`. Idle pools are also reaped in the background after `pool_idle_timeout` seconds (on the `reaper_interval` cadence, which defaults to `pool_idle_timeout`). The `PoolReaper` never evicts the default tenant's pool.
 
 ### Thread safety
 
