@@ -171,8 +171,13 @@ module Apartment
     # can call Apartment.pool_reaper.start explicitly. Emits :reaper_stopped
     # so an upgrading adopter notices the behavior change without combing
     # release notes.
+    #
+    # Opt out with `config.reap_in_test = true`: a deployment whose processes
+    # can run under Rails.env.test? semantics (and must keep reaping) then needs
+    # no boot guard around RAILS_ENV to avoid silently leaking connections.
     def self.deactivate_pool_reaper_in_test_env!
       return unless Rails.env.test?
+      return if Apartment.config&.reap_in_test
       return unless Apartment.pool_reaper
 
       Apartment.pool_reaper.stop
