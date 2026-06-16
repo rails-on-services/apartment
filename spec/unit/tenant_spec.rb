@@ -425,6 +425,23 @@ RSpec.describe(Apartment::Tenant) do
       expect(called).to(be(false))
     end
 
+    it 'releases the connection after each tenant when release_connection: true' do
+      allow(ActiveRecord::Base.connection_handler).to(receive(:clear_active_connections!))
+
+      described_class.each(release_connection: true) { |_t| }
+
+      expect(ActiveRecord::Base.connection_handler)
+        .to(have_received(:clear_active_connections!).with(:all).twice)
+    end
+
+    it 'does not release connections by default' do
+      allow(ActiveRecord::Base.connection_handler).to(receive(:clear_active_connections!))
+
+      described_class.each { |_t| }
+
+      expect(ActiveRecord::Base.connection_handler).not_to(have_received(:clear_active_connections!))
+    end
+
     it 'returns the result of iterating the tenant list' do
       result = described_class.each(%w[a b]) { |_t| }
       expect(result).to(eq(%w[a b]))
