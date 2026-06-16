@@ -10,9 +10,11 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.tenants_provider).to(be_nil) }
     it { expect(config.default_tenant).to(be_nil) }
     it { expect(config.excluded_models).to(eq([])) }
-    it { expect(config.tenant_pool_size).to(eq(5)) }
+    it { expect(config.tenant_pool_size).to(be_nil) }
     it { expect(config.pool_idle_timeout).to(eq(300)) }
+    it { expect(config.reaper_interval).to(be_nil) }
     it { expect(config.max_total_connections).to(be_nil) }
+    it { expect(config.pool_overflow_policy).to(eq(:evict_idle)) }
     it { expect(config.seed_after_create).to(be(false)) }
     it { expect(config.seed_data_file).to(be_nil) }
     it { expect(config.parallel_migration_threads).to(eq(0)) }
@@ -153,6 +155,20 @@ RSpec.describe(Apartment::Config) do
       expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /tenant_pool_size/))
     end
 
+    it 'allows tenant_pool_size to be nil (inherit the base pool size)' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_pool_size = nil
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'allows tenant_pool_size to be a positive integer' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_pool_size = 3
+      expect { config.validate! }.not_to(raise_error)
+    end
+
     it 'raises when pool_idle_timeout is not a positive number' do
       config.tenant_strategy = :schema
       config.tenants_provider = -> { [] }
@@ -167,10 +183,59 @@ RSpec.describe(Apartment::Config) do
       expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_total_connections/))
     end
 
+    it 'raises when reaper_interval is not a positive number' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.reaper_interval = 0
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /reaper_interval/))
+    end
+
+    it 'allows reaper_interval to be nil (defaults to pool_idle_timeout)' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.reaper_interval = nil
+      expect { config.validate! }.not_to(raise_error)
+    end
+
+    it 'raises when pool_overflow_policy is unknown' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.pool_overflow_policy = :block
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /pool_overflow_policy/))
+    end
+
+    it 'accepts :raise as a pool_overflow_policy' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.pool_overflow_policy = :raise
+      expect { config.validate! }.not_to(raise_error)
+    end
+
     it 'passes with valid minimal configuration' do
       config.tenant_strategy = :schema
       config.tenants_provider = -> { [] }
       expect { config.validate! }.not_to(raise_error)
+    end
+
+    context 'reaper_interval defaulting' do
+      before do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+
+      it 'defaults reaper_interval to pool_idle_timeout when not set' do
+        config.pool_idle_timeout = 120
+        config.apply_defaults!
+        expect(config.reaper_interval).to(eq(120))
+      end
+
+      it 'preserves an explicit reaper_interval distinct from pool_idle_timeout' do
+        config.pool_idle_timeout = 300
+        config.reaper_interval = 30
+        config.apply_defaults!
+        expect(config.reaper_interval).to(eq(30))
+        expect(config.pool_idle_timeout).to(eq(300))
+      end
     end
 
     context 'default_tenant auto-defaulting' do

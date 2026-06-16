@@ -32,6 +32,13 @@ module Apartment
         pool_key = "#{tenant}:#{role}"
 
         Apartment.pool_manager.fetch_or_create(pool_key) do
+          # RE-ENTRANCY: when max_total_connections is set, this block runs under
+          # PoolManager's @create_mutex (non-reentrant). Nothing here may resolve
+          # ActiveRecord::Base.connection_pool for the current tenant — it would
+          # re-enter fetch_or_create and self-deadlock. `super` resolves the
+          # default pool (bypasses the patch), and check_pending_migrations? /
+          # schema-cache load operate on the explicit `pool`, so all are safe.
+          # Keep it that way if you add work to this block.
           # Resolve base config from the current role's default pool when available.
           # Falls back to nil (adapter uses its own base_config) when the default pool
           # is not accessible — e.g., in worker threads during parallel migration where
@@ -63,9 +70,20 @@ module Apartment
             shard: shard_key
           )
 
-          raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
+          # establish_connection has registered the shard in AR's ConnectionHandler.
+          # If a post-establish check raises, the pool is returned to neither the
+          # caller nor PoolManager — it would be orphaned: live in AR but invisible
+          # to the reaper and to max_total accounting (a connection leak that also
+          # undercounts the cap). Deregister it before re-raising so AR and the
+          # manager stay consistent. The next request re-establishes cleanly.
+          begin
+            raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
 
-          load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
+            load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
+          rescue StandardError
+            Apartment.deregister_shard(pool_key)
+            raise
+          end
 
           pool
         end
@@ -80,7 +98,7 @@ module Apartment
 
       def check_pending_migrations?(pool)
         return false unless Apartment.config.check_pending_migrations
-        return false unless defined?(Rails) && Rails.env.local? # rubocop:disable Rails/UnknownEnv
+        return false unless defined?(Rails) && Rails.env.local?
         return false if Apartment::Current.migrating
 
         pool.migration_context.needs_migration?

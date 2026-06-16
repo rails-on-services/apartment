@@ -59,11 +59,11 @@ lib/apartment/
 
 ### pool_manager.rb — Pool Cache
 
-`Concurrent::Map` storing connection pools by tenant key. Monotonic clock timestamps for idle/LRU tracking. `stats_for` returns `{ seconds_idle: N }`. `clear` disconnects all pools before clearing.
+`Concurrent::Map` storing connection pools by tenant key. Monotonic clock timestamps for idle/LRU tracking. `stats_for` returns `{ seconds_idle: N }`. `clear` disconnects all pools before clearing. When `max_total_connections` is set, `Apartment.configure` wires an `admission_controller` (the reaper) so cold creates route through a serialized, capacity-bounded path; otherwise the lock-free `compute_if_absent` fast path is used. See `docs/designs/pool-admission-control.md`.
 
-### pool_reaper.rb — Pool Eviction
+### pool_reaper.rb — Pool Eviction + Admission
 
-Background `Concurrent::TimerTask` instance that evicts idle and excess tenant pools. Created by `Apartment.configure`, stored as `Apartment.pool_reaper`. Deregisters evicted pools from AR's ConnectionHandler. Default tenant is never evicted.
+Background `Concurrent::TimerTask` that evicts idle and excess tenant pools, and also serves as the pool manager's synchronous admission controller (`admit!`) when a cap is configured — evicting the LRU idle pool inline before a new one is established, applying `pool_overflow_policy` (`:evict_idle` / `:raise`) when no idle pool can be freed. A single `evict_tenant` primitive backs the timer (idle/LRU) and admission paths. Reap cadence (`interval`/`reaper_interval`) is decoupled from the idle window (`idle_timeout`/`pool_idle_timeout`). Created by `Apartment.configure`, stored as `Apartment.pool_reaper`. Deregisters evicted pools from AR's ConnectionHandler. Default tenant is never evicted.
 
 ### adapters/abstract_adapter.rb — Base Adapter
 

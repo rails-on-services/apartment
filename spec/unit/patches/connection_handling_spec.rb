@@ -154,6 +154,33 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
                  )).to(be_nil)
         end
       end
+
+      it 'deregisters the shard when a post-establish step raises (no orphaned pool)' do
+        # Drive a failure *after* establish_connection has registered the shard by
+        # making the per-tenant schema-cache load blow up. Without the rescue in
+        # ConnectionHandling the pool would be left live in AR but untracked by
+        # PoolManager — a leak that also undercounts max_total.
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme widgets] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.schema_cache_per_tenant = true
+        end
+        Apartment.adapter = mock_adapter
+        allow(Apartment::SchemaCache).to(receive(:cache_path_for).and_raise(StandardError, 'cache boom'))
+
+        Apartment::Current.tenant = 'acme'
+        role = ActiveRecord::Base.current_role
+        shard_key = :"#{Apartment.config.shard_key_prefix}_acme:#{role}"
+
+        expect { ActiveRecord::Base.connection_pool }.to(raise_error(Apartment::ApartmentError))
+
+        expect(ActiveRecord::Base.connection_handler.retrieve_connection_pool(
+                 'ActiveRecord::Base', role: role, shard: shard_key
+               )).to(be_nil)
+        expect(Apartment.pool_manager.tracked?("acme:#{role}")).to(be(false))
+      end
     end
 
     context 'pool usability' do
