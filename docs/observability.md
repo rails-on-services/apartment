@@ -78,6 +78,38 @@ $apartment_observer = Apartment::PoolObserver.install!(
 `install!` returns the observer. Store it somewhere accessible so you can call
 `stop!` on shutdown (see teardown below).
 
+The `sink` runs **inline on the thread that emitted the event** — for `evict` /
+`cap_unmet` / `skip_evict` that can be the reaper thread or, during admission, a
+request thread holding the pool-creation lock. Keep the sink **non-blocking**:
+enqueue to your metrics client and return. A sink that does slow synchronous I/O
+will stall pool reaping/admission. (It never *raises* into the gem — failures are
+rescued — but it can *block*.)
+
+#### Preforking servers (Puma cluster, Unicorn, Sidekiq with preload)
+
+The gauge sampler runs on a background thread, and **threads do not survive
+`fork`**. If you call `install!` with a `sample_interval` in `after_initialize`,
+the sampler starts in the master process and is dead in every forked worker —
+counters keep firing (notification subscriptions are inherited), but
+`tenant_pools_live` / `backend_connections` silently flatline.
+
+Split the two concerns: subscribe once at boot, start the sampler per worker.
+
+```ruby
+# config/initializers/apartment_observability.rb
+$apartment_observer = Apartment::PoolObserver.new(
+  sink: ->(sample) { MyMetrics.record(sample) },
+  backend_count: -> { ActiveRecord::Base.connection_pool.connections.size }
+)
+$apartment_observer.subscribe!   # inherited across fork — safe to do at boot
+
+# config/puma.rb
+on_worker_boot { $apartment_observer.start_sampler!(interval: 60) }
+```
+
+Don't call `install!` again per worker — `subscribe!` is not idempotent, so a
+second subscription would double-count every counter.
+
 ### `Sample` shape
 
 Every `sink` call receives one `Sample`:

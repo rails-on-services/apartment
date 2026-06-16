@@ -127,6 +127,27 @@ RSpec.describe(Apartment::PoolObserver) do
       @observer = described_class.new(sink: sink, backend_count: -> { raise('backend boom') })
       expect { @observer.sample! }.not_to(raise_error)
     end
+
+    it 'does not propagate even when the failure logger itself raises' do
+      @observer = described_class.install!(sink: boom_sink)
+      allow(@observer).to(receive(:warn).and_raise('warn boom'))
+      expect { Apartment::Instrumentation.instrument(:evict, {}) }.not_to(raise_error)
+    end
+  end
+
+  describe '.install! cleanup on partial failure' do
+    it 'tears down subscriptions when a later step raises after subscribing' do
+      recorded = Concurrent::Array.new
+      capturing_sink = ->(sample) { recorded << sample }
+
+      # A non-numeric interval makes start_sampler! raise *after* subscribe!.
+      expect { described_class.install!(sink: capturing_sink, sample_interval: 'nope') }
+        .to(raise_error(NoMethodError))
+
+      # If cleanup worked, the orphaned subscriptions are gone and no event lands.
+      Apartment::Instrumentation.instrument(:evict, {})
+      expect(recorded).to(be_empty)
+    end
   end
 
   describe '#subscribe! / .install!' do

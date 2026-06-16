@@ -26,6 +26,11 @@ module Apartment
       observer.subscribe!
       observer.start_sampler!(interval: sample_interval) if sample_interval&.positive?
       observer
+    rescue StandardError
+      # Don't leak subscriptions if a later step (e.g. a bad sample_interval)
+      # raises after subscribe! has registered listeners.
+      observer&.stop!
+      raise
     end
 
     def initialize(sink:, backend_count: nil)
@@ -73,13 +78,25 @@ module Apartment
     def stop!
       @subscribers.each { |subscriber| ActiveSupport::Notifications.unsubscribe(subscriber) }
       @subscribers.clear
-      @sampler&.shutdown
-      @sampler = nil
+      shutdown_sampler!
     end
 
     private
 
+    # shutdown stops future ticks; wait_for_termination ensures an in-flight
+    # sample! can't emit after stop! returns (mirrors PoolReaper#stop_internal).
+    def shutdown_sampler!
+      return unless @sampler
+
+      @sampler.shutdown
+      @sampler.wait_for_termination(5)
+      @sampler = nil
+    end
+
     def record_event(event, payload)
+      # Copy the notification payload so a sink that mutates Sample#payload
+      # can't corrupt it for other subscribers of the same event.
+      payload = payload.dup
       dimensions = payload[:reason] ? { reason: payload[:reason] } : {}
       emit(Sample.new(name: event, kind: :counter, value: 1, dimensions: dimensions, payload: payload))
     rescue StandardError => e
@@ -94,6 +111,10 @@ module Apartment
 
     def warn_failure(context, error)
       warn "[Apartment::PoolObserver] #{context} failed: #{error.class}: #{error.message}"
+    rescue StandardError
+      # The failure logger must never be the thing that raises into the gem's
+      # instrumentation path (e.g. a closed/replaced $stderr).
+      nil
     end
   end
 end
