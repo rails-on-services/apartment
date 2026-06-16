@@ -109,6 +109,12 @@ All options are set in `config/initializers/apartment.rb` inside an `Apartment.c
 
 `pool_overflow_policy`: behavior when a new pool would breach `max_total_connections` and every existing pool is pinned or in use (no idle pool to evict). `:evict_idle` (default) — allow the new pool, emit a `cap_unmet` notification (soft cap, prioritizes availability). `:raise` — raise `Apartment::PoolCapacityReached` (hard cap, sheds load). When an idle pool *is* available it is always evicted inline regardless of policy. See `docs/designs/pool-admission-control.md`.
 
+### Observability
+
+Apartment emits `ActiveSupport::Notifications` for the pool lifecycle and ships
+`Apartment::PoolObserver`, a sink-agnostic subscriber + sampler. See
+[docs/observability.md](docs/observability.md).
+
 ### Elevator (Request Tenant Detection)
 
 ```ruby
