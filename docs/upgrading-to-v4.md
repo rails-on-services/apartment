@@ -215,6 +215,7 @@ Key config options for pool tuning:
 | `reaper_interval` | nil | Seconds between reap passes; nil derives from `pool_idle_timeout` |
 | `max_total_connections` | nil | Ceiling on live tenant pools; enforced synchronously at create time |
 | `pool_overflow_policy` | `:evict_idle` | At-capacity-with-no-idle-pool behavior: `:evict_idle` (soft) or `:raise` (hard) |
+| `reap_in_test` | `false` | Keep the reaper running under `Rails.env.test?`; `true` avoids a boot guard for deployments that run test-env semantics |
 
 ## Migration Steps
 
