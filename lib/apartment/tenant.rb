@@ -185,11 +185,33 @@ module Apartment
       # Accepts an optional tenant list; defaults to tenants_provider.
       # Fail-fast: raises immediately if a block raises for any tenant;
       # tenants after the failing one are not visited.
-      def each(tenants = nil)
+      #
+      # release_connection: when true, release leased connections after each
+      # tenant so the reaper can evict finished tenants' pools mid-run. v4 keys a
+      # pool per "tenant:role"; a fan-out whose block leaves a connection checked
+      # out (raw ActiveRecord::Base.connection use, an open transaction, a long-
+      # held connection) would otherwise hold one warm connection per visited
+      # tenant. Modern query methods (create!, where, ...) check the connection
+      # back in themselves (Rails 7.2+), so a fan-out of only those needs no
+      # release — but when in doubt for a large fan-out, pass it; it is a cheap
+      # no-op when there is nothing to release.
+      #
+      # WARNING: the release is handler-wide (clear_active_connections!(:all)) —
+      # it drops EVERY connection leased to the current execution context, across
+      # all pools and roles, not just the tenant pool. Do NOT use it inside an
+      # outer ActiveRecord::Base.transaction, or while holding a non-tenant
+      # connection you mean to keep. Fail-fast: if the block raises, the failing
+      # tenant is not released (the fan-out aborts).
+      def each(tenants = nil, release_connection: false)
         raise(ArgumentError, 'Apartment::Tenant.each requires a block') unless block_given?
 
         tenants ||= Apartment.tenant_names
-        tenants.each { |tenant| switch(tenant) { yield(tenant) } }
+        tenants.each do |tenant|
+          switch(tenant) { yield(tenant) }
+          # Handler-wide (:all) covers writing + reading roles — the gem's
+          # established release call (see memory_stability_spec).
+          ActiveRecord::Base.connection_handler.clear_active_connections!(:all) if release_connection
+        end
       end
 
       # Block-scoped override of the tenant resolver. For the duration of the
