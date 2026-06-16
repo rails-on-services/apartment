@@ -30,7 +30,7 @@ Apartment uses **schema-per-tenant** (PostgreSQL) or **database-per-tenant** (My
 
 ## About ros-apartment
 
-This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Same `require 'apartment'`; v4 introduces a pool-per-tenant architecture that replaces the thread-local switching of v3. Tenant context is fiber-safe via `CurrentAttributes`, and connection pools are managed per tenant rather than swapping search paths on a shared connection. See the [upgrade guide](docs/upgrading-to-v4.md) for migration steps from v3.
+This gem is a maintained fork of the original [Apartment gem](https://github.com/influitive/apartment). Maintained by [CampusESP](https://www.campusesp.com) since 2024. Same `require 'apartment'`; v4 introduces a pool-per-tenant architecture that replaces the thread-local switching of v3. Tenant context is fiber-safe via `CurrentAttributes`, and connection pools are managed per tenant rather than swapping search paths on a shared connection. For *why* v4 chose this model over the alternatives (including fully-qualified table names), see [`docs/designs/v4-connection-model-rationale.md`](docs/designs/v4-connection-model-rationale.md). See the [upgrade guide](docs/upgrading-to-v4.md) for migration steps from v3.
 
 ## Installation
 
