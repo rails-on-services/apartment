@@ -27,6 +27,43 @@ RSpec.describe(Apartment::PoolObserver) do
     end
   end
 
+  describe '#sample!' do
+    let(:stub_manager) { instance_double(Apartment::PoolManager, stats: { total_pools: 3, tenants: [] }) }
+
+    before { allow(Apartment).to(receive(:pool_manager).and_return(stub_manager)) }
+
+    it 'emits a tenant_pools_live gauge from PoolManager#stats' do
+      observer = described_class.new(sink: sink)
+      observer.sample!
+
+      sample = samples.find { |s| s.name == :tenant_pools_live }
+      expect(sample).to(have_attributes(kind: :gauge, value: 3, dimensions: {}, payload: {}))
+    end
+
+    it 'emits backend_connections when a backend_count callable is supplied' do
+      observer = described_class.new(sink: sink, backend_count: -> { 42 })
+      observer.sample!
+
+      sample = samples.find { |s| s.name == :backend_connections }
+      expect(sample).to(have_attributes(kind: :gauge, value: 42))
+    end
+
+    it 'skips backend_connections when backend_count returns nil' do
+      observer = described_class.new(sink: sink, backend_count: -> { nil })
+      observer.sample!
+
+      expect(samples.map(&:name)).not_to(include(:backend_connections))
+    end
+
+    it 'reports zero pools when the manager is absent (unconfigured)' do
+      allow(Apartment).to(receive(:pool_manager).and_return(nil))
+      observer = described_class.new(sink: sink)
+      observer.sample!
+
+      expect(samples.find { |s| s.name == :tenant_pools_live }.value).to(eq(0))
+    end
+  end
+
   describe '#subscribe! / .install!' do
     subject(:observer) { described_class.install!(sink: sink) }
 

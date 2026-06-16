@@ -47,6 +47,22 @@ module Apartment
       self
     end
 
+    # One gauge pass: live tenant-pool count, plus the adopter's backend count
+    # when supplied. Safe to call from start_sampler! or an external scheduler.
+    def sample!
+      total = Apartment.pool_manager&.stats&.fetch(:total_pools, 0) || 0
+      emit(Sample.new(name: :tenant_pools_live, kind: :gauge, value: total, dimensions: {}, payload: {}))
+
+      return unless @backend_count
+
+      backends = @backend_count.call
+      return if backends.nil?
+
+      emit(Sample.new(name: :backend_connections, kind: :gauge, value: backends, dimensions: {}, payload: {}))
+    rescue StandardError => e
+      warn_failure('sample!', e)
+    end
+
     # Temporary stub — replaced by full implementation in Task 4.
     def start_sampler!(interval:); end # rubocop:disable Style/Semicolon
 
