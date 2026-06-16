@@ -39,10 +39,9 @@ module Apartment
 
     def subscribe!
       COUNTER_EVENTS.each do |event|
-        subscriber = ActiveSupport::Notifications.subscribe("#{event}.apartment") do |_name, _start, _finish, _id, payload|
+        @subscribers << ActiveSupport::Notifications.subscribe("#{event}.apartment") do |*, payload|
           record_event(event, payload || {})
         end
-        @subscribers << subscriber
       end
       self
     end

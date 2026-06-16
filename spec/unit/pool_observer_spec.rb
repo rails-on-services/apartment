@@ -49,7 +49,7 @@ RSpec.describe(Apartment::PoolObserver) do
     end
 
     it 'skips backend_connections when backend_count returns nil' do
-      observer = described_class.new(sink: sink, backend_count: -> { nil })
+      observer = described_class.new(sink: sink, backend_count: -> {})
       observer.sample!
 
       expect(samples.map(&:name)).not_to(include(:backend_connections))
