@@ -102,9 +102,9 @@ Apartment::PoolObserver::Sample
 `PoolManager#stats[:total_pools]`), `:backend_connections` (`value` = your
 `backend_count` callable result; omitted when the callable returns `nil`).
 
-**Dimensions** are curated for cardinality. Only `reason:` is promoted from
-payload into `dimensions` for counter events that carry it (`:evict`,
-`:skip_evict`). Everything else stays in `payload`.
+**Dimensions** are curated for cardinality. `reason:` is promoted from payload
+into `dimensions` for any counter event that carries it (currently `:evict`,
+`:skip_evict`, and `:reaper_stopped`). Everything else stays in `payload`.
 
 ### Wiring a sink
 

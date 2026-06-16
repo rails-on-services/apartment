@@ -96,6 +96,12 @@ RSpec.describe(Apartment::PoolObserver) do
       sleep 0.1
       expect(samples.size).to(eq(count))
     end
+
+    it 'stop! is safe to call twice' do
+      observer = described_class.install!(sink: sink)
+      observer.stop!
+      expect { observer.stop! }.not_to(raise_error)
+    end
   end
 
   describe 'error isolation' do
@@ -153,6 +159,14 @@ RSpec.describe(Apartment::PoolObserver) do
         Apartment::Instrumentation.instrument(event, {})
       end
       expect(samples.map(&:name)).to(include(:create, :evict, :cap_unmet, :skip_evict, :reaper_stopped))
+    end
+
+    it 'promotes :reason into dimensions for any event carrying it (e.g. reaper_stopped)' do
+      observer
+      Apartment::Instrumentation.instrument(:reaper_stopped, reason: :test_env)
+
+      sample = samples.find { |s| s.name == :reaper_stopped }
+      expect(sample.dimensions).to(eq(reason: :test_env))
     end
   end
 end
