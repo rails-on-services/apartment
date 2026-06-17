@@ -13,8 +13,10 @@ exercise it. We close that gap the lightweight way: register a `:reading`-role
 default pool on `ActiveRecord::Base`'s ConnectionHandler **pointing at the same
 physical database** (the proven `setup_connects_to!` pattern, minus the username
 override), then parametrize the role-sensitive examples in
-`fixture_pool_lifecycle_spec.rb` across `:writing` and `:reading`. No real
-streaming replica, no CI provisioning, no per-engine special-casing. A real
+`fixture_pool_lifecycle_spec.rb` (lifecycle/rollback) and
+`fixture_pin_visibility_spec.rb` (read-visibility) across `:writing` and
+`:reading`. No real streaming replica, no CI provisioning, no per-engine
+special-casing. A real
 replica would test replication behavior the gem does not own and is irrelevant
 to #7's goal (pool object-identity and per-handler lifecycle, not replication
 lag).
@@ -53,7 +55,11 @@ lag).
 suite, so the fixture-pool-lifecycle invariant ("pool lifecycle changes during
 fixture-transaction ownership are a violation") is shown to hold *per handler* —
 across both the `:writing` and `:reading` roles — closing #7 and unblocking other
-`:reading`-gated coverage.
+`:reading`-gated coverage. Coverage spans both halves of failure-class member 5:
+the lifecycle/rollback side (`fixture_pool_lifecycle_spec.rb`) and the
+read-visibility side (`fixture_pin_visibility_spec.rb`). On close, correct the
+`fixture-pool-lifecycle.md` "Eventually #7" entry, whose "deferred until the dummy
+app gains read replicas" phrasing names the wrong surface.
 
 **Non-goals:**
 
@@ -150,6 +156,24 @@ without a `:writing` *or* `:reading` default pool_config — is already guarded 
 `Apartment::TestFixtures` and unit-covered in `test_fixtures_spec.rb`; the
 integration spec now exercises it under the real lifecycle).
 
+### Spec coverage — visibility half under `:reading`
+
+`fixture_pin_visibility_spec.rb` covers the read-visibility side of member 5: that
+a lazily-created tenant pool, pinned late by the `!connection.active_record`
+subscriber, still sees in-example writes on a later re-entry. Parametrize its
+role-sensitive examples across `:writing` and `:reading` the same way, with a
+`register_reading_role!(config)` call in its `before` block. The examples that
+carry per-handler signal:
+
+1. **Visibility on re-entry under `:reading`.** Rows written inside the example
+   via a lazily-created `"#{tenant}:reading"` pool are visible to a later
+   `Apartment::Tenant.each` pass on the same tenant.
+2. **Visibility across `with_tenants` / `each` under `:reading`.** The same holds
+   when a `with_tenants` override or bare `each` re-enters the tenant.
+3. **Reaper detects the pinned `:reading` pool.** `PoolReaper#pool_pinned?`
+   returns true for a freshly-pinned `"#{tenant}:reading"` pool (the private-ivar
+   read triangulated against the real ConnectionPool, now under a second handler).
+
 ## Error handling and edge cases
 
 - **`setup_shared_connection_pool` ArgumentError.** AR's unpatched
@@ -180,10 +204,6 @@ integration spec now exercises it under the real lifecycle).
 
 ## Deferred (recorded, not silently omitted)
 
-- **Visibility half under `:reading`.** `fixture_pin_visibility_spec.rb`
-  parametrized for `:reading` would cover the read-visibility side of member 5.
-  Lower-risk path; doubles the spec surface. Deferred from this iteration unless
-  bundled by request.
 - **Dummy app `:reading` wiring.** `database.yml` 3-tier + `connects_to` in
   `ApplicationRecord`, for `request_lifecycle` / `live_streaming` to exercise
   `:reading`. No current need.
