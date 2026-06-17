@@ -183,6 +183,28 @@ RSpec.shared_examples('fixture pool lifecycle guards under a role') do |role|
     end.to(raise_error(Apartment::FixtureLifecycleViolation))
   end
 
+  it "violation message names the offending #{role} tenant pool and the use_transactional_tests opt-out" do
+    widget_class
+
+    message = nil
+    begin
+      FixtureLifecycleGuardHost.new.run_example do
+        ActiveRecord::Base.connected_to(role: role) do
+          Apartment::Tenant.switch(write_tenant) { Widget.create! }
+          Apartment.reset_tenant_pools!
+        end
+      end
+    rescue Apartment::FixtureLifecycleViolation => e
+      message = e.message
+    end
+
+    expect(message).not_to(be_nil)
+    expect(message).to(include(pool_key))
+    expect(message).to(include('transactional fixtures'))
+    expect(message).to(include('use_transactional_tests = false'))
+    expect(message).to(include('docs/testing.md'))
+  end
+
   it "mid-tx reset discards the pinned #{role} pool: the recreated pool has fresh object identity" do
     widget_class
 
@@ -229,8 +251,12 @@ Inside the `RSpec.describe(...)` body, DELETE the three original inline examples
 - `'mid-tx reset discards the pinned pool: the recreated pool has fresh object identity'`
 - `'rolls back rows written via lazy pool creation in the non-reset path (a′ tiebreaker)'`
 
-KEEP the three role-agnostic examples unchanged:
-- `'violation message names the offending tenant pool and points at the use_transactional_tests opt-out'`
+DELETE the original inline `'violation message names the offending tenant pool and
+points at the use_transactional_tests opt-out'` example too — it is now covered
+(parametrized) by the shared group above, which asserts the message names the
+role-specific `pool_key` under both `:writing` and `:reading`.
+
+KEEP the two remaining role-agnostic examples unchanged:
 - `'is allowed outside fixture-transaction ownership (negative case)'`
 - `'preserves a with_tenants override across fixture setup (reset_tenant_pools! leaves Current intact)'`
 
@@ -243,12 +269,18 @@ In place of the deleted examples, add the role loop and the new both-roles examp
     end
   end
 
-  it 'pins and rolls back tenant pools under both :writing and :reading in the same example' do
-    # The per-handler proof (failure-class member 5): with pinned pools under
-    # BOTH roles in one example, the shared fixture transaction must cover both
-    # so teardown rolls back both. Same physical DB; distinct pool object per role.
+  it 'pins both :writing and :reading tenant pools as distinct objects and rolls both back' do
+    # The per-handler proof (failure-class member 5, role axis): with pinned
+    # pools under BOTH roles in one example, the fixture lifecycle must enroll
+    # both. Same physical DB, so a post-teardown count is NOT independent
+    # evidence (both reads hit the same rows). The load-bearing assertions are
+    # the mid-example ones: the two pools are distinct objects and both pinned.
+    # The post-teardown counts are a secondary sanity check.
     widget_class
     counts = {}
+    reaper = Apartment::PoolReaper.new(
+      pool_manager: Apartment.pool_manager, interval: 60, idle_timeout: 60
+    )
 
     FixtureLifecycleGuardHost.new.run_example do
       ActiveRecord::Base.connected_to(role: :writing) do
@@ -258,10 +290,20 @@ In place of the deleted examples, add the role loop and the new both-roles examp
         Apartment::Tenant.switch(write_tenant) { Widget.create! }
       end
 
-      expect(Apartment.pool_manager.peek("#{write_tenant}:writing")).not_to(be_nil)
-      expect(Apartment.pool_manager.peek("#{write_tenant}:reading")).not_to(be_nil)
+      writing_pool = Apartment.pool_manager.peek("#{write_tenant}:writing")
+      reading_pool = Apartment.pool_manager.peek("#{write_tenant}:reading")
+
+      # Distinct pool objects per role (not collapsed onto one connection).
+      expect(writing_pool).not_to(be_nil)
+      expect(reading_pool).not_to(be_nil)
+      expect(reading_pool).not_to(be(writing_pool))
+
+      # Both enrolled in the fixture transaction (pinned), per handler.
+      expect(reaper.send(:pool_pinned?, writing_pool)).to(be(true))
+      expect(reaper.send(:pool_pinned?, reading_pool)).to(be(true))
     end
 
+    # Secondary: rows written via both roles are gone after teardown rollback.
     Apartment::Tenant.switch(write_tenant) { counts[:writing] = Widget.count }
     ActiveRecord::Base.connected_to(role: :reading) do
       Apartment::Tenant.switch(write_tenant) { counts[:reading] = Widget.count }
@@ -277,20 +319,21 @@ In place of the deleted examples, add the role loop and the new both-roles examp
 The describe-block header comment lists "Six examples"; update its count and add the role-parametrization and both-roles lines so the comment matches reality. Replace the `# Six examples:` enumeration intro with:
 
 ```ruby
-# Role-agnostic examples (run once, under :writing): the violation message,
-# the negative/bootstrap case, and the with_tenants/Current-survival case.
+# Role-agnostic examples (run once, under :writing): the negative/bootstrap
+# case and the with_tenants/Current-survival case.
 # Role-sensitive examples (run under both :writing and :reading via the
 # 'fixture pool lifecycle guards under a role' shared group): the guard-fires
-# case, the fresh-object-identity case, and the (a') lazy-rollback tiebreaker.
+# case, the violation-message contract lock, the fresh-object-identity case,
+# and the (a') lazy-rollback tiebreaker.
 # Plus one both-roles-pinned example: the per-handler proof (failure-class
-# member 5) that a single fixture transaction covers tenant pools under both
-# roles simultaneously.
+# member 5, role axis) that the fixture lifecycle enrolls distinct tenant pools
+# under both roles simultaneously (distinct objects, both pinned).
 ```
 
 - [ ] **Step 5: Run the spec to verify it passes**
 
 Run: `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/fixture_pool_lifecycle_spec.rb`
-Expected: PASS. Example count rises from 6 to 10 (3 role-agnostic + 3×2 role-parametrized + 1 both-roles). 0 failures.
+Expected: PASS. Example count rises from 6 to 11 (2 role-agnostic + 4×2 role-parametrized + 1 both-roles). 0 failures.
 
 - [ ] **Step 6: Run across the Rails matrix**
 
@@ -488,15 +531,19 @@ Replace the current item 7 under the `## Eventually (>1mo, deferred)` heading:
 7. **Multi-handler / multi-role variants of the integration spec**. Parametrize over `:writing` and `:reading` roles once the dummy app supports replicas. Deferred until reading replicas are exercised in the main matrix.
 ```
 
-with (closes #7; move it out of "Eventually" by recording it as done):
+with (closes #7's role axis; move it out of "Eventually" by recording it as done):
 
 ```markdown
-7. **Multi-handler / multi-role variants of the integration spec** — *closed*. Both `fixture_pool_lifecycle_spec.rb` (rollback/lifecycle) and `fixture_pin_visibility_spec.rb` (read-visibility) now run their role-sensitive examples under both `:writing` and `:reading`, plus a both-roles-pinned example proving the invariant holds per handler (failure-class member 5). The earlier "deferred until the dummy app gains read replicas" framing named the wrong surface: the integration spec runs over the programmatic `V4IntegrationHelper`, not the dummy app, and a same-database `:reading` default pool (`register_reading_role!`) exercises multi-handler routing without any replication. Design: `docs/designs/reading-role-test-support.md`.
+7. **Multi-handler / multi-role variants of the integration spec** — *role axis closed*. Both `fixture_pool_lifecycle_spec.rb` (rollback/lifecycle) and `fixture_pin_visibility_spec.rb` (read-visibility) now run their role-sensitive examples under both `:writing` and `:reading`, plus a both-roles-pinned example proving the fixture lifecycle enrolls distinct, independently-pinned tenant pools per handler (failure-class member 5, role axis). The earlier "deferred until the dummy app gains read replicas" framing named the wrong surface: the integration spec runs over the programmatic `V4IntegrationHelper`, not the dummy app, and a same-database `:reading` default pool (`register_reading_role!`) exercises multi-handler routing without any replication. The multi-physical-DB axis (a `:reading` role on a separate database) remains a tracked residual. Design: `docs/designs/reading-role-test-support.md`.
 ```
 
-- [ ] **Step 2: Update failure-class member 5 status**
+- [ ] **Step 2: Update failure-class member 5 status (role axis only)**
 
-In the `## Failure class members` table, change member 5's Status cell from `Suspected` to `Closed` and tighten its mechanism note to reference the new coverage. The row currently reads:
+In the `## Failure class members` table, change member 5's Status to
+`Role axis closed; multi-DB axis open` — NOT a flat `Closed`. The role axis (a
+`:reading` role on the same database) is proven; the multi-physical-DB axis (a
+`:reading` role on a separate database via `connects_to`) is not. The row
+currently reads:
 
 ```markdown
 | 5 | Non-`:writing` roles / replicas | Suspected | `connection_pool_list` semantics differ in multi-DB / multi-role setups; the invariant must hold per handler, not globally. |
@@ -505,7 +552,7 @@ In the `## Failure class members` table, change member 5's Status cell from `Sus
 Replace with:
 
 ```markdown
-| 5 | Non-`:writing` roles / replicas | Closed | `connection_pool_list` semantics hold per handler: the two fixture specs run their role-sensitive examples under both `:writing` and `:reading`, and a both-roles-pinned example confirms one fixture transaction covers tenant pools across handlers. See `docs/designs/reading-role-test-support.md`. |
+| 5 | Non-`:writing` roles / replicas | Role axis closed; multi-DB axis open | Role axis: AR snapshots only `connection_pool_list(:writing)` at fixture setup, so `:reading` tenant pools enroll solely via the lazy `!connection.active_record` subscriber. The two fixture specs now run role-sensitive examples under both `:writing` and `:reading`, with a both-roles-pinned example asserting distinct, independently-pinned pool objects per handler. Multi-DB axis (a `:reading` role on a separate database) is tracked residual. See `docs/designs/reading-role-test-support.md`. |
 ```
 
 - [ ] **Step 3: Update the prose pointer to #7**
@@ -513,19 +560,42 @@ Replace with:
 In the paragraph after the failure-class table, the text reads "The next active piece of work is the multi-handler / `:reading` variant (Eventually #7), gated on the dummy app gaining replicas." Replace that sentence with:
 
 ```markdown
-The multi-handler / `:reading` variant (Eventually #7) is closed via a same-database `:reading` default pool in the integration helper (see `docs/designs/reading-role-test-support.md`); failure-class members 7, 8, 9 remain tracked but out of scope this iteration.
+The multi-handler / `:reading` variant (Eventually #7) has its role axis closed via a same-database `:reading` default pool in the integration helper (see `docs/designs/reading-role-test-support.md`); the multi-physical-DB axis and failure-class members 7, 8, 9 remain tracked but out of scope this iteration.
 ```
 
-- [ ] **Step 4: Verify the edits**
+- [ ] **Step 4: Correct the `connection_pool_list(:all)` claim in Detection primitives**
 
-Run: `grep -n "closed\|Closed\|reading-role-test-support" docs/designs/fixture-pool-lifecycle.md`
-Expected: matches in the member-5 row, the #7 entry, and the prose pointer; no remaining "deferred until the dummy app gains read replicas" text.
+The `## Detection primitives` section asserts the fixture snapshot uses
+`connection_pool_list(:all)`. Verified against ActiveRecord 8.0/8.1 source
+(`active_record/test_fixtures.rb` `setup_transactional_fixtures`), the initial
+snapshot is `connection_pool_list(:writing)` — `:reading` and lazily-created
+pools enroll only via the `!connection.active_record` subscriber. The line
+currently reads:
 
-- [ ] **Step 5: Commit**
+```markdown
+- `ActiveRecord::Base.connection_handler.connection_pool_list(:all)` — snapshot consumed by fixture machinery. Read-only from Apartment's side; do not mutate.
+```
+
+Replace with:
+
+```markdown
+- `ActiveRecord::Base.connection_handler.connection_pool_list(:writing)` — the pools `setup_transactional_fixtures` snapshots and pins *eagerly*. `:reading` (and any lazily-created) pools are NOT in this snapshot; they enroll only through the `!connection.active_record` subscriber, which pins by the current role. This `:writing`-eager / `:reading`-lazy asymmetry is the per-handler risk failure-class member 5 names. Read-only from Apartment's side; do not mutate.
+```
+
+- [ ] **Step 5: Verify the edits**
+
+Run: `grep -n "closed\|axis\|reading-role-test-support\|connection_pool_list(:writing)" docs/designs/fixture-pool-lifecycle.md`
+Expected: matches in the member-5 row, the #7 entry, the prose pointer, and the Detection-primitives line; no remaining "deferred until the dummy app gains read replicas" text and no remaining `connection_pool_list(:all)`.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add docs/designs/fixture-pool-lifecycle.md
-git commit -m "Docs(fixture-pool-lifecycle): close #7 / member 5 via :reading test seam"
+git commit -m "Docs(fixture-pool-lifecycle): close #7 role axis; fix snapshot primitive
+
+Close failure-class member 5's role axis (multi-DB axis tracked residual) and
+correct the Detection-primitives claim: AR snapshots connection_pool_list(:writing),
+not (:all) — the :writing-eager / :reading-lazy asymmetry is the actual risk."
 ```
 
 ---
@@ -570,9 +640,10 @@ Open a PR to `main` (squash-merge). Title: `Test(v4): :reading-role multi-handle
 **Spec coverage** (against `docs/designs/reading-role-test-support.md`):
 - Mechanism (same-DB `:reading` role) → Task 1 helper + Task 2/3 `before` registration. ✓
 - Helper in `V4IntegrationHelper`, RBAC-free → Task 1. ✓
-- `fixture_pool_lifecycle_spec` role parametrization (guard, identity, a′) + both-roles case → Task 2. ✓
+- `fixture_pool_lifecycle_spec` role parametrization (guard, message, identity, a′) + both-roles case → Task 2. ✓
 - `fixture_pin_visibility_spec` role parametrization (visibility ×3, reaper pin) → Task 3. ✓
-- Doc correction (member 5 + #7 + prose) → Task 4. ✓
+- Doc correction (member 5 role-axis status + #7 + prose + `connection_pool_list(:writing)` fix) → Task 4. ✓
+- Panel-review revisions: both-roles example asserts distinct pool objects + both pinned (not count-only); member 5 closed for role axis only, multi-DB axis recorded residual; snapshot-primitive factual fix. ✓
 - PG-only, no per-engine branching, no CI provisioning → constraints honored; specs stay PG-gated. ✓
 - Rubocop before push → Task 1/2/3 per-file + Task 5 sweep. ✓
 

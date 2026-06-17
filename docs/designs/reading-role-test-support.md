@@ -55,11 +55,30 @@ lag).
 suite, so the fixture-pool-lifecycle invariant ("pool lifecycle changes during
 fixture-transaction ownership are a violation") is shown to hold *per handler* —
 across both the `:writing` and `:reading` roles — closing #7 and unblocking other
-`:reading`-gated coverage. Coverage spans both halves of failure-class member 5:
-the lifecycle/rollback side (`fixture_pool_lifecycle_spec.rb`) and the
-read-visibility side (`fixture_pin_visibility_spec.rb`). On close, correct the
-`fixture-pool-lifecycle.md` "Eventually #7" entry, whose "deferred until the dummy
-app gains read replicas" phrasing names the wrong surface.
+`:reading`-gated coverage. Coverage spans both the lifecycle/rollback side
+(`fixture_pool_lifecycle_spec.rb`) and the read-visibility side
+(`fixture_pin_visibility_spec.rb`).
+
+**Scope precision — the role axis, not the multi-DB axis.** Member 5 names two
+axes: "Non-`:writing` roles" *and* "replicas / multi-DB". This work closes the
+**role axis** — that AR's transactional-fixture machinery enrolls a `:reading`
+tenant pool *per handler* the same way it does `:writing`. It does **not** close
+the **multi-physical-DB axis** (a `:reading` role on a separate database via
+`connects_to`); see Deferred. On close, mark member 5's role axis closed (not the
+whole row), and correct the `fixture-pool-lifecycle.md` "Eventually #7" entry,
+whose "deferred until the dummy app gains read replicas" phrasing names the wrong
+surface.
+
+**Why the role axis is the real risk (verified against AR 8.0/8.1 source).**
+`setup_transactional_fixtures` snapshots and pins only
+`connection_handler.connection_pool_list(:writing)` at setup — `:reading` pools
+are *not* in the initial snapshot. Every `:reading` (and lazily-created) pool is
+enrolled solely through the `!connection.active_record` subscriber, which
+`retrieve_connection_pool`s by the *current* role. That asymmetry — `:writing`
+pinned eagerly, `:reading` pinned only via the lazy subscriber — is exactly what
+member 5's "must hold per handler, not globally" warns about, and is what these
+specs prove holds. (The `fixture-pool-lifecycle.md` claim that the snapshot uses
+`connection_pool_list(:all)` is inaccurate and is corrected as part of this work.)
 
 **Non-goals:**
 
@@ -149,12 +168,30 @@ Plus one genuinely new assertion member 5 specifically calls for:
    proof. This is the case neither the existing `:writing`-only spec nor a
    role-parametrized single-role run covers.
 
-The `before` block gains a `register_reading_role!(config)` call so AR's fixture
-machinery has a `:reading` `pool_config` (the `setup_shared_connection_pool`
-sharp edge — AR raises `ArgumentError` when a tenant pool exists under `:reading`
-without a `:writing` *or* `:reading` default pool_config — is already guarded by
-`Apartment::TestFixtures` and unit-covered in `test_fixtures_spec.rb`; the
-integration spec now exercises it under the real lifecycle).
+   **Assert pool enrollment, not just row counts.** Because both roles point at
+   the same physical database, a post-teardown `Widget.count == 0` under each role
+   is *not* independent evidence — both reads hit the same rows. The example must
+   assert, before teardown, that the two pools are **distinct objects**
+   (`writing_pool != reading_pool`) and that **both are pinned**
+   (`PoolReaper#pool_pinned?` true for each). That converts the proof from "the
+   counts happened to be zero" into "AR enrolled both role-specific tenant pools
+   for rollback." (Panel review flagged the count-only assertion as degenerate;
+   this is the fix.)
+
+The `before` block gains a `register_reading_role!(config)` call so the **default
+shard** has a `:reading` `pool_config`. Why this matters, traced through AR's
+`setup_shared_connection_pool` (verified against source): it walks each shard and
+rewrites every non-writing role's `pool_config` to that shard's *writing* config.
+For the default shard, `primary_reading` is validly swapped onto `primary_writing`
+(the normal replica-fixtures path — non-nil, no raise). Apartment's tenant pools
+live on *distinct* shards (`apartment_<t>:reading`), where the writing config is
+`nil`; a naive swap there would `set_pool_config(:reading, shard, nil)` and raise
+`ArgumentError`. `Apartment::TestFixtures` avoids that two ways — `reset_tenant_pools!`
+clears tenant pools before the first `super`, and the `@apartment_fixtures_cleaned`
+guard skips `super` on subscriber re-entry — so a lazily-created tenant `:reading`
+pool is pinned directly by the subscriber and is **never** collapsed onto the
+writing connection. That is the mechanism the both-roles example proves; it is
+unit-covered in `test_fixtures_spec.rb` and now exercised under the real lifecycle.
 
 ### Spec coverage — visibility half under `:reading`
 
@@ -204,10 +241,23 @@ carry per-handler signal:
 
 ## Deferred (recorded, not silently omitted)
 
+- **Multi-physical-DB axis of member 5.** This work closes the role axis (a
+  `:reading` role on the *same* database). The separate-database axis — a
+  `:reading` role whose `pool_config` carries a different `database` key, the
+  `connects_to database: { writing:, reading: }` production shape — is not
+  exercised. Cheapest faithful approximation when needed: register `:reading`
+  against a **second database name on the same PG instance** (no streaming
+  replication), which additionally exercises the `base = super` config-inheritance
+  path with a divergent `database` key. Tracked as the residual half of member 5,
+  not built now (no adopter-reported need; adds `CREATE DATABASE` + schema
+  duplication to test setup).
 - **Dummy app `:reading` wiring.** `database.yml` 3-tier + `connects_to` in
   `ApplicationRecord`, for `request_lifecycle` / `live_streaming` to exercise
   `:reading`. No current need.
-- **Distinct read-only username / real replica.** See non-goals.
+- **Distinct read-only username / real streaming replica.** See non-goals. A real
+  replica is read-only, so it cannot host the `Widget.create!` the rollback
+  assertions require — same-DB is the *correct* minimal reproduction, not a
+  compromise.
 
 ## Cross-references
 
