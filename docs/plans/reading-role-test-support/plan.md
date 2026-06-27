@@ -2,7 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Exercise v4's multi-handler / `:reading`-role behavior in the integration suite by registering a same-database `:reading` default pool and parametrizing the two fixture-lifecycle specs across `:writing` and `:reading`, closing the fixture-pool-lifecycle "Eventually #7".
+> **Execution amendment (2026-06).** Two assumptions in this plan proved wrong on contact and the build was reframed (see `docs/designs/reading-role-test-support.md` for the settled design):
+> 1. **Writes can't go through `:reading`.** Rails hard-forces `prevent_writes` for the reading role. So `:reading` examples are **read-based** (a read materializes + pins the pool); the `:writing` examples keep their write-based form. There is **no role-parametrized shared group** (the operations differ by role) — instead a `context 'under the :reading role'` block was added to `fixture_pool_lifecycle_spec.rb`. Tasks 2's shared-group/role-loop steps are superseded by this.
+> 2. **`fixture_pin_visibility_spec.rb` is NOT parametrized** (Task 3 is a no-op in code). A `:reading` tenant pool can't see the `:writing` pool's in-test writes (verified), so the visibility assertion is incoherent for `:reading`. That gap is recorded as failure-class **member 10** and a doc note (folded into Task 4).
+>
+> Net result shipped: helper (Task 1), `fixture_pool_lifecycle_spec.rb` `:reading` context + both-roles example (Task 2), doc updates incl. member 10 (Task 4), verification (Task 5). The task bodies below are the original plan; where they conflict with this amendment, the amendment wins.
+
+**Goal:** Exercise v4's multi-handler / `:reading`-role behavior in the integration suite by registering a same-database `:reading` default pool and adding read-based `:reading` coverage to `fixture_pool_lifecycle_spec.rb`, closing the role axis of the fixture-pool-lifecycle "Eventually #7".
 
 **Architecture:** A new RBAC-free helper, `V4IntegrationHelper.register_reading_role!`, registers a `:reading` default pool on `AR::Base`'s ConnectionHandler against the same physical database (mirroring `RbacHelper.setup_connects_to!` without a username override). The connection patch already keys pools `"#{tenant}:#{role}"` and inherits base config from `ActiveRecord::Base.current_role`, so wrapping a switch in `connected_to(role: :reading)` routes to a `"#{tenant}:reading"` pool. The role-sensitive examples in `fixture_pool_lifecycle_spec.rb` and `fixture_pin_visibility_spec.rb` move into role-parametrized shared example groups, run once per role, plus one new "both roles pinned simultaneously" assertion (the per-handler proof failure-class member 5 calls for).
 
