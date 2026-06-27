@@ -39,6 +39,14 @@ require 'apartment/test_fixtures'
 #      setup_shared_connection_pool -> reset_tenant_pools! chain and asserts
 #      a with_tenants override survives it.
 #
+# Examples 1-6 run under the default :writing role. A ':reading role' context
+# plus a both-roles example add the multi-handler variant (failure-class
+# member 5, role axis): a per-tenant :reading pool, materialized by a READ
+# (Rails forbids writes through :reading), pins / trips the guard / rebuilds
+# with fresh identity per handler, and coexists with the :writing pool as a
+# distinct, independently-pinned object. See those examples' comments for the
+# read-visibility gap that is explicitly out of scope.
+#
 # Covers Rails 7.2 / 8.0 / 8.1 via the existing appraisal matrix.
 # :schema strategy is PG-only; `pin_connection!` semantics are crispest there.
 RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disable RSpec/MultipleMemoizedHelpers
@@ -88,6 +96,9 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
   before do
     V4IntegrationHelper.ensure_test_database!
     config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
+    # Register a :reading default pool (same physical DB) so the :reading-role
+    # context below can materialize per-tenant :reading pools.
+    V4IntegrationHelper.register_reading_role!(config)
     ActiveRecord::Base.connection.execute('CREATE SCHEMA IF NOT EXISTS extensions')
 
     Apartment.configure do |c|
@@ -240,5 +251,116 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
     # the one-element result distinguishes survived-override from fallback.
     expect(observed_override).to(eq([write_tenant]))
     expect(observed_names).to(eq([write_tenant]))
+  end
+
+  # The multi-handler / :reading variant (failure-class member 5, role axis).
+  #
+  # Rails makes the :reading role read-only (connection_handling.rb forces
+  # prevent_writes for ActiveRecord.reading_role), and apps never write through
+  # it — so these examples MATERIALIZE the per-tenant :reading pool with a READ,
+  # then exercise the same lifecycle invariant the :writing examples above do.
+  # What this proves: AR snapshots only connection_pool_list(:writing) at fixture
+  # setup, so a :reading tenant pool enrolls solely via the lazy
+  # !connection.active_record subscriber — these examples confirm it pins,
+  # trips the guard, and rebuilds with fresh identity, per handler.
+  #
+  # NOT covered here (by design): rollback/visibility of writes made *through*
+  # the :reading role. Writes can't happen under :reading, and a :reading tenant
+  # pool does not see the :writing pool's uncommitted fixture writes (distinct
+  # connections, never connection-shared for tenant shards) — tracked as a
+  # separate failure-class member in docs/designs/fixture-pool-lifecycle.md.
+  context 'under the :reading role' do # rubocop:disable RSpec/MultipleMemoizedHelpers
+    it 'raises Apartment::FixtureLifecycleViolation when a :reading tenant pool is pinned' do
+      widget_class
+
+      expect do
+        FixtureLifecycleGuardHost.new.run_example do
+          ActiveRecord::Base.connected_to(role: :reading) do
+            # A read materializes the pool; the subscriber pins it.
+            Apartment::Tenant.switch(write_tenant) { Widget.count }
+            expect(Apartment.pool_manager.peek("#{write_tenant}:reading")).not_to(be_nil)
+
+            Apartment.reset_tenant_pools!
+          end
+        end
+      end.to(raise_error(Apartment::FixtureLifecycleViolation))
+    end
+
+    it 'violation message names the offending :reading tenant pool' do
+      widget_class
+
+      message = nil
+      begin
+        FixtureLifecycleGuardHost.new.run_example do
+          ActiveRecord::Base.connected_to(role: :reading) do
+            Apartment::Tenant.switch(write_tenant) { Widget.count }
+            Apartment.reset_tenant_pools!
+          end
+        end
+      rescue Apartment::FixtureLifecycleViolation => e
+        message = e.message
+      end
+
+      expect(message).not_to(be_nil)
+      expect(message).to(include("#{write_tenant}:reading"))
+      expect(message).to(include('use_transactional_tests = false'))
+    end
+
+    it 'mid-tx reset discards the pinned :reading pool: the recreated pool has fresh object identity' do
+      widget_class
+
+      FixtureLifecycleGuardHost.new.run_example do
+        ActiveRecord::Base.connected_to(role: :reading) do
+          Apartment::Tenant.switch(write_tenant) { Widget.count }
+          pool_before = Apartment.pool_manager.peek("#{write_tenant}:reading")
+
+          allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('development')))
+          Apartment.reset_tenant_pools!
+
+          Apartment::Tenant.switch(write_tenant) { Widget.count }
+          pool_after = Apartment.pool_manager.peek("#{write_tenant}:reading")
+
+          expect(pool_after).not_to(be(pool_before))
+          expect(pool_after.object_id).not_to(eq(pool_before.object_id))
+        end
+      end
+    end
+  end
+
+  it 'pins :writing and :reading tenant pools as distinct, independently-pinned objects per handler' do
+    # The per-handler proof (failure-class member 5, role axis): write under
+    # :writing, read under :reading (the only direction Rails allows), and
+    # confirm both materialize as DISTINCT pool objects that are each pinned
+    # by the fixture lifecycle. Same physical DB, so the load-bearing evidence
+    # is pool identity + pinning, not row counts (panel review flagged a
+    # count-only assertion as degenerate here). The :writing rows still roll
+    # back at teardown as a secondary sanity check.
+    widget_class
+    reaper = Apartment::PoolReaper.new(
+      pool_manager: Apartment.pool_manager, interval: 60, idle_timeout: 60
+    )
+
+    FixtureLifecycleGuardHost.new.run_example do
+      ActiveRecord::Base.connected_to(role: :writing) do
+        Apartment::Tenant.switch(write_tenant) { Widget.create! }
+      end
+      ActiveRecord::Base.connected_to(role: :reading) do
+        Apartment::Tenant.switch(write_tenant) { Widget.count }
+      end
+
+      writing_pool = Apartment.pool_manager.peek("#{write_tenant}:writing")
+      reading_pool = Apartment.pool_manager.peek("#{write_tenant}:reading")
+
+      expect(writing_pool).not_to(be_nil)
+      expect(reading_pool).not_to(be_nil)
+      expect(reading_pool).not_to(be(writing_pool))
+
+      expect(reaper.send(:pool_pinned?, writing_pool)).to(be(true))
+      expect(reaper.send(:pool_pinned?, reading_pool)).to(be(true))
+    end
+
+    post_rollback_count = nil
+    Apartment::Tenant.switch(write_tenant) { post_rollback_count = Widget.count }
+    expect(post_rollback_count).to(eq(0))
   end
 end
