@@ -47,6 +47,23 @@ module V4IntegrationHelper
     config
   end
 
+  # Register a :reading-role default pool on AR::Base's ConnectionHandler,
+  # pointing at the same physical database as the default (:writing) connection.
+  # Mirrors RbacHelper.setup_connects_to! without a username override, and
+  # carries no RBAC role-provisioning dependency. Returns the established pool.
+  #
+  # Call in before(:each), after establish_default_connection!: the :integration
+  # around hook swaps the ConnectionHandler per example, discarding any
+  # context-level registration.
+  def register_reading_role!(base_config)
+    db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
+      'test', 'primary_reading', base_config.transform_keys(&:to_s)
+    )
+    ActiveRecord::Base.connection_handler.establish_connection(
+      db_config, owner_name: ActiveRecord::Base, role: :reading
+    )
+  end
+
   # Build the default connection config for the current engine.
   def default_connection_config(tmp_dir: nil)
     case database_engine
