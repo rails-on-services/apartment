@@ -278,7 +278,11 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
           ActiveRecord::Base.connected_to(role: :reading) do
             # A read materializes the pool; the subscriber pins it.
             Apartment::Tenant.switch(write_tenant) { Widget.count }
-            expect(Apartment.pool_manager.peek("#{write_tenant}:reading")).not_to(be_nil)
+            reading_pool = Apartment.pool_manager.peek("#{write_tenant}:reading")
+            expect(reading_pool).not_to(be_nil)
+            # Prove it is actually enrolled (pinned), not merely created — the
+            # guard fires on @pinned_connection, the same primitive asserted here.
+            expect(Apartment::PoolReaper.pool_pinned?(reading_pool)).to(be(true))
 
             Apartment.reset_tenant_pools!
           end
@@ -336,9 +340,6 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
     # count-only assertion as degenerate here). The :writing rows still roll
     # back at teardown as a secondary sanity check.
     widget_class
-    reaper = Apartment::PoolReaper.new(
-      pool_manager: Apartment.pool_manager, interval: 60, idle_timeout: 60
-    )
 
     FixtureLifecycleGuardHost.new.run_example do
       ActiveRecord::Base.connected_to(role: :writing) do
@@ -355,8 +356,8 @@ RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disab
       expect(reading_pool).not_to(be_nil)
       expect(reading_pool).not_to(be(writing_pool))
 
-      expect(reaper.send(:pool_pinned?, writing_pool)).to(be(true))
-      expect(reaper.send(:pool_pinned?, reading_pool)).to(be(true))
+      expect(Apartment::PoolReaper.pool_pinned?(writing_pool)).to(be(true))
+      expect(Apartment::PoolReaper.pool_pinned?(reading_pool)).to(be(true))
     end
 
     post_rollback_count = nil

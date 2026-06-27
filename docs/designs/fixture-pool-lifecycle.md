@@ -2,7 +2,7 @@
 
 Status: living. Last consolidated 2026-05-19 after PRs #399, #400, #403 (which squashed the `reset_tenant_pools!` guard, the integration spec, and the docs invariant section onto `main` as `abcf755`), and #404 (the escape-hatch docs pass).
 
-> **Numbering note.** Two independent number spaces appear below. *Failure-class members* (the table under "Failure class members") are numbered 1–9. *Workstream items* are numbered within their bucket — Shipped #1–6, Eventually #7, Never #1–7. References always name the space: "failure-class member 4" vs "Shipped #6" / "Never #6". A bare "#N" inside a bucket refers to that bucket.
+> **Numbering note.** Two independent number spaces appear below. *Failure-class members* (the table under "Failure class members") are numbered 1–10. *Workstream items* are numbered within their bucket — Shipped #1–7, Eventually #7 (the residual of the same item that Shipped #7 closed in part), Never #1–7. References always name the space: "failure-class member 4" vs "Shipped #6" / "Never #6". A bare "#N" inside a bucket refers to that bucket.
 
 ## TLDR
 
@@ -54,7 +54,7 @@ Failure-class members 1–4 and the workstream's escape-hatch resolution. Detail
 
    The message previously pointed at an `Apartment::Test::Truncation` module on the roadmap. The escape-hatch workstream item (Shipped #6) is now closed docs-only — see [docs/testing.md § Cycling pools mid-suite](../testing.md#cycling-pools-mid-suite) for the recipe. The message text was updated in lockstep so the violation directs users to the actual documented opt-out.
 
-4. **Integration spec** (`spec/integration/v4/fixture_pool_lifecycle_spec.rb`, `abcf755`). Five examples cover the guard, the contract-locked message, the negative case, the pool-identity mechanism, and the (a′) tiebreaker. Re-verified 2026-05-19: green on Rails 7.2 / 8.0 / 8.1 + PG, all matrix versions. The (a′) result confirms lazy enrollment is reliable, so `preload_test_pools!` stays unbuilt (see Never #6).
+4. **Integration spec** (`spec/integration/v4/fixture_pool_lifecycle_spec.rb`, `abcf755`). At closure, five `:writing` examples covered the guard, the contract-locked message, the negative case, the pool-identity mechanism, and the (a′) tiebreaker. Re-verified 2026-05-19: green on Rails 7.2 / 8.0 / 8.1 + PG, all matrix versions. The (a′) result confirms lazy enrollment is reliable, so `preload_test_pools!` stays unbuilt (see Never #6). (The spec has since grown a `:reading` context + a both-roles example — see Shipped #7.)
 
 5. **`docs/testing.md` invariant section** (`abcf755`). Opens with the v3→v4 posture (v3's pain was a variable problem — which `search_path` is current; v4's pain is a resource lifecycle problem — does the pool still exist with the object identity fixtures enrolled), then states the rule and points back here.
 

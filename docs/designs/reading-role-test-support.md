@@ -1,6 +1,6 @@
 # Reading-Role Test Support (`:reading` multi-handler)
 
-Status: design. Unblocks the fixture-pool-lifecycle workstream's "Eventually #7"
+Status: shipped (role axis). Unblocks the fixture-pool-lifecycle workstream's "Eventually #7"
 (multi-handler / `:reading` variant of the integration spec) and any future
 `:reading`-role-gated coverage.
 
@@ -241,8 +241,9 @@ here.
 - Rails matrix: 7.2 / 8.0 / 8.1, via the existing appraisals (no matrix change).
 - Verification: run
   `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/fixture_pool_lifecycle_spec.rb`
-  green across the role parametrization, plus a unit-level check that
-  `register_reading_role!` registers a retrievable `:reading` pool.
+  green across the `:reading` context, plus the integration-level
+  `reading_role_routing_spec.rb` that `register_reading_role!` registers a
+  retrievable `:reading` pool and routes a switch to a `tenant:reading` pool.
 
 ## Deferred (recorded, not silently omitted)
 
