@@ -12,14 +12,16 @@ today; the only gap is that no test ever registers a `:reading` default pool to
 exercise it. We close that gap the lightweight way: register a `:reading`-role
 default pool on `ActiveRecord::Base`'s ConnectionHandler **pointing at the same
 physical database** (the proven `setup_connects_to!` pattern, minus the username
-override), then parametrize the role-sensitive examples in
-`fixture_pool_lifecycle_spec.rb` (lifecycle/rollback) and
-`fixture_pin_visibility_spec.rb` (read-visibility) across `:writing` and
-`:reading`. No real streaming replica, no CI provisioning, no per-engine
-special-casing. A real
-replica would test replication behavior the gem does not own and is irrelevant
-to #7's goal (pool object-identity and per-handler lifecycle, not replication
-lag).
+override), then add a read-based `:reading` context to
+`fixture_pool_lifecycle_spec.rb` proving the lifecycle invariant holds per handler.
+This closes member 5's **role axis**. Two things it deliberately does NOT do —
+both because Rails makes `:reading` read-only and apartment never connection-shares
+tenant pools: write *through* `:reading`, or make a `:reading` read see a `:writing`
+in-test write. The latter is a real gap, recorded as failure-class member 10;
+`fixture_pin_visibility_spec.rb` stays `:writing`-only. No real streaming replica,
+no CI provisioning, no per-engine special-casing — a real replica would test
+replication behavior the gem does not own and is irrelevant to the per-handler
+lifecycle goal.
 
 ## Findings layer (verified against source)
 
@@ -54,20 +56,22 @@ lag).
 **Goal:** exercise v4's multi-handler / `:reading`-role behavior in the test
 suite, so the fixture-pool-lifecycle invariant ("pool lifecycle changes during
 fixture-transaction ownership are a violation") is shown to hold *per handler* —
-across both the `:writing` and `:reading` roles — closing #7 and unblocking other
-`:reading`-gated coverage. Coverage spans both the lifecycle/rollback side
-(`fixture_pool_lifecycle_spec.rb`) and the read-visibility side
-(`fixture_pin_visibility_spec.rb`).
+across both the `:writing` and `:reading` roles — closing #7's role axis and
+unblocking other `:reading`-gated coverage. The coverage lands in
+`fixture_pool_lifecycle_spec.rb` (lifecycle per handler). `fixture_pin_visibility_spec.rb`
+stays `:writing`-only — read-visibility through `:reading` is not coherently
+testable (see "Out of scope" below).
 
-**Scope precision — the role axis, not the multi-DB axis.** Member 5 names two
-axes: "Non-`:writing` roles" *and* "replicas / multi-DB". This work closes the
-**role axis** — that AR's transactional-fixture machinery enrolls a `:reading`
-tenant pool *per handler* the same way it does `:writing`. It does **not** close
-the **multi-physical-DB axis** (a `:reading` role on a separate database via
-`connects_to`); see Deferred. On close, mark member 5's role axis closed (not the
-whole row), and correct the `fixture-pool-lifecycle.md` "Eventually #7" entry,
-whose "deferred until the dummy app gains read replicas" phrasing names the wrong
-surface.
+**Scope precision — the role axis, not the multi-DB or visibility axes.** Member 5
+names "Non-`:writing` roles / replicas". This work closes the **role axis of the
+lifecycle invariant** — that AR's transactional-fixture machinery pins/guards/rebuilds
+a `:reading` tenant pool *per handler* the same way it does `:writing`. It does
+**not** close the **multi-physical-DB axis** (a `:reading` role on a separate
+database via `connects_to`) or **cross-role read visibility** (recorded as member 10);
+see Deferred. On close, mark member 5's role axis closed (not the whole row), add
+member 10 for the visibility gap, and correct the `fixture-pool-lifecycle.md`
+"Eventually #7" entry, whose "deferred until the dummy app gains read replicas"
+phrasing names the wrong surface.
 
 **Why the role axis is the real risk (verified against AR 8.0/8.1 source).**
 `setup_transactional_fixtures` snapshots and pins only
@@ -142,41 +146,42 @@ The `:integration` around hook in `support.rb` swaps the ConnectionHandler per
 example, so `register_reading_role!` must be called in a `before(:each)` (the same
 constraint `setup_connects_to!` documents), after `establish_default_connection!`.
 
-### Spec coverage — parametrize role-sensitive examples
+### Spec coverage — read-based `:reading` examples
 
-In `fixture_pool_lifecycle_spec.rb`, lift the role out of the hardcoded
-`"#{tenant}:writing"` pool peeks and run the role-sensitive examples under both
-`:writing` and `:reading` via a shared example group keyed on `role`. The
-examples that carry per-handler signal:
+**Reads, not writes — Rails forbids writing through `:reading`.** Verified against
+source: `connection_handling.rb` (`with_role_and_shard`) hard-forces
+`prevent_writes = true` whenever `role == ActiveRecord.reading_role`, and
+`while_preventing_writes(false)` can't escape it (it re-enters `connected_to(role:
+current_role)`, which re-forces it). Apps never write through `:reading`; they
+write `:writing` and read `:reading`. So the `:reading` examples **materialize the
+per-tenant pool with a READ** (`Widget.count`), then exercise the same lifecycle
+invariant the `:writing` examples already do. The `:writing` examples keep their
+write-based form unchanged.
 
-1. **Guard fires under `:reading`.** A pinned `"#{tenant}:reading"` pool trips
-   `Apartment::FixtureLifecycleViolation` when `reset_tenant_pools!` runs mid-tx
-   (failure-class members 3 + 5).
-2. **Lazy `:reading` enrollment + rollback (a′ under a second handler).** A
-   `"#{tenant}:reading"` pool first materialized inside the example enrolls in the
-   fixture transaction and its rows roll back at teardown (member 4, second
-   handler).
+In `fixture_pool_lifecycle_spec.rb`, add a `context 'under the :reading role'`
+running these read-based examples (the `:writing` examples stay as they are — the
+operations differ by role, so a single role-parametrized shared group would have
+to branch read-vs-write and is not worth the indirection):
+
+1. **Guard fires under `:reading`.** A read materializes (and the subscriber pins)
+   a `"#{tenant}:reading"` pool; `reset_tenant_pools!` mid-tx then trips
+   `Apartment::FixtureLifecycleViolation` (failure-class members 3 + 5).
+2. **Violation message names the `:reading` pool.** Contract lock that the guard
+   reports `"#{tenant}:reading"` and the `use_transactional_tests = false` opt-out.
 3. **Pool identity under `:reading`.** With the test-env guard bypassed, a mid-tx
    reset discards the pinned `:reading` pool and the rebuilt pool has fresh object
    identity.
 
-Plus one genuinely new assertion member 5 specifically calls for:
+Plus one genuinely new assertion member 5 calls for:
 
-4. **Both roles pinned simultaneously.** With `"#{tenant}:writing"` *and*
-   `"#{tenant}:reading"` pools pinned in the same example, the fixture lifecycle
-   pins and rolls back **both** — the "invariant holds per handler, not globally"
-   proof. This is the case neither the existing `:writing`-only spec nor a
-   role-parametrized single-role run covers.
-
-   **Assert pool enrollment, not just row counts.** Because both roles point at
-   the same physical database, a post-teardown `Widget.count == 0` under each role
-   is *not* independent evidence — both reads hit the same rows. The example must
-   assert, before teardown, that the two pools are **distinct objects**
-   (`writing_pool != reading_pool`) and that **both are pinned**
-   (`PoolReaper#pool_pinned?` true for each). That converts the proof from "the
-   counts happened to be zero" into "AR enrolled both role-specific tenant pools
-   for rollback." (Panel review flagged the count-only assertion as degenerate;
-   this is the fix.)
+4. **Both roles materialized as distinct, independently-pinned pools.** Write under
+   `:writing`, read under `:reading` (the only direction Rails allows), then assert
+   the two pools are **distinct objects** (`writing_pool != reading_pool`) and that
+   **both are pinned** (`PoolReaper#pool_pinned?` true for each) — the per-handler
+   proof. Pool identity + pinning are the load-bearing evidence, not row counts:
+   same physical DB means a count is not independent evidence (panel review flagged
+   a count-only assertion as degenerate). The `:writing` rows still roll back at
+   teardown as a secondary sanity check.
 
 The `before` block gains a `register_reading_role!(config)` call so the **default
 shard** has a `:reading` `pool_config`. Why this matters, traced through AR's
@@ -193,23 +198,23 @@ pool is pinned directly by the subscriber and is **never** collapsed onto the
 writing connection. That is the mechanism the both-roles example proves; it is
 unit-covered in `test_fixtures_spec.rb` and now exercised under the real lifecycle.
 
-### Spec coverage — visibility half under `:reading`
+### Out of scope — `fixture_pin_visibility_spec.rb` and read visibility
 
-`fixture_pin_visibility_spec.rb` covers the read-visibility side of member 5: that
-a lazily-created tenant pool, pinned late by the `!connection.active_record`
-subscriber, still sees in-example writes on a later re-entry. Parametrize its
-role-sensitive examples across `:writing` and `:reading` the same way, with a
-`register_reading_role!(config)` call in its `before` block. The examples that
-carry per-handler signal:
+The plan originally folded a `:reading` parametrization into
+`fixture_pin_visibility_spec.rb` (does a lazily-created pool's writes stay visible
+on re-entry?). **Dropped as incoherent for `:reading`**, for two verified reasons:
+writes can't go *through* `:reading` (above), and a tenant `:reading` pool does not
+*see* the `:writing` pool's uncommitted in-test writes — probe: 3 rows written under
+`:writing`, count under `:reading` = 0. The two roles are distinct pools = distinct
+connections = distinct transactions on the same physical DB, and apartment never
+connection-shares tenant pools (AR collapses only same-shard pools; tenant pools sit
+on per-`tenant:role` shards). The visibility spec therefore stays `:writing`-only.
 
-1. **Visibility on re-entry under `:reading`.** Rows written inside the example
-   via a lazily-created `"#{tenant}:reading"` pool are visible to a later
-   `Apartment::Tenant.each` pass on the same tenant.
-2. **Visibility across `with_tenants` / `each` under `:reading`.** The same holds
-   when a `with_tenants` override or bare `each` re-enters the tenant.
-3. **Reaper detects the pinned `:reading` pool.** `PoolReaper#pool_pinned?`
-   returns true for a freshly-pinned `"#{tenant}:reading"` pool (the private-ivar
-   read triangulated against the real ConnectionPool, now under a second handler).
+This is a real gap, not just a test limitation: a real primary/replica app on
+transactional tests *expects* reads to see in-test writes (the purpose of
+`setup_shared_connection_pool`), and apartment does not arrange it for tenant pools.
+Recorded as failure-class **member 10** in `fixture-pool-lifecycle.md`; not fixed
+here.
 
 ## Error handling and edge cases
 
@@ -251,6 +256,13 @@ carry per-handler signal:
   path with a divergent `database` key. Tracked as the residual half of member 5,
   not built now (no adopter-reported need; adds `CREATE DATABASE` + schema
   duplication to test setup).
+- **Cross-role read visibility under fixtures (member 10).** Making a tenant
+  `:reading` pool see the `:writing` pool's in-test writes — what a real
+  primary/replica app on transactional tests expects (the purpose of AR's
+  `setup_shared_connection_pool`). Apartment doesn't arrange it for tenant pools;
+  reads through `:reading` see `count 0` of `:writing`'s uncommitted writes
+  (verified). Recorded as failure-class member 10; needs its own design (it would
+  mean connection-sharing tenant pools across roles during fixtures).
 - **Dummy app `:reading` wiring.** `database.yml` 3-tier + `connects_to` in
   `ApplicationRecord`, for `request_lifecycle` / `live_streaming` to exercise
   `:reading`. No current need.
