@@ -150,6 +150,36 @@ RSpec.describe(Apartment::PoolObserver) do
     end
   end
 
+  describe '.install! with a non-positive sample_interval' do
+    # nil is the intentional "no sampler" signal; a non-nil, non-positive value
+    # (e.g. an empty APARTMENT_POOL_SAMPLE_INTERVAL coerced to 0) is almost
+    # always a misconfig. Surface it instead of shipping a gauge-less observer.
+    it 'warns and does not start the sampler (0)' do
+      allow(described_class).to(receive(:warn))
+      observer = described_class.install!(sink: sink, sample_interval: 0)
+
+      expect(described_class).to(have_received(:warn).with(/not positive/))
+      expect(observer.instance_variable_get(:@sampler)).to(be_nil)
+      observer.stop!
+    end
+
+    it 'warns for a negative interval too' do
+      allow(described_class).to(receive(:warn))
+      observer = described_class.install!(sink: sink, sample_interval: -5)
+
+      expect(described_class).to(have_received(:warn).with(/not positive/))
+      observer.stop!
+    end
+
+    it 'does not warn when the interval is nil (intentional no-sampler)' do
+      allow(described_class).to(receive(:warn))
+      observer = described_class.install!(sink: sink, sample_interval: nil)
+
+      expect(described_class).not_to(have_received(:warn))
+      observer.stop!
+    end
+  end
+
   describe '#subscribe! / .install!' do
     subject(:observer) { described_class.install!(sink: sink) }
 
