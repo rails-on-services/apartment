@@ -140,13 +140,44 @@ RSpec.describe(Apartment::PoolObserver) do
       recorded = Concurrent::Array.new
       capturing_sink = ->(sample) { recorded << sample }
 
-      # A non-numeric interval makes start_sampler! raise *after* subscribe!.
+      # A non-numeric interval raises NoMethodError at the `positive?` check
+      # (inside install!, after subscribe!) — the sampler is never reached.
       expect { described_class.install!(sink: capturing_sink, sample_interval: 'nope') }
         .to(raise_error(NoMethodError))
 
       # If cleanup worked, the orphaned subscriptions are gone and no event lands.
       Apartment::Instrumentation.instrument(:evict, {})
       expect(recorded).to(be_empty)
+    end
+  end
+
+  describe '.install! with a non-positive sample_interval' do
+    # nil is the intentional "no sampler" signal; a non-nil, non-positive value
+    # (e.g. an empty APARTMENT_POOL_SAMPLE_INTERVAL coerced to 0) is almost
+    # always a misconfig. Surface it instead of shipping a gauge-less observer.
+    it 'warns and does not start the sampler (0)' do
+      allow(described_class).to(receive(:warn))
+      observer = described_class.install!(sink: sink, sample_interval: 0)
+
+      expect(described_class).to(have_received(:warn).with(/not positive/))
+      expect(observer.instance_variable_get(:@sampler)).to(be_nil)
+      observer.stop!
+    end
+
+    it 'warns for a negative interval too' do
+      allow(described_class).to(receive(:warn))
+      observer = described_class.install!(sink: sink, sample_interval: -5)
+
+      expect(described_class).to(have_received(:warn).with(/not positive/))
+      observer.stop!
+    end
+
+    it 'does not warn when the interval is nil (intentional no-sampler)' do
+      allow(described_class).to(receive(:warn))
+      observer = described_class.install!(sink: sink, sample_interval: nil)
+
+      expect(described_class).not_to(have_received(:warn))
+      observer.stop!
     end
   end
 

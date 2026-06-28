@@ -24,7 +24,18 @@ module Apartment
     def self.install!(sink:, sample_interval: nil, backend_count: nil)
       observer = new(sink: sink, backend_count: backend_count)
       observer.subscribe!
-      observer.start_sampler!(interval: sample_interval) if sample_interval&.positive?
+      if sample_interval.nil?
+        # nil is the intentional "no gauge sampler" signal; counters still flow.
+      elsif sample_interval.positive?
+        observer.start_sampler!(interval: sample_interval)
+      else
+        # A non-nil, non-positive interval is almost always a misconfig (e.g. an
+        # empty APARTMENT_POOL_SAMPLE_INTERVAL coerced to 0). Silently skipping
+        # the sampler ships an observer whose gauges never emit; surface it.
+        warn "[Apartment::PoolObserver] sample_interval=#{sample_interval.inspect} is not " \
+             'positive; gauge sampler not started (tenant_pools_live/backend_connections ' \
+             'will not emit). Pass a positive interval, or nil to disable the sampler.'
+      end
       observer
     rescue StandardError
       # Don't leak subscriptions if a later step (e.g. a bad sample_interval)
