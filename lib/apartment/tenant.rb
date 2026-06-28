@@ -200,16 +200,20 @@ module Apartment
       # it drops EVERY connection leased to the current execution context, across
       # all pools and roles, not just the tenant pool. Do NOT use it inside an
       # outer ActiveRecord::Base.transaction, or while holding a non-tenant
-      # connection you mean to keep. Fail-fast: if the block raises, the failing
-      # tenant is not released (the fan-out aborts).
+      # connection you mean to keep. Fail-fast: a raising block still aborts the
+      # fan-out, but the failing tenant's connection is released first — the
+      # release is best-effort cleanup (in an ensure), not iteration semantics.
       def each(tenants = nil, release_connection: false)
         raise(ArgumentError, 'Apartment::Tenant.each requires a block') unless block_given?
 
         tenants ||= Apartment.tenant_names
         tenants.each do |tenant|
           switch(tenant) { yield(tenant) }
+        ensure
           # Handler-wide (:all) covers writing + reading roles — the gem's
-          # established release call (see memory_stability_spec).
+          # established release call (see memory_stability_spec). In an ensure so
+          # a raising tenant is still released; the exception then propagates and
+          # halts the fan-out (fail-fast preserved).
           ActiveRecord::Base.connection_handler.clear_active_connections!(:all) if release_connection
         end
       end

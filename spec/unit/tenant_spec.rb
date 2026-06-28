@@ -442,6 +442,22 @@ RSpec.describe(Apartment::Tenant) do
       expect(ActiveRecord::Base.connection_handler).not_to(have_received(:clear_active_connections!))
     end
 
+    it 'releases the connection even when the block raises (release_connection: true)' do
+      # Release is best-effort cleanup, not iteration semantics: a raising tenant
+      # must still have its leased connection returned. Fail-fast is preserved —
+      # the exception propagates and halts iteration (tenant2 is never visited).
+      allow(ActiveRecord::Base.connection_handler).to(receive(:clear_active_connections!))
+
+      expect do
+        described_class.each(%w[tenant1 tenant2], release_connection: true) do |t|
+          raise('boom') if t == 'tenant1'
+        end
+      end.to(raise_error(RuntimeError, 'boom'))
+
+      expect(ActiveRecord::Base.connection_handler)
+        .to(have_received(:clear_active_connections!).with(:all).once)
+    end
+
     it 'returns the result of iterating the tenant list' do
       result = described_class.each(%w[a b]) { |_t| }
       expect(result).to(eq(%w[a b]))
