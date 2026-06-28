@@ -213,8 +213,16 @@ module Apartment
           # Handler-wide (:all) covers writing + reading roles — the gem's
           # established release call (see memory_stability_spec). In an ensure so
           # a raising tenant is still released; the exception then propagates and
-          # halts the fan-out (fail-fast preserved).
-          ActiveRecord::Base.connection_handler.clear_active_connections!(:all) if release_connection
+          # halts the fan-out (fail-fast preserved). Best-effort: a release
+          # failure must never mask the block's exception, so it is rescued and
+          # warned rather than raised out of the ensure.
+          if release_connection
+            begin
+              ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+            rescue StandardError => e
+              warn("[Apartment::Tenant.each] connection release failed: #{e.class}: #{e.message}")
+            end
+          end
         end
       end
 

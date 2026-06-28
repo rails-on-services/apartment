@@ -140,7 +140,8 @@ RSpec.describe(Apartment::PoolObserver) do
       recorded = Concurrent::Array.new
       capturing_sink = ->(sample) { recorded << sample }
 
-      # A non-numeric interval makes start_sampler! raise *after* subscribe!.
+      # A non-numeric interval raises NoMethodError at the `positive?` check
+      # (inside install!, after subscribe!) — the sampler is never reached.
       expect { described_class.install!(sink: capturing_sink, sample_interval: 'nope') }
         .to(raise_error(NoMethodError))
 

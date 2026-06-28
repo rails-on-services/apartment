@@ -458,6 +458,22 @@ RSpec.describe(Apartment::Tenant) do
         .to(have_received(:clear_active_connections!).with(:all).once)
     end
 
+    it 'preserves the block exception when the connection release also raises' do
+      # Release is best-effort: a failure in clear_active_connections! must not
+      # mask the real error from the tenant block (ensure-exception replacement).
+      allow(ActiveRecord::Base.connection_handler)
+        .to(receive(:clear_active_connections!).and_raise(IOError, 'release boom'))
+      allow(described_class).to(receive(:warn))
+
+      expect do
+        described_class.each(%w[tenant1 tenant2], release_connection: true) do |t|
+          raise('block boom') if t == 'tenant1'
+        end
+      end.to(raise_error(RuntimeError, 'block boom'))
+
+      expect(described_class).to(have_received(:warn).with(/release failed/))
+    end
+
     it 'returns the result of iterating the tenant list' do
       result = described_class.each(%w[a b]) { |_t| }
       expect(result).to(eq(%w[a b]))
