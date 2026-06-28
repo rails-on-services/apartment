@@ -70,7 +70,7 @@ boots:
 
 $apartment_observer = Apartment::PoolObserver.install!(
   sink: ->(sample) { MyMetrics.record(sample) },
-  sample_interval: 60,            # seconds between gauge passes; omit to disable
+  sample_interval: 60,            # seconds between gauge passes; omit/nil to disable (a non-positive value warns)
   backend_count: -> { ActiveRecord::Base.connection_pool.connections.size }
 )
 ```
@@ -195,6 +195,16 @@ Apartment::PoolObserver.install!(
 
 The callable is error-isolated: if it raises, the error is logged to `warn` and
 the pass continues.
+
+> **Fleet aggregation differs by gauge — don't SUM both blindly.**
+> `tenant_pools_live` is **per-process** (each process reports its own
+> `PoolManager`), so the fleet figure is a **SUM** across processes.
+> `backend_connections` is per-process only if your `backend_count` returns a
+> per-process number (e.g. `ActiveRecord::Base.connection_pool.connections.size`).
+> A **cluster-wide** source — `pg_stat_activity`, an RDS Proxy / PgBouncer total —
+> returns the *same* value from every process, so it must be rolled up with **MAX
+> (or last), never SUM**, or a dashboard multiplies it by the process count. Match
+> the dashboard aggregation to what your callable actually measures.
 
 ### Teardown
 
