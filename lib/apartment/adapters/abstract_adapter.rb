@@ -23,6 +23,13 @@ module Apartment
       # Called by ConnectionHandling — subclasses should NOT override this.
       # base_config_override: when supplied (e.g. a role-specific config from ConnectionHandling),
       # the adapter builds the tenant config on top of it instead of its own base_config.
+      #
+      # This validates only the PHYSICAL identifier (engine rules). Raw pool-key
+      # safety (colon/whitespace/NUL that would corrupt "tenant:role") is enforced
+      # by the sole production caller, ConnectionHandling#connection_pool, before
+      # it builds the pool key — and independently by #create. A future caller
+      # that invokes this directly, bypassing connection_pool, must validate the
+      # raw tenant itself (TenantNameValidator.validate_common!).
       def validated_connection_config(tenant, base_config_override: nil)
         effective_base = base_config_override || base_config
         TenantNameValidator.validate!(
