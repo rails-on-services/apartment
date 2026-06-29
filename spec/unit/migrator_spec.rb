@@ -496,17 +496,25 @@ RSpec.describe(Apartment::Migrator) do
   describe 'advisory-lock ivar contract' do
     # with_advisory_locks_disabled pokes the private @advisory_locks_enabled
     # ivar because Rails has no public setter. This locks the contract: if a
-    # future Rails renames the ivar, this fails in CI instead of silently
-    # serializing parallel tenant migrations (issue #298). Uses a real
-    # in-memory SQLite connection; skips gracefully if the adapter is absent.
+    # future Rails renames or relocates the ivar, this fails in CI instead of
+    # silently serializing parallel tenant migrations (issue #298). Runs against
+    # a real in-memory SQLite connection on a SWAPPED, isolated connection
+    # handler so it never mutates AR::Base's global default connection (other
+    # specs depend on it — removing it caused order-dependent failures). Mirrors
+    # the hermetic handler swap in spec/integration/v4/support.rb. Skips if the
+    # sqlite3 adapter is unavailable in the bundle.
     it 'a real ActiveRecord connection defines @advisory_locks_enabled' do
+      old_handler = ActiveRecord::Base.connection_handler
+      new_handler = ActiveRecord::ConnectionAdapters::ConnectionHandler.new
+      ActiveRecord::Base.connection_handler = new_handler
       ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
       conn = ActiveRecord::Base.lease_connection
       expect(conn.instance_variable_defined?(Apartment::Migrator::ADVISORY_LOCKS_IVAR)).to(be(true))
     rescue LoadError, ActiveRecord::AdapterNotFound, ActiveRecord::ConnectionNotEstablished => e
       skip("sqlite3 adapter unavailable in this bundle: #{e.class}")
     ensure
-      ActiveRecord::Base.remove_connection
+      new_handler&.clear_all_connections!
+      ActiveRecord::Base.connection_handler = old_handler if old_handler
     end
   end
 end
