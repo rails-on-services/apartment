@@ -293,7 +293,48 @@ module Apartment
         Apartment.pool_manager&.stats || {}
       end
 
+      # Clear the schema cache on warm tenant pools (and the default pool) in
+      # THIS PROCESS, so the next query re-reflects the database. Use after DDL
+      # on a pinned/shared table (which N warm tenant pools may have cached) or
+      # after manual DDL in a console. Lazy: clears now, repopulates from the DB
+      # on next access (not from any dump file).
+      #
+      # Current-process only — it cannot reach other workers' pools; fleet-wide
+      # DDL still needs a rolling restart. Clears schema reflection only, not
+      # prepared statements (AR self-heals those on PostgreSQL) and not model
+      # @columns_hash (call Model.reset_column_information or restart for that).
+      # Not a linearized barrier: an in-flight request may use metadata it
+      # already read. Intended for console / post-migrate / low-traffic use.
+      #
+      # tenant: nil clears all warm tenant pools + the default pool. A tenant
+      # name clears only that tenant's warm pools (+ the default pool when the
+      # name is the default tenant). Returns the count of pools cleared.
+      def reload_schema_cache!(tenant = nil)
+        pools = []
+        Apartment.pool_manager&.each_pair do |key, pool|
+          pools << pool if tenant.nil? || key.start_with?("#{tenant}:")
+        end
+        default_pool = default_schema_cache_pool(tenant)
+        pools << default_pool if default_pool
+
+        pools.each { |pool| pool.schema_cache.clear! }
+        pools.size
+      end
+
       private
+
+      # The default pool to clear for reload_schema_cache!, or nil when it should
+      # be excluded (a real-tenant scope, or no default tenant configured). The
+      # ConnectionHandling patch routes connection_pool by Current.tenant, so we
+      # enter default context to get the real default pool, not a tenant one;
+      # guarded on `default` because with_default_tenant raises with no default.
+      def default_schema_cache_pool(tenant)
+        default = default_tenant
+        return nil unless default
+        return nil unless tenant.nil? || tenant.to_s == default.to_s
+
+        with_default_tenant { ActiveRecord::Base.connection_pool }
+      end
 
       # Raise when default_tenant_switch_allowed is false and the caller is
       # block-switching into the default tenant. switch! and reset are exempt:
