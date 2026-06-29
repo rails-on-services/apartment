@@ -119,7 +119,13 @@ module Apartment
         cache_path = Apartment::SchemaCache.cache_path_for(tenant)
         return unless File.exist?(cache_path)
 
-        pool.schema_cache.load!(cache_path)
+        # Bind the pool's reflection to the dump file (Rails 7.1+ API). The
+        # removed path-taking SchemaCache#load! raised ArgumentError here:
+        # pool.schema_cache returns a BoundSchemaReflection whose #load! takes
+        # no args. SchemaReflection.new(path) lazily loads the dump (and Rails
+        # version-checks it, ignoring a stale file with a warning).
+        pool.schema_reflection =
+          ActiveRecord::ConnectionAdapters::SchemaReflection.new(cache_path)
       end
     end
   end
