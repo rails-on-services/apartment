@@ -25,7 +25,6 @@ module Apartment
       # the adapter builds the tenant config on top of it instead of its own base_config.
       def validated_connection_config(tenant, base_config_override: nil)
         effective_base = base_config_override || base_config
-        validate_pool_key_safety!(tenant)
         TenantNameValidator.validate!(
           physical_tenant_name(tenant),
           strategy: Apartment.config.tenant_strategy,

@@ -71,6 +71,19 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       end
     end
 
+    context 'when the tenant name is pool-key-unsafe' do
+      # Validation must happen BEFORE pool_key construction and fetch_or_create:
+      # in the capped path, fetch_or_admit calls admit! (which can LRU-evict an
+      # idle pool) before the adapter's deeper validation runs. An invalid name
+      # must be rejected before any admission/eviction side effect.
+      it 'rejects the name before touching the pool manager' do
+        Apartment::Current.tenant = 'bad:name'
+        expect(Apartment.pool_manager).not_to(receive(:fetch_or_create))
+        expect { ActiveRecord::Base.connection_pool }
+          .to(raise_error(Apartment::ConfigurationError, /colon/))
+      end
+    end
+
     context 'when an active tenant is set' do
       it 'returns a different pool from the default' do
         Apartment::Current.tenant = 'acme'
