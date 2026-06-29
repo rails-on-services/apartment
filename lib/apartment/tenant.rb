@@ -309,6 +309,13 @@ module Apartment
       # tenant: nil clears all warm tenant pools + the default pool. A tenant
       # name clears only that tenant's warm pools (+ the default pool when the
       # name is the default tenant). Returns the count of pools cleared.
+      #
+      # Role scope: warm tenant pools are cleared across all roles (the pool key
+      # is "tenant:role"), but the default pool is cleared only for the CURRENT
+      # role. A multi-role app with a :reading default replica should call once
+      # per role (e.g. inside connected_to(role: :reading)) to clear the replica
+      # default pool too. For pinned/shared-table DDL, prefer the unscoped form
+      # (no tenant arg) — a tenant-scoped call clears only that tenant's pools.
       def reload_schema_cache!(tenant = nil)
         pools = []
         Apartment.pool_manager&.each_pair do |key, pool|

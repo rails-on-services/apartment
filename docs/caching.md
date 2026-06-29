@@ -168,6 +168,12 @@ database. Returns the count of pools cleared.
 - **Not a barrier.** An in-flight request may still use metadata it already
   read. Call it during a maintenance window / low-traffic moment, the same way
   Rails clears the schema cache after `db:migrate`.
+- **Default pool is cleared for the current role only.** Warm tenant pools are
+  cleared across all roles, but the default (untenanted) pool is cleared only
+  for the role you call from. A multi-role app with a `:reading` default replica
+  should call once per role (e.g. inside `connected_to(role: :reading)`) to
+  clear the replica default pool. For pinned/shared-table DDL, use the unscoped
+  `reload_schema_cache!` — a tenant-scoped call clears only that tenant's pools.
 
 Backward-compatible (additive) migrations rarely need this at all: old code does
 not reference the new column, so a stale cache is inert until the next restart.
