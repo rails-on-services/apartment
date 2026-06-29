@@ -2,6 +2,13 @@
 
 Status: living. Defines what "beta" means for `ros-apartment` v4 and the scoped, prioritized workstreams that gate it. Created from the 2026-06-28 alpha→beta framing conversation; current version `4.0.0.alpha5`.
 
+## Progress (updated 2026-06-29)
+
+- **W5 — Cursor debt** ✅ shipped (#453): physical-name validation seam + advisory-lock ivar guard. Plus a review-driven follow-up (#454): validate pool-key-unsafe tenant names before admission/eviction.
+- **W2 — Member 8** ✅ reactive half shipped (#455): the brainstorm collapsed this from the "design-first long pole" to a minimal `Apartment::Tenant.reload_schema_cache!` helper + a fix for the latent `schema_cache_per_tenant` load path. v4's pool-per-tenant already isolates schema caches and AR self-heals prepared statements, so the residual was only the shared/pinned-table amplifier. Design: `docs/designs/v4-schema-cache-recovery.md`.
+- **Remaining beta-blocking**: W1 (member 7), W3 (member 9), W4 (PgBouncer libpq), W6 (adopter `:reading` rollout), then Track C packaging.
+- **Critical path now**: with member 8 closed, the internal long pole is W4 (PgBouncer); the overall beta date is bounded below by the adopter `:reading`-separated rollout (W6).
+
 ## TLDR
 
 **Beta = pragmatic posture on a correctness-complete floor.** We tell a new adopter "run v4 in staging" (documented-stable API with named escape hatches; *not* a GA-binding API freeze), but only once every *suspected* failure class is tested, the advertised PgBouncer/RDS-Proxy compatibility is actually implemented (not aspirational), and the primary adopter has exercised the real `:reading`-separated path. The posture is light; the floor is heavy. Almost all v4 engineering already shipped across alpha1–5 — beta is a correctness-closure + decision + documentation milestone, with two genuine code long poles (member 8 schema-cache drift; PgBouncer libpq path) and one external dependency (the adopter's rollout timeline).
@@ -34,7 +41,7 @@ This split is the whole design: **loose on promises, strict on behavior.**
 | Members 7/8/9 | Test all three before beta | W1/W2/W3 are beta-blocking, not deferred |
 | PgBouncer libpq path | Implement before beta | W4 is beta-blocking |
 | PgBouncer CI | Free via service container | Public-repo runners are free; add a `pgbouncer` service to `ci.yml` — no spend, just config |
-| Member 8 design depth | Open — research + brainstorm first | W2 is design-first; scope finalizes after its own brainstorm pass |
+| Member 8 design depth | Resolved (#455) — minimal helper, not full invalidation | Brainstorm showed v4 already isolates schema caches per pool; shipped a manual recovery helper + load-path fix |
 | Member 10 | Cheap test-env guard now (force read→`:writing` in test) | Apartment-side fix built only on adopter-reported replica-read-test need |
 
 ## Scoped workstreams
@@ -44,10 +51,10 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 ### Track A — Correctness (beta-blocking)
 
 - **W1 — Member 7, `PQTRANS_INERROR` taint** (M). Instrumented detection + recovery in `Apartment::Tenant.switch`'s ensure block, plus an integration spec. PG-specific error state; the downstream best-effort `ROLLBACK` loop is the evidence the variant bites. See `fixture-pool-lifecycle.md` member 7.
-- **W2 — Member 8, schema-cache / prepared-statement drift after tenant DDL** (L, **design-first**). Pinned-model joins after one tenant's DDL may resolve against stale caches in another. **Needs its own brainstorm/design pass before it is plan-able** — PG and MySQL diverge on cache-invalidation primitives, so the scope (full adapter-specific invalidation vs. a documented cache-bust API + narrower guard) is an open design question. Longest internal pole; start its design early.
+- **W2 — Member 8, schema-cache / prepared-statement drift after tenant DDL** ✅ **shipped (#455)**. The brainstorm showed v4's pool-per-tenant already isolates schema caches per pool and AR self-heals prepared statements, collapsing the original long-pole scope. Shipped: the manual `Apartment::Tenant.reload_schema_cache!` recovery helper for the pinned/shared-table-DDL amplifier, plus a fix for the latent `schema_cache_per_tenant` load path. Design: `docs/designs/v4-schema-cache-recovery.md`.
 - **W3 — Member 9, within-process thread/job boundaries** (M). Sidekiq-inline, async executors, `parallel_tests` workers, and app-level threads that `switch` a tenant inside a worker thread may resolve pools differently from the originating thread. Likely resolves to a documented contract + a helper, plus coverage — not only a spec.
 - **W4 — PgBouncer libpq `options` (approach 1)** (M–L, long pole). Set `search_path` at the protocol level via the libpq connection-string `options: '-c search_path=tenant,ext,public'` so no `SET` runs at connection establishment, eliminating the residual single-pin; fall back to `schema_search_path` when the driver doesn't support it. Verification needs a PgBouncer transaction-mode harness in CI — feasible free via a service container. Spike the `ruby-pg` `options:` support across PG 16/18 as the plan's first step.
-- **W5 — Cursor debt: advisory-lock fragility + raw-tenant validation** (S). Replace the `instance_variable_get/set(:@advisory_locks_enabled)` toggle in `migrator.rb` with a less Rails-upgrade-fragile mechanism (or a guarded/tested wrapper); fix `validated_connection_config` validating the raw tenant on the pool-resolution path (needs a per-adapter override — `PostgreSQLSchemaAdapter` uses raw `tenant`, database-per-tenant adapters use `environmentify(tenant)`). Both precisely located; zero design ambiguity.
+- **W5 — Cursor debt: advisory-lock fragility + raw-tenant validation** ✅ **shipped (#453, follow-up #454)**. Added a `physical_tenant_name` validation seam (pool-resolution validates the identifier the connection actually targets) and guarded the `@advisory_locks_enabled` ivar poke with a rename-detecting contract test. Follow-up #454 moved pool-key-unsafe-name rejection ahead of admission/eviction.
 
 ### Track B — Adopter validation (external-gated long pole)
 
@@ -62,11 +69,11 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 
 ## Critical path & sequencing
 
-W2 (member 8, design-first) and W4 (PgBouncer) are the internal long poles — both start now; W2 begins with a brainstorm, W4 with a driver-support spike. W6 (adopter) runs the whole window, externally paced. W1/W3/W5 are independent and parallelizable. Track C closes last, once W1–W5 lock behavior.
+With W5 and W2 (member 8) shipped, **W4 (PgBouncer libpq) is the remaining internal long pole** — start it with a `ruby-pg` driver-support spike. W6 (adopter `:reading` rollout) runs the whole window, externally paced. W1 (member 7) and W3 (member 9) are independent and parallelizable. Track C closes last, once W1/W3/W4 lock behavior.
 
-**Beta date is bounded below by `max(member-8 design+impl, adopter `:reading`-separated rollout green)`.** Everything else fits inside that envelope.
+**Beta date is now bounded below by the adopter `:reading`-separated rollout green (W6)**, with W4 the longest internal pole. Everything else fits inside that envelope.
 
-Suggested order of plans: **W5 first** (smallest, zero-ambiguity, clears two debt items, fast green), in parallel kick off the **member-8 (W2) brainstorm** (longest pole, needs design before a plan), then **W4** (other long pole, now CI-unblocked), then W1/W3, then Track C.
+Suggested order of remaining plans: **W4** (longest internal pole, CI-unblocked via a free PgBouncer service container), then **W1 / W3** (members 7 and 9, parallelizable), then **Track C** packaging (W8–W10). W6 proceeds in parallel on the adopter's timeline.
 
 ## Cross-references
 
