@@ -26,7 +26,7 @@ module Apartment
       def validated_connection_config(tenant, base_config_override: nil)
         effective_base = base_config_override || base_config
         TenantNameValidator.validate!(
-          tenant,
+          physical_tenant_name(tenant),
           strategy: Apartment.config.tenant_strategy,
           adapter_name: effective_base['adapter']
         )
@@ -197,6 +197,15 @@ module Apartment
           # Callable
           Apartment.config.environmentify_strategy.call(tenant)
         end
+      end
+
+      # The physical identifier used to address this tenant at connection time:
+      # the database name for database-per-tenant strategies (environmentified).
+      # validated_connection_config validates THIS name so the pool-resolution
+      # path agrees with what the connection actually targets. Schema-per-tenant
+      # overrides this to the raw tenant (schemas are named directly).
+      def physical_tenant_name(tenant)
+        environmentify(tenant)
       end
 
       # Default tenant from config.

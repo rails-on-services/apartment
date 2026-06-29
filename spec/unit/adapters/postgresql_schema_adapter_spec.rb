@@ -350,4 +350,20 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
       expect(result['schema_search_path']).to(eq('"acme"'))
     end
   end
+
+  describe '#physical_tenant_name' do
+    # Schema-per-tenant names schemas directly, so pool-resolution validates and
+    # uses the RAW tenant even when environmentify_strategy is set — unlike the
+    # database-per-tenant adapters, which validate the environmentified name.
+    it 'validates the raw tenant name, ignoring environmentify_strategy' do
+      reconfigure(environmentify_strategy: ->(t) { "#{t}\x00" })
+      expect { adapter.validated_connection_config('acme') }.not_to(raise_error)
+    end
+
+    it 'resolves the search_path from the raw tenant name' do
+      reconfigure(environmentify_strategy: ->(t) { "#{t}_ignored" })
+      config = adapter.validated_connection_config('acme')
+      expect(config['schema_search_path']).to(eq('"acme"'))
+    end
+  end
 end
