@@ -222,15 +222,17 @@ module Apartment
     # PG's advisory locks are database-wide and would serialize parallel tenant
     # migrations (issue #298). Rails offers no public setter, so we poke the
     # private @advisory_locks_enabled ivar. The instance_variable_defined? guard
-    # makes a future Rails rename visible: rather than silently creating an
-    # orphan ivar (leaving locks enabled and serializing migrations), we warn and
-    # proceed. The ivar contract is also unit-tested against a real connection.
+    # detects a future Rails *rename or removal* of the ivar (a name-presence
+    # check — it does NOT catch a semantics change where Rails keeps the ivar but
+    # stops honoring it on the lock path). On a detected rename we warn and
+    # proceed rather than silently creating an orphan ivar; the ivar contract is
+    # also unit-tested against a real connection so a rename breaks CI first.
     def with_advisory_locks_disabled
       conn = ActiveRecord::Base.lease_connection
       unless conn.instance_variable_defined?(ADVISORY_LOCKS_IVAR)
         warn "[Apartment::Migrator] ActiveRecord connection #{conn.class} does not define " \
              "#{ADVISORY_LOCKS_IVAR}; cannot disable advisory locks for this Rails version. " \
-             'Parallel tenant migrations will serialize on the database-wide advisory lock.'
+             'Parallel tenant migrations may serialize or fail on the database-wide advisory lock.'
         return yield
       end
       original = conn.instance_variable_get(ADVISORY_LOCKS_IVAR)

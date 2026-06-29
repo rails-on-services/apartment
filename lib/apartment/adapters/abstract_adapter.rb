@@ -41,9 +41,12 @@ module Apartment
       end
 
       # Create a new tenant (schema or database).
+      # Validates the physical identifier create_tenant actually addresses
+      # (raw schema name for :schema, environmentified database name otherwise),
+      # so create and the pool-resolution path validate the same name.
       def create(tenant)
         TenantNameValidator.validate!(
-          environmentify(tenant),
+          physical_tenant_name(tenant),
           strategy: Apartment.config.tenant_strategy,
           adapter_name: base_config['adapter']
         )

@@ -221,6 +221,17 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       adapter.create('my-tenant')
     end
+
+    it 'validates the raw (physical) schema name on create, even with environmentify_strategy' do
+      # Regression: create previously validated environmentify(tenant), so a raw
+      # "pg_"-prefixed name slipped through under :prepend (the env prefix masked
+      # the reserved prefix) while CREATE SCHEMA still used the raw name. create
+      # now validates the physical (raw) name, matching the pool-resolution path.
+      reconfigure(environmentify_strategy: :prepend)
+      expect(connection).not_to(receive(:execute))
+      expect { adapter.create('pg_evil') }
+        .to(raise_error(Apartment::ConfigurationError, /pg_/))
+    end
   end
 
   describe '#drop (via drop_tenant)' do
