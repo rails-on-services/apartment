@@ -149,6 +149,8 @@ RSpec.describe(Apartment::Migrator) do
       allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
       allow(mock_connection).to(receive(:instance_variable_get).and_return(true))
       allow(mock_connection).to(receive(:instance_variable_set))
+      allow(mock_connection).to(receive(:instance_variable_defined?)
+        .with(:@advisory_locks_enabled).and_return(true))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
@@ -218,6 +220,14 @@ RSpec.describe(Apartment::Migrator) do
         .with(:@advisory_locks_enabled, false).at_least(:twice))
       expect(mock_connection).to(have_received(:instance_variable_set)
         .with(:@advisory_locks_enabled, true).at_least(:twice))
+    end
+
+    it 'warns and still runs migrations when the connection lacks the advisory-lock ivar' do
+      allow(mock_connection).to(receive(:instance_variable_defined?)
+        .with(:@advisory_locks_enabled).and_return(false))
+      expect(migrator).to(receive(:warn).with(/cannot disable advisory locks/i).at_least(:once))
+      result = migrator.run
+      expect(result).to(be_a(Apartment::Migrator::MigrationRun))
     end
 
     it 'handles empty tenant list' do
@@ -352,6 +362,8 @@ RSpec.describe(Apartment::Migrator) do
       allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
       allow(mock_connection).to(receive(:instance_variable_get).and_return(true))
       allow(mock_connection).to(receive(:instance_variable_set))
+      allow(mock_connection).to(receive(:instance_variable_defined?)
+        .with(:@advisory_locks_enabled).and_return(true))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
@@ -450,6 +462,8 @@ RSpec.describe(Apartment::Migrator) do
       allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
       allow(mock_connection).to(receive(:instance_variable_get).and_return(true))
       allow(mock_connection).to(receive(:instance_variable_set))
+      allow(mock_connection).to(receive(:instance_variable_defined?)
+        .with(:@advisory_locks_enabled).and_return(true))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
@@ -476,6 +490,23 @@ RSpec.describe(Apartment::Migrator) do
       result = migrator.run
       expect(result.failed.size).to(eq(1))
       expect(result.results.size).to(eq(9))
+    end
+  end
+
+  describe 'advisory-lock ivar contract' do
+    # with_advisory_locks_disabled pokes the private @advisory_locks_enabled
+    # ivar because Rails has no public setter. This locks the contract: if a
+    # future Rails renames the ivar, this fails in CI instead of silently
+    # serializing parallel tenant migrations (issue #298). Uses a real
+    # in-memory SQLite connection; skips gracefully if the adapter is absent.
+    it 'a real ActiveRecord connection defines @advisory_locks_enabled' do
+      ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
+      conn = ActiveRecord::Base.lease_connection
+      expect(conn.instance_variable_defined?(Apartment::Migrator::ADVISORY_LOCKS_IVAR)).to(be(true))
+    rescue LoadError, ActiveRecord::AdapterNotFound, ActiveRecord::ConnectionNotEstablished => e
+      skip("sqlite3 adapter unavailable in this bundle: #{e.class}")
+    ensure
+      ActiveRecord::Base.remove_connection
     end
   end
 end
