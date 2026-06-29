@@ -513,8 +513,16 @@ RSpec.describe(Apartment::Migrator) do
     rescue LoadError, ActiveRecord::AdapterNotFound, ActiveRecord::ConnectionNotEstablished => e
       skip("sqlite3 adapter unavailable in this bundle: #{e.class}")
     ensure
-      new_handler&.clear_all_connections!
+      # Restore the global handler FIRST so a failure while clearing the
+      # throwaway handler can never leave AR::Base pointing at it (the exact
+      # leak this test previously caused). Clearing the discarded handler is
+      # best-effort cleanup of its in-memory sqlite connection.
       ActiveRecord::Base.connection_handler = old_handler if old_handler
+      begin
+        new_handler&.clear_all_connections!
+      rescue StandardError => e
+        warn "[advisory-lock contract] clear_all_connections! failed: #{e.message}"
+      end
     end
   end
 end
