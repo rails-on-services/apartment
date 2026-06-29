@@ -25,6 +25,7 @@ module Apartment
       # the adapter builds the tenant config on top of it instead of its own base_config.
       def validated_connection_config(tenant, base_config_override: nil)
         effective_base = base_config_override || base_config
+        validate_pool_key_safety!(tenant)
         TenantNameValidator.validate!(
           physical_tenant_name(tenant),
           strategy: Apartment.config.tenant_strategy,
@@ -45,6 +46,7 @@ module Apartment
       # (raw schema name for :schema, environmentified database name otherwise),
       # so create and the pool-resolution path validate the same name.
       def create(tenant)
+        validate_pool_key_safety!(tenant)
         TenantNameValidator.validate!(
           physical_tenant_name(tenant),
           strategy: Apartment.config.tenant_strategy,
@@ -214,6 +216,20 @@ module Apartment
       # Default tenant from config.
       def default_tenant
         Apartment.config.default_tenant
+      end
+
+      private
+
+      # Validate the raw tenant for pool-key safety: it becomes "#{tenant}:#{role}"
+      # in the pool key, so a colon / whitespace / NUL there breaks PoolManager's
+      # prefix and suffix matching and could evict the wrong tenant's pool.
+      # Validated in addition to physical_tenant_name (which carries the engine
+      # rules) because a callable environmentify_strategy could transform an
+      # unsafe character out of the physical name while the raw name still reaches
+      # the pool key. to_s first so a non-String tenant is stringified, not
+      # rejected (it is the value the pool key interpolates anyway).
+      def validate_pool_key_safety!(tenant)
+        TenantNameValidator.validate_common!(tenant.to_s)
       end
 
       protected

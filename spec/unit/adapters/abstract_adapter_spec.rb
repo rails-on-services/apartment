@@ -129,6 +129,15 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
         expect { adapter.validated_connection_config('acme') }
           .to(raise_error(Apartment::ConfigurationError, /NUL byte/))
       end
+
+      it 'validates the raw tenant for pool-key safety even when environmentify_strategy strips unsafe chars' do
+        # A pathological callable that strips the colon would otherwise let
+        # "acme:eu" build a pool key ("acme:eu:role") that collides with tenant
+        # "acme" under PoolManager prefix matching. The raw name is validated too.
+        reconfigure(environmentify_strategy: ->(t) { t.tr(':', '_') })
+        expect { adapter.validated_connection_config('acme:eu') }
+          .to(raise_error(Apartment::ConfigurationError, /colon/))
+      end
     end
   end
 
@@ -172,6 +181,14 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       tenant = 'a' * 59
       expect { adapter.create(tenant) }
         .to(raise_error(Apartment::ConfigurationError, /too long.*64.*max 63/))
+      expect(adapter.created_tenants).to(be_empty)
+    end
+
+    it 'rejects a pool-key-unsafe raw tenant on create even if environmentify_strategy strips it' do
+      reconfigure(environmentify_strategy: ->(t) { t.tr(':', '_') })
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      expect { adapter.create('acme:eu') }
+        .to(raise_error(Apartment::ConfigurationError, /colon/))
       expect(adapter.created_tenants).to(be_empty)
     end
 
