@@ -25,8 +25,9 @@ module Apartment
       # the adapter builds the tenant config on top of it instead of its own base_config.
       def validated_connection_config(tenant, base_config_override: nil)
         effective_base = base_config_override || base_config
+        validate_pool_key_safety!(tenant)
         TenantNameValidator.validate!(
-          tenant,
+          physical_tenant_name(tenant),
           strategy: Apartment.config.tenant_strategy,
           adapter_name: effective_base['adapter']
         )
@@ -41,9 +42,13 @@ module Apartment
       end
 
       # Create a new tenant (schema or database).
+      # Validates the physical identifier create_tenant actually addresses
+      # (raw schema name for :schema, environmentified database name otherwise),
+      # so create and the pool-resolution path validate the same name.
       def create(tenant)
+        validate_pool_key_safety!(tenant)
         TenantNameValidator.validate!(
-          environmentify(tenant),
+          physical_tenant_name(tenant),
           strategy: Apartment.config.tenant_strategy,
           adapter_name: base_config['adapter']
         )
@@ -199,9 +204,32 @@ module Apartment
         end
       end
 
+      # The physical identifier used to address this tenant at connection time:
+      # the database name for database-per-tenant strategies (environmentified).
+      # validated_connection_config validates THIS name so the pool-resolution
+      # path agrees with what the connection actually targets. Schema-per-tenant
+      # overrides this to the raw tenant (schemas are named directly).
+      def physical_tenant_name(tenant)
+        environmentify(tenant)
+      end
+
       # Default tenant from config.
       def default_tenant
         Apartment.config.default_tenant
+      end
+
+      private
+
+      # Validate the raw tenant for pool-key safety: it becomes "#{tenant}:#{role}"
+      # in the pool key, so a colon / whitespace / NUL there breaks PoolManager's
+      # prefix and suffix matching and could evict the wrong tenant's pool.
+      # Validated in addition to physical_tenant_name (which carries the engine
+      # rules) because a callable environmentify_strategy could transform an
+      # unsafe character out of the physical name while the raw name still reaches
+      # the pool key. to_s first so a non-String tenant is stringified, not
+      # rejected (it is the value the pool key interpolates anyway).
+      def validate_pool_key_safety!(tenant)
+        TenantNameValidator.validate_common!(tenant.to_s)
       end
 
       protected

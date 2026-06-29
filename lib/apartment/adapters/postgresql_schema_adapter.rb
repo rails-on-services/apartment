@@ -38,6 +38,12 @@ module Apartment
         config.merge('schema_search_path' => search_path)
       end
 
+      # Schemas are named directly (never environmentified), so the physical
+      # identifier validated at pool-resolution time is the raw tenant name.
+      def physical_tenant_name(tenant)
+        tenant.to_s
+      end
+
       # The schema-strategy missing-tenant error: a dropped schema is not caught
       # at switch time (search_path accepts a non-existent schema silently) — it
       # surfaces on the first query as ActiveRecord::StatementInvalid
