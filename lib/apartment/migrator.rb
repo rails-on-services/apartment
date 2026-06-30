@@ -6,6 +6,11 @@ require_relative 'errors'
 
 module Apartment
   class Migrator # rubocop:disable Metrics/ClassLength
+    # ActiveRecord exposes no public setter for advisory-lock state (only the
+    # advisory_locks_enabled? reader), so we toggle this private ivar directly.
+    # The guard in with_advisory_locks_disabled detects a future Rails rename.
+    ADVISORY_LOCKS_IVAR = :@advisory_locks_enabled
+
     Result = Data.define(
       :tenant,
       :status,
@@ -213,13 +218,28 @@ module Apartment
     # Disable advisory locks on the leased connection for the duration of the
     # block, then restore the original value. lease_connection returns the same
     # connection object for the current thread (fiber-local via IsolatedExecutionState).
+    #
+    # PG's advisory locks are database-wide and would serialize parallel tenant
+    # migrations (issue #298). Rails offers no public setter, so we poke the
+    # private @advisory_locks_enabled ivar. The instance_variable_defined? guard
+    # detects a future Rails *rename or removal* of the ivar (a name-presence
+    # check — it does NOT catch a semantics change where Rails keeps the ivar but
+    # stops honoring it on the lock path). On a detected rename we warn and
+    # proceed rather than silently creating an orphan ivar; the ivar contract is
+    # also unit-tested against a real connection so a rename breaks CI first.
     def with_advisory_locks_disabled
       conn = ActiveRecord::Base.lease_connection
-      original = conn.instance_variable_get(:@advisory_locks_enabled)
-      conn.instance_variable_set(:@advisory_locks_enabled, false)
+      unless conn.instance_variable_defined?(ADVISORY_LOCKS_IVAR)
+        warn "[Apartment::Migrator] ActiveRecord connection #{conn.class} does not define " \
+             "#{ADVISORY_LOCKS_IVAR}; cannot disable advisory locks for this Rails version. " \
+             'Parallel tenant migrations may serialize or fail on the database-wide advisory lock.'
+        return yield
+      end
+      original = conn.instance_variable_get(ADVISORY_LOCKS_IVAR)
+      conn.instance_variable_set(ADVISORY_LOCKS_IVAR, false)
       yield
     ensure
-      conn&.instance_variable_set(:@advisory_locks_enabled, original)
+      conn.instance_variable_set(ADVISORY_LOCKS_IVAR, original) if conn&.instance_variable_defined?(ADVISORY_LOCKS_IVAR)
     end
 
     def monotonic_now
