@@ -1,5 +1,7 @@
 # W5 — Cursor Debt: Physical-Name Validation + Advisory-Lock Fragility Guard Implementation Plan
 
+> **STATUS: COMPLETED — shipped in #453.** Kept as a historical record of the W5 workstream; **do not execute** the pre-flight or task steps as-is. Two divergences from what actually shipped: (1) review folded `#create` through `physical_tenant_name` too (commit `02a6787`), which Task 1 below scoped *out*; (2) a follow-up PR #454 moved pool-key-unsafe-name rejection ahead of admission/eviction — not covered in this plan. See `docs/designs/v4-beta-readiness.md` for current status.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close two residual Cursor PR-review items that the beta-readiness roadmap (W5) gates on: (1) the tenant pool-resolution path validates the *raw* tenant name instead of the physical identifier `create` validates; (2) `Migrator#with_advisory_locks_disabled` pokes a private ActiveRecord ivar with no guard, so a future Rails rename would silently re-enable advisory locks and serialize parallel tenant migrations.
