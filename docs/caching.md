@@ -132,3 +132,48 @@ tenant. Two options, your risk call:
 - **Org-level keys** (shared across a subset of tenants) are neither routed nor
   pinned — use an explicit `"org:#{org_id}"` namespace, not `Tenant.current`.
 - **Job retries** must re-establish tenant context per `perform`.
+
+## Schema-cache recovery
+
+In v4, each tenant has its own connection pool and therefore its own schema
+cache, so one tenant's DDL cannot corrupt another tenant's cache. After a
+migration, the only staleness is the ordinary Rails "warm worker holds the old
+schema until reload" — cured by your deploy restart. The one apartment-specific
+case is DDL on a **pinned/shared (public-schema) table**: every warm tenant pool
+that cached that table now holds stale metadata.
+
+For that case (or manual DDL in a console), clear the cache in the current
+process:
+
+```ruby
+Apartment::Tenant.reload_schema_cache!          # all warm tenant pools + default pool
+Apartment::Tenant.reload_schema_cache!("acme")  # only that tenant's warm pools
+```
+
+It clears each pool's schema reflection; the next query re-reflects the
+database. Returns the count of pools cleared.
+
+**Limits — read before relying on it:**
+
+- **Current process only.** It cannot reach other workers (web/Sidekiq). After
+  fleet-wide DDL, a rolling restart remains the cure; this helper is for the
+  process you call it from (console, a post-migrate maintenance script).
+- **Schema reflection only, not prepared statements.** On PostgreSQL,
+  ActiveRecord self-heals stale prepared statements (`cached plan must not
+  change result type` → retry). On MySQL there is no equivalent auto-retry, so
+  restart is more load-bearing there.
+- **Does not reset model column caches.** A model class that already loaded its
+  columns keeps them until `YourModel.reset_column_information` or a restart.
+  This helper clears the *pool* cache, not `ActiveRecord::Base` model state.
+- **Not a barrier.** An in-flight request may still use metadata it already
+  read. Call it during a maintenance window / low-traffic moment, the same way
+  Rails clears the schema cache after `db:migrate`.
+- **Default pool is cleared for the current role only.** Warm tenant pools are
+  cleared across all roles, but the default (untenanted) pool is cleared only
+  for the role you call from. A multi-role app with a `:reading` default replica
+  should call once per role (e.g. inside `connected_to(role: :reading)`) to
+  clear the replica default pool. For pinned/shared-table DDL, use the unscoped
+  `reload_schema_cache!` — a tenant-scoped call clears only that tenant's pools.
+
+Backward-compatible (additive) migrations rarely need this at all: old code does
+not reference the new column, so a stale cache is inert until the next restart.

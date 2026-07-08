@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'active_record'
+require_relative '../tenant_name_validator'
 
 module Apartment
   module Patches
@@ -27,6 +28,15 @@ module Apartment
            (adapter.nil? || !adapter.shared_pinned_connection?)
           return super
         end
+
+        # Reject pool-key-unsafe tenant names BEFORE building pool_key or entering
+        # fetch_or_create. In the capped path, fetch_or_admit runs admit! (which
+        # may LRU-evict an idle pool) before the adapter validates inside the
+        # block, so a colon / whitespace / NUL in the raw tenant — which would
+        # also corrupt the "#{tenant}:#{role}" key and PoolManager's prefix
+        # matching — must be caught here. ConfigurationError is an ApartmentError,
+        # so the rescue below re-raises it cleanly.
+        Apartment::TenantNameValidator.validate_common!(tenant.to_s)
 
         role = ActiveRecord::Base.current_role
         pool_key = "#{tenant}:#{role}"
@@ -109,7 +119,13 @@ module Apartment
         cache_path = Apartment::SchemaCache.cache_path_for(tenant)
         return unless File.exist?(cache_path)
 
-        pool.schema_cache.load!(cache_path)
+        # Bind the pool's reflection to the dump file (Rails 7.1+ API). The
+        # removed path-taking SchemaCache#load! raised ArgumentError here:
+        # pool.schema_cache returns a BoundSchemaReflection whose #load! takes
+        # no args. SchemaReflection.new(path) lazily loads the dump (and Rails
+        # version-checks it, ignoring a stale file with a warning).
+        pool.schema_reflection =
+          ActiveRecord::ConnectionAdapters::SchemaReflection.new(cache_path)
       end
     end
   end

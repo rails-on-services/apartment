@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'tmpdir'
+require 'fileutils'
 
 # This spec requires real ActiveRecord + sqlite3 gem (not the stub in apartment_spec.rb).
 # Run via any sqlite3 appraisal, e.g.: bundle exec appraisal rails-8.1-sqlite3 rspec spec/unit/patches/
@@ -68,6 +70,19 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       it 'returns the default pool' do
         Apartment::Current.tenant = 'public'
         expect(ActiveRecord::Base.connection_pool).to(equal(default_pool))
+      end
+    end
+
+    context 'when the tenant name is pool-key-unsafe' do
+      # Validation must happen BEFORE pool_key construction and fetch_or_create:
+      # in the capped path, fetch_or_admit calls admit! (which can LRU-evict an
+      # idle pool) before the adapter's deeper validation runs. An invalid name
+      # must be rejected before any admission/eviction side effect.
+      it 'rejects the name before touching the pool manager' do
+        Apartment::Current.tenant = 'bad:name'
+        expect(Apartment.pool_manager).not_to(receive(:fetch_or_create))
+        expect { ActiveRecord::Base.connection_pool }
+          .to(raise_error(Apartment::ConfigurationError, /colon/))
       end
     end
 
@@ -180,6 +195,43 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
                  'ActiveRecord::Base', role: role, shard: shard_key
                )).to(be_nil)
         expect(Apartment.pool_manager.tracked?("acme:#{role}")).to(be(false))
+      end
+    end
+
+    context 'when schema_cache_per_tenant loads a real dump file' do
+      around do |example|
+        dir = Dir.mktmpdir
+        @cache_path = File.join(dir, 'schema_cache_acme.yml')
+        example.run
+      ensure
+        FileUtils.remove_entry(dir) if dir && File.directory?(dir)
+      end
+
+      it 'loads the per-tenant dump without raising (regression: BoundSchemaReflection#load! takes no args)' do
+        # Warm acme's pool and dump its schema cache to a real file.
+        Apartment::Current.tenant = 'acme'
+        ActiveRecord::Base.connection.schema_cache.dump_to(@cache_path)
+        # Force a fresh re-establish so the schema-cache load path runs on next resolve.
+        role = ActiveRecord::Base.current_role
+        Apartment.pool_manager.remove_tenant('acme')
+        Apartment.deregister_shard("acme:#{role}")
+        Apartment::Current.tenant = nil
+
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme widgets] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.schema_cache_per_tenant = true
+        end
+        Apartment.adapter = mock_adapter
+        allow(Apartment::SchemaCache).to(receive(:cache_path_for).with('acme').and_return(@cache_path))
+
+        Apartment::Current.tenant = 'acme'
+        expect { ActiveRecord::Base.connection_pool }.not_to(raise_error)
+        pool = ActiveRecord::Base.connection_pool
+        expect(pool.schema_reflection)
+          .to(be_a(ActiveRecord::ConnectionAdapters::SchemaReflection))
       end
     end
 

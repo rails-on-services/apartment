@@ -15,7 +15,16 @@ namespace :apartment do
   desc 'Drop a tenant schema/database'
   task :drop, [:tenant] => :environment do |_t, args|
     abort('Usage: rake apartment:drop[tenant_name]') unless args[:tenant]
-    Apartment::CLI::Tenants.new.invoke(:drop, [args[:tenant]], force: true)
+    # Plain delegate: Apartment::CLI::Tenants#drop owns the confirmation policy
+    # (TTY prompts [y/N]; non-interactive requires --force / APARTMENT_FORCE=1,
+    # otherwise raises Thor::Error). The rake wrapper adds no force handling of
+    # its own. It only reformats the guard error: `.new.invoke` bypasses
+    # Thor.start's exit_on_failure? handling, so an unrescued Thor::Error would
+    # surface as a raw `rake aborted!` backtrace that buries the actionable
+    # message — abort re-emits it as a clean one-liner with a non-zero exit.
+    Apartment::CLI::Tenants.new.invoke(:drop, [args[:tenant]])
+  rescue Thor::Error => e
+    abort(e.message)
   end
 
   desc 'Run migrations for all tenants (or one: rake apartment:migrate[tenant])'

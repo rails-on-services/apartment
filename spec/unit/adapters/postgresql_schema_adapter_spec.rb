@@ -221,6 +221,17 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       adapter.create('my-tenant')
     end
+
+    it 'validates the raw (physical) schema name on create, even with environmentify_strategy' do
+      # Regression: create previously validated environmentify(tenant), so a raw
+      # "pg_"-prefixed name slipped through under :prepend (the env prefix masked
+      # the reserved prefix) while CREATE SCHEMA still used the raw name. create
+      # now validates the physical (raw) name, matching the pool-resolution path.
+      reconfigure(environmentify_strategy: :prepend)
+      expect(connection).not_to(receive(:execute))
+      expect { adapter.create('pg_evil') }
+        .to(raise_error(Apartment::ConfigurationError, /pg_/))
+    end
   end
 
   describe '#drop (via drop_tenant)' do
@@ -348,6 +359,22 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
       expect(result['host']).to(eq('localhost'))
       expect(result['schema_search_path']).to(eq('"acme"'))
+    end
+  end
+
+  describe '#physical_tenant_name' do
+    # Schema-per-tenant names schemas directly, so pool-resolution validates and
+    # uses the RAW tenant even when environmentify_strategy is set — unlike the
+    # database-per-tenant adapters, which validate the environmentified name.
+    it 'validates the raw tenant name, ignoring environmentify_strategy' do
+      reconfigure(environmentify_strategy: ->(t) { "#{t}\x00" })
+      expect { adapter.validated_connection_config('acme') }.not_to(raise_error)
+    end
+
+    it 'resolves the search_path from the raw tenant name' do
+      reconfigure(environmentify_strategy: ->(t) { "#{t}_ignored" })
+      config = adapter.validated_connection_config('acme')
+      expect(config['schema_search_path']).to(eq('"acme"'))
     end
   end
 end

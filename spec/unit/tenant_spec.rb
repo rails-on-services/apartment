@@ -67,6 +67,55 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
+  describe '.reload_schema_cache!' do
+    let(:acme_cache)    { double('schema_cache', clear!: nil) }
+    let(:widgets_cache) { double('schema_cache', clear!: nil) }
+    let(:default_cache) { double('schema_cache', clear!: nil) }
+
+    before do
+      manager = double('PoolManager')
+      allow(manager).to(receive(:each_pair)
+        .and_yield('acme:writing', double('pool', schema_cache: acme_cache))
+        .and_yield('widgets:writing', double('pool', schema_cache: widgets_cache)))
+      allow(Apartment).to(receive(:pool_manager).and_return(manager))
+      # with_default_tenant yields in default context and returns the block's
+      # value (the default pool); stub it to just call the block. .and_yield is
+      # wrong here — it would discard the block's return value.
+      allow(described_class).to(receive(:with_default_tenant)) { |&blk| blk.call } # rubocop:disable RSpec/Yield
+      allow(ActiveRecord::Base).to(receive(:connection_pool)
+        .and_return(double('pool', schema_cache: default_cache)))
+    end
+
+    it 'clears the schema cache on every warm tenant pool and the default pool' do
+      count = described_class.reload_schema_cache!
+      expect(acme_cache).to(have_received(:clear!))
+      expect(widgets_cache).to(have_received(:clear!))
+      expect(default_cache).to(have_received(:clear!))
+      expect(count).to(eq(3))
+    end
+
+    it 'scopes to a single tenant, leaving other tenant pools untouched' do
+      count = described_class.reload_schema_cache!('acme')
+      expect(acme_cache).to(have_received(:clear!))
+      expect(widgets_cache).not_to(have_received(:clear!))
+      # default pool is not a named real tenant, so it is excluded when scoping
+      expect(default_cache).not_to(have_received(:clear!))
+      expect(count).to(eq(1))
+    end
+
+    it 'includes the default pool when scoped to the default tenant' do
+      count = described_class.reload_schema_cache!('public')
+      expect(default_cache).to(have_received(:clear!))
+      expect(acme_cache).not_to(have_received(:clear!))
+      expect(count).to(eq(1))
+    end
+
+    it 'returns 0 and does not raise when no pool manager is configured' do
+      allow(Apartment).to(receive(:pool_manager).and_return(nil))
+      expect(described_class.reload_schema_cache!('acme')).to(eq(0))
+    end
+  end
+
   describe '.switch!' do
     it 'sets the current tenant without a block' do
       described_class.switch!('tenant1')

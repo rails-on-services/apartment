@@ -31,6 +31,16 @@ loader.ignore("#{__dir__}/apartment/cli")
 # as the cli.rb / cli ignores above.
 loader.ignore("#{__dir__}/rubocop")
 
+# Rails generators live under lib/generators and are loaded on demand by Rails'
+# generator machinery, never autoloaded. They follow Rails' generator naming
+# (Apartment::InstallGenerator), not Zeitwerk's path-based inference
+# (Generators::Apartment::Install::InstallGenerator), so leaving them managed
+# makes `Zeitwerk::Loader.eager_load_all` — which Rails runs whenever a host app
+# sets config.eager_load = true (production/CI) — raise Zeitwerk::NameError at
+# boot. Ignoring the directory is the canonical for_gem pattern for gems that
+# ship generators.
+loader.ignore("#{__dir__}/generators")
+
 # Collapse concerns/ so Zeitwerk maps lib/apartment/concerns/model.rb
 # to Apartment::Model (not Apartment::Concerns::Model). Mirrors the
 # Rails convention for app/models/concerns/.
