@@ -58,6 +58,16 @@ RSpec.describe(Apartment::CLI::Tenants) do
   end
 
   describe 'drop' do
+    # Isolate from an ambient APARTMENT_FORCE=1: it makes force? true and would
+    # short-circuit the confirmation branch these examples assert on.
+    around do |example|
+      original = ENV.fetch('APARTMENT_FORCE', nil)
+      ENV.delete('APARTMENT_FORCE')
+      example.run
+    ensure
+      ENV['APARTMENT_FORCE'] = original
+    end
+
     before do
       allow(Apartment::Tenant).to(receive(:drop))
     end
@@ -67,20 +77,42 @@ RSpec.describe(Apartment::CLI::Tenants) do
       expect(Apartment::Tenant).to(have_received(:drop).with('acme'))
     end
 
-    it 'prompts for confirmation without --force' do
+    it 'prompts for confirmation without --force (interactive)' do
       instance = described_class.new
+      allow($stdin).to(receive(:tty?).and_return(true))
       allow(instance).to(receive(:yes?).and_return(false))
       allow(instance).to(receive(:say))
       instance.drop('acme')
       expect(Apartment::Tenant).not_to(have_received(:drop))
     end
 
-    it 'proceeds when confirmation is accepted' do
+    it 'proceeds when confirmation is accepted (interactive)' do
       instance = described_class.new
+      allow($stdin).to(receive(:tty?).and_return(true))
       allow(instance).to(receive(:yes?).and_return(true))
       allow(instance).to(receive(:say))
       instance.drop('acme')
       expect(Apartment::Tenant).to(have_received(:drop).with('acme'))
+    end
+
+    # Issue #457: a non-interactive drop (no TTY) without --force/APARTMENT_FORCE
+    # must fail loudly rather than let Thor's yes? read EOF as "no" (a silent
+    # cancel that still exits 0) or block on $stdin.
+    it 'raises Thor::Error and never drops when non-interactive without force' do
+      instance = described_class.new
+      allow($stdin).to(receive(:tty?).and_return(false))
+      expect { instance.drop('acme') }.to(raise_error(Thor::Error, /APARTMENT_FORCE=1/))
+      expect(Apartment::Tenant).not_to(have_received(:drop))
+    end
+
+    # The binstub (`bin/apartment tenants drop x`) reaches drop via
+    # Thor's .start, where exit_on_failure? turns the Thor::Error into a
+    # non-zero SystemExit. This is the entry point the rake wrapper does not
+    # cover, so assert the whole-process behavior here (mirrors the create path).
+    it 'exits non-zero via .start (binstub) when non-interactive without force' do
+      allow($stdin).to(receive(:tty?).and_return(false))
+      expect { run_command('drop', 'acme') }.to(raise_error(SystemExit))
+      expect(Apartment::Tenant).not_to(have_received(:drop))
     end
   end
 

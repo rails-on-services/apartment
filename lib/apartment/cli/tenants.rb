@@ -29,7 +29,7 @@ module Apartment
       DESC
       method_option :force, type: :boolean, desc: 'Skip confirmation prompt'
       def drop(tenant)
-        return say('Cancelled.') if !force? && !yes?("Drop tenant '#{tenant}'? This cannot be undone. [y/N]")
+        return unless confirmed_destructive?(tenant)
 
         Apartment::Tenant.drop(tenant)
         say("Dropped tenant: #{tenant}") unless quiet?
@@ -75,6 +75,28 @@ module Apartment
 
       def force?
         options[:force] || ENV['APARTMENT_FORCE'] == '1'
+      end
+
+      # Whether the irreversible drop may proceed. --force / APARTMENT_FORCE=1
+      # is the explicit opt-in. On a TTY we prompt [y/N]. In a non-interactive
+      # context (deploy/cron/CI, binstub, rake) we cannot prompt: rather than
+      # let Thor's yes? read EOF as "no" — a silent cancel that still exits 0 —
+      # or block on $stdin.gets against an open-but-empty pipe, refuse loudly
+      # with a non-zero exit. Centralizing it here (not in the rake wrapper)
+      # covers every entry point uniformly. See issue #457.
+      def confirmed_destructive?(tenant)
+        return true if force?
+
+        unless $stdin.tty?
+          raise(Thor::Error,
+                'apartment tenants drop is destructive and cannot prompt in a ' \
+                'non-interactive context. Re-run with --force or APARTMENT_FORCE=1 to proceed.')
+        end
+
+        return true if yes?("Drop tenant '#{tenant}'? This cannot be undone. [y/N]")
+
+        say('Cancelled.')
+        false
       end
 
       def quiet?
