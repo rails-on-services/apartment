@@ -30,9 +30,13 @@ All events are namespaced `<name>.apartment` and published through
 > pool-lifecycle events only; `migrate_tenant` / `migrate_tenant_failed` are not in
 > its counter set. Installing it alone does **not** close migration error tracking —
 > subscribe to `migrate_tenant_failed.apartment` directly. Keep that subscriber
-> non-raising: it runs inline on the migration thread, and a raising subscriber to
-> the failure event is isolated by the Migrator (logged, not propagated) but still
-> loses your notification.
+> non-raising: it runs inline on the migration thread (a worker thread under
+> parallel migration). A subscriber raising a `StandardError` is isolated by the
+> Migrator — logged and swallowed, not propagated (you lose that one notification,
+> not the run). Process-control exceptions (`SystemExit`, `Interrupt`) and bare
+> `Exception` subclasses are **not** swallowed and will surface. The **success**
+> event `migrate_tenant.apartment` is *not* isolated — a raising success subscriber
+> can still break the run — so keep both subscribers defensive.
 
 **`cap_unmet` fires on two paths:** from the synchronous admission path (when a
 new pool would breach the cap and no idle pool can be freed) and from the

@@ -3,8 +3,8 @@
 require 'active_support/notifications'
 
 module Apartment
-  # Thin wrapper around ActiveSupport::Notifications.
-  # Known events: create, drop, evict (all namespaced as *.apartment).
+  # Thin wrapper around ActiveSupport::Notifications. All events are namespaced
+  # *.apartment; see docs/observability.md for the authoritative event catalog.
   module Instrumentation
     def self.instrument(event, payload = {}, &block)
       event_name = "#{event}.apartment"

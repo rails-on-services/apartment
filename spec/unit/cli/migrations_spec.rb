@@ -21,6 +21,14 @@ RSpec.describe(Apartment::CLI::Migrations) do
     $stdout = STDOUT
   end
 
+  it 'exposes only migrate and rollback as Thor commands (helpers stay private)' do
+    # Thor registers public instance methods as commands. Locks migrate_all /
+    # migration_failure_message under `private` so a future refactor that moves
+    # one above `private` doesn't silently expose it as `apartment:...`.
+    expect(described_class.commands.keys).to(include('migrate', 'rollback'))
+    expect(described_class.commands.keys).not_to(include('migrate_all', 'migration_failure_message'))
+  end
+
   describe 'migrate' do
     let(:migration_run) do
       Apartment::Migrator::MigrationRun.new(

@@ -338,6 +338,31 @@ RSpec.describe(Apartment::Migrator) do
       ActiveSupport::Notifications.unsubscribe('migrate_tenant_failed.apartment')
     end
 
+    it 'emits the failure event from worker threads on the parallel path' do
+      # The production path is parallel; a subscriber's StandardError here must
+      # not pollute run_parallel's fatal_errors (which would make #run raise),
+      # and the event must still fire from the worker thread. Primary runs first
+      # (sequential) and succeeds; the failure is one of the two parallel tenants.
+      call_count = Concurrent::AtomicFixnum.new(0)
+      allow(mock_migration_context).to(receive(:migrate)) do
+        raise(StandardError, 'boom') if call_count.increment == 2
+
+        []
+      end
+
+      events = Concurrent::Array.new
+      ActiveSupport::Notifications.subscribe('migrate_tenant_failed.apartment') { |e| events << e }
+
+      run = described_class.new(threads: 2).run
+
+      expect(run.failed.size).to(eq(1))
+      expect(events.size).to(eq(1))
+      expect(events.first.payload[:error]).to(be_a(StandardError))
+      expect(events.first.payload[:tenant]).to(eq(run.failed.first.tenant))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('migrate_tenant_failed.apartment')
+    end
+
     it 'emits migrate_tenant_failed.apartment when the primary migration fails' do
       allow(mock_migration_context).to(receive(:migrate).and_raise(StandardError, 'db down'))
 

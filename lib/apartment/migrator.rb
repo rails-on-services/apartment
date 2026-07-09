@@ -261,13 +261,27 @@ module Apartment
     # ActiveSupport::Notifications propagates subscriber exceptions through
     # instrument (verified against AS 8.0), and this fires from inside a rescue
     # block, so an un-isolated call would convert a captured per-tenant failure
-    # into an unhandled raise out of #run. The success-path instrumentation is
-    # left un-isolated by design — only the failure path carries the hard
-    # no-raise guarantee, and swallowing there would mask real subscriber bugs.
+    # into an unhandled raise out of #run.
+    #
+    # Scope of the guarantee: a subscriber raising a StandardError is swallowed
+    # and warned. Process-control exceptions (SystemExit, SignalException /
+    # Interrupt) are deliberately NOT rescued — they must propagate so exit and
+    # Ctrl-C still work mid-migration; a subscriber raising a bare Exception
+    # subclass is itself a bug (Ruby errors should descend from StandardError).
+    # The warn is nested-rescued so a broken $stderr (IOError is a StandardError)
+    # cannot re-escape the handler. Success-path instrumentation is left
+    # un-isolated by design — only the failure path carries the hard no-raise
+    # guarantee, and swallowing there would mask real subscriber bugs.
     def instrument_failure(tenant, error, duration)
       Instrumentation.instrument(:migrate_tenant_failed, tenant: tenant, error: error, duration: duration)
     rescue StandardError => e
-      warn "[Apartment::Migrator] migrate_tenant_failed subscriber raised #{e.class}: #{e.message}"
+      # Nested rescue: a sibling `rescue` on this method would NOT catch an
+      # exception raised by warn (a broken $stderr), so the warn gets its own.
+      begin
+        warn "[Apartment::Migrator] migrate_tenant_failed subscriber raised #{e.class}: #{e.message}"
+      rescue StandardError
+        nil
+      end
     end
 
     def monotonic_now
