@@ -76,6 +76,22 @@ cd "$WORKTREE_PATH" || { log_error "Failed to cd into $WORKTREE_PATH"; exit 1; }
 ABS_WORKTREE_PATH=$(pwd)
 
 # ---------------------------------------------------------------------------
+# mise trust
+# ---------------------------------------------------------------------------
+# mise refuses to apply an untrusted project config, keyed per absolute path,
+# so the committed mise.toml (which makes mise honor .ruby-version) is inert in
+# a fresh worktree until trusted. Trust it here so the developer's first `cd`
+# into the worktree applies the pin with no interactive prompt. No-op for rbenv
+# holdouts (mise absent) — rbenv reads .ruby-version directly and ignores this.
+if command -v mise >/dev/null 2>&1; then
+    if mise trust "$ABS_WORKTREE_PATH" >/dev/null 2>&1; then
+        log_info "mise: trusted $ABS_WORKTREE_PATH"
+    else
+        log_warn "mise: failed to trust $ABS_WORKTREE_PATH — run 'mise trust' there manually"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Serena registration
 # ---------------------------------------------------------------------------
 # Two failure modes this prevents:
