@@ -121,9 +121,15 @@ module Apartment
         duration: monotonic_now - start, error: nil, versions_run: versions
       )
     rescue StandardError => e
+      duration = monotonic_now - start
+      # Symmetric with the :migrate_tenant success event above: the gem holds the
+      # full structured error here, so emit it for subscribers rather than
+      # stranding it in the returned Result. See migrate_tenant's rescue.
+      instrument_failure(tenant_name, e, duration)
+
       Result.new(
         tenant: tenant_name, status: :failed,
-        duration: monotonic_now - start, error: e, versions_run: []
+        duration: duration, error: e, versions_run: []
       )
     end
 
@@ -166,9 +172,17 @@ module Apartment
         end
       end
     rescue StandardError => e
+      duration = monotonic_now - start
+      # Failure counterpart to the :migrate_tenant success event. On SUCCESS the
+      # gem instruments; on FAILURE it previously only returned a failed Result,
+      # leaving adopters no hook to observe the (structured) error. This closes
+      # that asymmetry — generic payload (tenant + error + duration); routing to
+      # an error tracker is the subscriber's job.
+      instrument_failure(tenant, e, duration)
+
       Result.new(
         tenant: tenant, status: :failed,
-        duration: monotonic_now - start, error: e, versions_run: []
+        duration: duration, error: e, versions_run: []
       )
     ensure
       Apartment::Current.migrating = false
@@ -240,6 +254,20 @@ module Apartment
       yield
     ensure
       conn.instance_variable_set(ADVISORY_LOCKS_IVAR, original) if conn&.instance_variable_defined?(ADVISORY_LOCKS_IVAR)
+    end
+
+    # Emit the failure event without letting a raising subscriber break the
+    # Migrator's non-raising contract: the failed Result MUST still be returned.
+    # ActiveSupport::Notifications propagates subscriber exceptions through
+    # instrument (verified against AS 8.0), and this fires from inside a rescue
+    # block, so an un-isolated call would convert a captured per-tenant failure
+    # into an unhandled raise out of #run. The success-path instrumentation is
+    # left un-isolated by design — only the failure path carries the hard
+    # no-raise guarantee, and swallowing there would mask real subscriber bugs.
+    def instrument_failure(tenant, error, duration)
+      Instrumentation.instrument(:migrate_tenant_failed, tenant: tenant, error: error, duration: duration)
+    rescue StandardError => e
+      warn "[Apartment::Migrator] migrate_tenant_failed subscriber raised #{e.class}: #{e.message}"
     end
 
     def monotonic_now

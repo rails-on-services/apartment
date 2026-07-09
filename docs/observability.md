@@ -24,6 +24,15 @@ All events are namespaced `<name>.apartment` and published through
 | `skip_evict.apartment` | When a candidate pool is skipped during eviction | `tenant:`, `reason:` (`:pinned`, `:in_use`), `eviction_reason:` (`:idle`, `:lru`, `:admission`); plus `busy_connections:` and `open_transactions:` when `reason: :in_use` |
 | `reaper_stopped.apartment` | When the background reaper is deactivated in the test environment | `reason:` (`:test_env`) |
 | `migrate_tenant.apartment` | After migrations run for one tenant | `tenant:`, `versions:` (array of migration version integers) |
+| `migrate_tenant_failed.apartment` | When a tenant (or the primary) migration raises | `tenant:`, `error:` (the raised exception), `duration:` (seconds) |
+
+> **`PoolObserver` does not forward the migrate events.** The observer below covers
+> pool-lifecycle events only; `migrate_tenant` / `migrate_tenant_failed` are not in
+> its counter set. Installing it alone does **not** close migration error tracking —
+> subscribe to `migrate_tenant_failed.apartment` directly. Keep that subscriber
+> non-raising: it runs inline on the migration thread, and a raising subscriber to
+> the failure event is isolated by the Migrator (logged, not propagated) but still
+> loses your notification.
 
 **`cap_unmet` fires on two paths:** from the synchronous admission path (when a
 new pool would breach the cap and no idle pool can be freed) and from the

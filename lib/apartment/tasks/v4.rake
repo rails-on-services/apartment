@@ -34,6 +34,13 @@ namespace :apartment do
     else
       Apartment::CLI::Migrations.new.invoke(:migrate)
     end
+    # Parity with apartment:drop: `.new.invoke` bypasses Thor.start's
+    # exit_on_failure? handling, so an unrescued Thor::Error (raised on
+    # migration failure) would surface as a raw `rake aborted!` backtrace that
+    # buries the actionable message. abort re-emits it as a clean one-liner
+    # with a non-zero exit.
+  rescue Thor::Error => e
+    abort(e.message)
   end
 
   desc 'Seed all tenants'
