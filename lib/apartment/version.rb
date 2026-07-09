@@ -1,5 +1,5 @@
 # frozen_string_literal: true
 
 module Apartment
-  VERSION = '4.0.0.alpha6'
+  VERSION = '4.0.0.alpha7'
 end

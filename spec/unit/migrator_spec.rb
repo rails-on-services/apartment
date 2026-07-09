@@ -258,6 +258,129 @@ RSpec.describe(Apartment::Migrator) do
     end
   end
 
+  describe 'failure instrumentation' do
+    # The success path instruments :migrate_tenant; failures must be symmetric so
+    # an adopter can subscribe to them and route the structured error (tenant +
+    # exception) to their error tracker, instead of it being stranded on stdout.
+    # These use real ActiveSupport::Notifications (no Instrumentation stub) and
+    # also assert the Migrator's non-raising return contract is unchanged.
+    let(:mock_migration_context) { instance_double('ActiveRecord::MigrationContext') }
+    let(:mock_pool) { instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool') }
+    let(:mock_connection) { double('connection') }
+
+    before do
+      allow(ActiveRecord::Base).to(receive_messages(connection_pool: mock_pool, lease_connection: mock_connection))
+      allow(mock_connection).to(receive(:instance_variable_get).and_return(true))
+      allow(mock_connection).to(receive(:instance_variable_set))
+      allow(mock_connection).to(receive(:instance_variable_defined?)
+        .with(:@advisory_locks_enabled).and_return(true))
+      allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_migration_context).to(receive(:needs_migration?).and_return(true))
+      allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
+    end
+
+    it 'emits migrate_tenant_failed.apartment with tenant, error, and duration when a tenant migration fails' do
+      boom = StandardError.new('boom')
+      allow(mock_migration_context).to(receive(:migrate).and_raise(boom))
+
+      events = []
+      ActiveSupport::Notifications.subscribe('migrate_tenant_failed.apartment') { |e| events << e }
+
+      described_class.new(threads: 0).send(:migrate_tenant, 'acme')
+
+      expect(events.size).to(eq(1))
+      payload = events.first.payload
+      expect(payload[:tenant]).to(eq('acme'))
+      expect(payload[:error]).to(be(boom))
+      expect(payload[:duration]).to(be_a(Numeric))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('migrate_tenant_failed.apartment')
+    end
+
+    it 'still returns a failed Result and surfaces in MigrationRun#failed (contract unchanged)' do
+      call_count = 0
+      allow(mock_migration_context).to(receive(:migrate)) do
+        call_count += 1
+        raise(StandardError, 'boom') if call_count == 2
+
+        []
+      end
+
+      failed_events = []
+      ActiveSupport::Notifications.subscribe('migrate_tenant_failed.apartment') { |e| failed_events << e }
+
+      run = described_class.new(threads: 0).run
+
+      expect(run.failed.size).to(eq(1))
+      expect(run.results.size).to(eq(3))
+      expect(failed_events.map { |e| e.payload[:tenant] }).to(eq(run.failed.map(&:tenant)))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('migrate_tenant_failed.apartment')
+    end
+
+    it 'does not let a raising subscriber break the non-raising contract' do
+      # ActiveSupport::Notifications propagates subscriber exceptions through
+      # instrument, and the failure event fires inside migrate_tenant's rescue
+      # block. Without isolation, a raising subscriber would turn a captured
+      # per-tenant failure into an unhandled raise out of the Migrator.
+      allow(mock_migration_context).to(receive(:migrate).and_raise(StandardError, 'boom'))
+      ActiveSupport::Notifications.subscribe('migrate_tenant_failed.apartment') { raise('subscriber blew up') }
+
+      migrator = described_class.new(threads: 0)
+      allow(migrator).to(receive(:warn))
+
+      result = nil
+      expect { result = migrator.send(:migrate_tenant, 'acme') }.not_to(raise_error)
+      expect(result.status).to(eq(:failed))
+      expect(result.error.message).to(eq('boom'))
+      expect(migrator).to(have_received(:warn).with(/subscriber raised/i))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('migrate_tenant_failed.apartment')
+    end
+
+    it 'emits the failure event from worker threads on the parallel path' do
+      # The production path is parallel; a subscriber's StandardError here must
+      # not pollute run_parallel's fatal_errors (which would make #run raise),
+      # and the event must still fire from the worker thread. Primary runs first
+      # (sequential) and succeeds; the failure is one of the two parallel tenants.
+      call_count = Concurrent::AtomicFixnum.new(0)
+      allow(mock_migration_context).to(receive(:migrate)) do
+        raise(StandardError, 'boom') if call_count.increment == 2
+
+        []
+      end
+
+      events = Concurrent::Array.new
+      ActiveSupport::Notifications.subscribe('migrate_tenant_failed.apartment') { |e| events << e }
+
+      run = described_class.new(threads: 2).run
+
+      expect(run.failed.size).to(eq(1))
+      expect(events.size).to(eq(1))
+      expect(events.first.payload[:error]).to(be_a(StandardError))
+      expect(events.first.payload[:tenant]).to(eq(run.failed.first.tenant))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('migrate_tenant_failed.apartment')
+    end
+
+    it 'emits migrate_tenant_failed.apartment when the primary migration fails' do
+      allow(mock_migration_context).to(receive(:migrate).and_raise(StandardError, 'db down'))
+
+      events = []
+      ActiveSupport::Notifications.subscribe('migrate_tenant_failed.apartment') { |e| events << e }
+
+      run = described_class.new(threads: 0).run
+
+      # Primary failure aborts the run, so exactly one failed event (the primary).
+      expect(events.size).to(eq(1))
+      expect(events.first.payload[:tenant]).to(eq('public'))
+      expect(events.first.payload[:error]).to(be_a(StandardError))
+      expect(run.results.map(&:status)).to(eq([:failed]))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('migrate_tenant_failed.apartment')
+    end
+  end
+
   describe '#migrate_tenant Current.migrating lifecycle' do
     let(:mock_pool) { double('pool', migration_context: double(needs_migration?: false)) }
 

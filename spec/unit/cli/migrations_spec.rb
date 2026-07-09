@@ -21,6 +21,14 @@ RSpec.describe(Apartment::CLI::Migrations) do
     $stdout = STDOUT
   end
 
+  it 'exposes only migrate and rollback as Thor commands (helpers stay private)' do
+    # Thor registers public instance methods as commands. Locks migrate_all /
+    # migration_failure_message under `private` so a future refactor that moves
+    # one above `private` doesn't silently expose it as `apartment:...`.
+    expect(described_class.commands.keys).to(include('migrate', 'rollback'))
+    expect(described_class.commands.keys).not_to(include('migrate_all', 'migration_failure_message'))
+  end
+
   describe 'migrate' do
     let(:migration_run) do
       Apartment::Migrator::MigrationRun.new(
@@ -100,6 +108,28 @@ RSpec.describe(Apartment::CLI::Migrations) do
         )
         allow(Apartment::Migrator).to(receive(:new).and_return(double(run: failed_run)))
         expect { run_command('migrate') }.to(raise_error(SystemExit))
+      end
+
+      it 'names failed tenants (capped) in the raised error message' do
+        failures = (1..8).map do |i|
+          Apartment::Migrator::Result.new(
+            tenant: "tenant_#{i}", status: :failed, duration: 0.1,
+            error: StandardError.new('boom'), versions_run: []
+          )
+        end
+        run = Apartment::Migrator::MigrationRun.new(results: failures, total_duration: 1.0, threads: 4)
+
+        cmd = described_class.new
+        allow(Apartment::Migrator).to(receive(:new).and_return(double(run: run)))
+        allow(cmd).to(receive(:say))
+        allow(cmd).to(receive(:trigger_schema_dump))
+
+        expect { cmd.send(:migrate_all) }.to(raise_error(Thor::Error)) do |error|
+          expect(error.message).to(include('Migration failed for 8 tenant(s)'))
+          expect(error.message).to(include('tenant_1, tenant_2, tenant_3, tenant_4, tenant_5'))
+          expect(error.message).to(include('and 3 more'))
+          expect(error.message).not_to(include('tenant_6'))
+        end
       end
     end
 
