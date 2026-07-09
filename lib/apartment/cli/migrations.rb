@@ -5,6 +5,13 @@ require 'thor'
 module Apartment
   class CLI < Thor
     class Migrations < Thor
+      # The raised Thor::Error message is the low-context surface a monitor or
+      # CI-log tail captures even when the stdout summary is dropped/unindexed.
+      # Name a few failed tenants there (capped, so a 600-tenant run does not
+      # produce a wall of text); the full per-tenant detail is in the summary
+      # and in the migrate_tenant_failed.apartment events.
+      FAILED_TENANTS_PREVIEW = 5
+
       def self.exit_on_failure? = true
 
       desc 'migrate [TENANT]', 'Run migrations for tenants'
@@ -62,7 +69,15 @@ module Apartment
         say(result.summary)
 
         trigger_schema_dump if result.success?
-        raise(Thor::Error, "Migration failed for #{result.failed.size} tenant(s)") unless result.success?
+        raise(Thor::Error, migration_failure_message(result.failed)) unless result.success?
+      end
+
+      def migration_failure_message(failures)
+        names = failures.map(&:tenant)
+        shown = names.first(FAILED_TENANTS_PREVIEW)
+        more = names.size - shown.size
+        suffix = more.positive? ? ", and #{more} more" : ''
+        "Migration failed for #{names.size} tenant(s): #{shown.join(', ')}#{suffix} (see summary above)"
       end
 
       # Rollback bypasses the Migrator's parallelism and Result tracking but

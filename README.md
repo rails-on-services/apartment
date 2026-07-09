@@ -40,6 +40,25 @@ This gem is a maintained fork of the original [Apartment gem](https://github.com
 - Rails 7.2+
 - PostgreSQL 14+, MySQL 8.4+, or SQLite3
 
+### Ruby version manager
+
+`.ruby-version` is the single source of truth for the local Ruby version (the
+same file `ruby/setup-ruby` reads in CI). Both [mise](https://mise.jdx.dev) and
+[rbenv](https://github.com/rbenv/rbenv) honor it — use whichever you prefer:
+
+```bash
+# mise (recommended)
+brew install mise                 # then add `eval "$(mise activate zsh)"` to ~/.zshrc
+mise trust && mise install        # one-time trust per clone, then install the pinned Ruby
+
+# rbenv (also works, unchanged)
+rbenv install "$(cat .ruby-version)"
+```
+
+The committed `mise.toml` carries settings only (never a version): it tells mise
+to honor `.ruby-version` without any per-developer global config. `mise trust`
+is required once per clone; `bin/dev/setup-worktree` handles it for new worktrees.
+
 ### Setup
 
 ```ruby

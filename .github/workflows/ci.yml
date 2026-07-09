@@ -39,6 +39,10 @@ jobs:
   unit:
     name: Unit · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
+    # Rails main is a canary: it tracks an unreleased edge and is allowed to
+    # fail. continue-on-error keeps a red main cell from failing the `unit` job,
+    # so it neither blocks the workflow nor flips needs.unit.result for ci-gate.
+    continue-on-error: ${{ matrix.rails == 'main' }}
     strategy:
       fail-fast: false
       matrix:
@@ -245,3 +249,34 @@ jobs:
         run: bundle exec rspec spec/integration/v4/ --format progress
         env:
           DATABASE_ENGINE: sqlite
+
+  # ── CI gate ────────────────────────────────────────────────────────
+  # Single aggregation check for branch protection: require just `ci-gate`
+  # rather than every matrix cell by name (which would break whenever the
+  # matrix changes and risk pinning the Rails-main canary). Passes only when
+  # every required job succeeded or was skipped — skipped happens only under a
+  # scoped workflow_dispatch, never on the pull_request events that gate merges.
+  # Job results arrive via env (not interpolated into run:) so the shell never
+  # evaluates workflow context directly.
+  ci-gate:
+    if: always()
+    needs: [unit, postgresql, mysql, sqlite]
+    runs-on: ubuntu-latest
+    env:
+      UNIT: ${{ needs.unit.result }}
+      POSTGRESQL: ${{ needs.postgresql.result }}
+      MYSQL: ${{ needs.mysql.result }}
+      SQLITE: ${{ needs.sqlite.result }}
+    steps:
+      - name: Require all CI jobs to have passed
+        run: |
+          failed=0
+          for job in UNIT POSTGRESQL MYSQL SQLITE; do
+            result="${!job}"
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "::error::Required CI job '$job' concluded '$result'"
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 0 ]; then echo "All required CI jobs passed."; fi
+          exit "$failed"

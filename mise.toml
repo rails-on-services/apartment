@@ -1,0 +1,28 @@
+# Project mise configuration.
+#
+# Enables mise's "idiomatic version file" support so `mise install` and
+# `mise activate`'s directory switching honor the checked-in `.ruby-version`
+# pin with NO per-developer global config. mise disables idiomatic files by
+# default, and this project setting REPLACES (does not merge with) any global
+# `idiomatic_version_file_enable_tools`.
+#
+# All three tools are listed deliberately even though this repo only pins ruby:
+# scoping the list to ruby alone would REPLACE a developer's global list and
+# silently stop honoring their .node-version / .python-version in this repo.
+# - ruby:   the pinned toolchain (see .ruby-version). Read by mise here and by
+#           rbenv for holdouts; both managers honor the same file.
+# - node:   listed for cross-repo consistency; no .node-version, so it no-ops.
+# - python: listed for cross-repo consistency; .python-version pins 3.13 for
+#           ad hoc tooling, otherwise harmless.
+#
+# The version lives in `.ruby-version`, not here, so a single `.ruby-version`
+# bump stays the one place to change Ruby — the same file `ruby/setup-ruby`
+# reads in CI. This file carries settings only, never a version.
+#
+# Trust: mise requires a one-time `mise trust` per clone/worktree before
+# applying this file. `bin/dev/setup-worktree` trusts new worktrees; for the
+# main clone run `mise trust && mise install` once (see README).
+#
+# rbenv is unaffected — it reads `.ruby-version` directly and ignores this file.
+[settings]
+idiomatic_version_file_enable_tools = ["node", "ruby", "python"]
