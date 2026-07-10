@@ -143,6 +143,29 @@ RSpec.describe(Apartment::Config) do
     end
   end
 
+  describe 'max_total_connections deprecation' do
+    it 'warns and aliases max_total_connections to max_tenant_pools' do
+      config.max_total_connections = 8
+      expect { config.apply_defaults! }.to(output(/DEPRECATION.*max_total_connections/).to_stderr)
+      expect(config.max_tenant_pools).to(eq(8))
+    end
+
+    it 'does not overwrite an explicitly set max_tenant_pools' do
+      config.max_total_connections = 8
+      config.max_tenant_pools = 8
+      config.apply_defaults!
+      expect(config.max_tenant_pools).to(eq(8))
+    end
+
+    it 'raises when max_total_connections and max_tenant_pools disagree' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.max_total_connections = 8
+      config.max_tenant_pools = 4
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_total_connections/))
+    end
+  end
+
   describe '#validate!' do
     it 'raises when tenant_strategy is missing' do
       expect { config.validate! }.to(raise_error(

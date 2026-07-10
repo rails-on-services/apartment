@@ -127,6 +127,17 @@ module Apartment
       # Reap on the idle-timeout cadence unless an explicit interval decouples
       # the two (reap more often without shrinking the idle window).
       @reaper_interval = @pool_idle_timeout if @reaper_interval.nil?
+
+      # max_total_connections is deprecated: the name said "connections" but it
+      # always capped tenant-pool COUNT. Alias it to its true meaning without
+      # changing behavior. Only fill when max_tenant_pools was not set explicitly,
+      # so validate!'s both-set guard can still catch a genuine double-spec.
+      return unless @max_total_connections
+
+      warn '[Apartment] DEPRECATION: config.max_total_connections is deprecated and will be ' \
+           'removed in v5. It caps tenant-pool COUNT, not connections; rename it to ' \
+           'max_tenant_pools. For a true connection ceiling, set max_tenant_connections.'
+      @max_tenant_pools = @max_total_connections if @max_tenant_pools.nil?
     end
 
     # Validate configuration completeness and consistency.
@@ -177,6 +188,13 @@ module Apartment
       if @max_tenant_pools && (!@max_tenant_pools.is_a?(Integer) || @max_tenant_pools < 1)
         raise(ConfigurationError,
               "max_tenant_pools must be a positive integer or nil, got: #{@max_tenant_pools.inspect}")
+      end
+
+      if @max_total_connections && @max_tenant_pools && @max_total_connections != @max_tenant_pools
+        raise(ConfigurationError,
+              'max_total_connections and max_tenant_pools are the same setting under two names; ' \
+              "set only one. Got max_total_connections=#{@max_total_connections}, " \
+              "max_tenant_pools=#{@max_tenant_pools}")
       end
 
       if @max_tenant_connections && (!@max_tenant_connections.is_a?(Integer) || @max_tenant_connections < 1)
