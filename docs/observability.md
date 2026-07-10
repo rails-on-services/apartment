@@ -23,7 +23,7 @@ All events are namespaced `<name>.apartment` and published through
 | `cap_unmet.apartment` | When the pool cap cannot be met by eviction (soft-cap breach) | `max_total:`, `current:`, `unevicted:` |
 | `skip_evict.apartment` | When a candidate pool is skipped during eviction | `tenant:`, `reason:` (`:pinned`, `:in_use`), `eviction_reason:` (`:idle`, `:lru`, `:admission`); plus `busy_connections:` and `open_transactions:` when `reason: :in_use` |
 | `reaper_stopped.apartment` | When the background reaper is deactivated in the test environment | `reason:` (`:test_env`) |
-| `migrate_tenant.apartment` | After migrations run for one tenant | `tenant:`, `versions:` (array of migration version integers) |
+| `migrate_tenant.apartment` | After migrations run for one tenant (or the primary) | `tenant:`, `versions:` (array of migration version integers) |
 | `migrate_tenant_failed.apartment` | When a tenant (or the primary) migration raises | `tenant:`, `error:` (the raised exception), `duration:` (seconds) |
 
 > **`PoolObserver` does not forward the migrate events.** The observer below covers
