@@ -37,9 +37,20 @@ Apartment.configure do |config|
 
   # == Connection Pool =====================================================
 
-  # config.tenant_pool_size      = 5
-  # config.pool_idle_timeout     = 300
-  # config.max_total_connections = nil
+  # tenant_pool_size MUST be >= the peak number of threads/fibers in one process
+  # that can touch the SAME tenant at once (e.g. a Sidekiq role's concurrency for a
+  # same-tenant job fan-out); otherwise those threads block on connection checkout.
+  # It is a lazy ceiling — connections are created on demand and idle pools reaped.
+  # config.tenant_pool_size       = 5
+  # config.pool_idle_timeout      = 300
+  #
+  # Bound how many tenant pools exist per process:
+  # config.max_tenant_pools       = nil
+  # ...or bound total tenant-pool CONNECTIONS (requires tenant_pool_size); the
+  # admission controller derives the pool budget as floor(value / tenant_pool_size):
+  # config.max_tenant_connections = nil
+  #
+  # config.max_total_connections  = nil # DEPRECATED: alias of max_tenant_pools; removed in v5
 
   # == Elevator (Request Tenant Detection) =================================
 

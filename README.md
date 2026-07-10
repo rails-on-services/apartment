@@ -118,15 +118,19 @@ All options are set in `config/initializers/apartment.rb` inside an `Apartment.c
 
 ### Pool Settings
 
-`tenant_pool_size`: max connections per tenant pool. Default `nil` — each tenant pool inherits the app's base pool size (`DB_POOL_SIZE` / `pool:` in `database.yml`). Set it to size tenant pools independently of the app pool (e.g. to bound total connections across many schema-per-tenant pools).
+`tenant_pool_size`: max connections per tenant pool. Default `nil` — each tenant pool inherits the app's base pool size (`DB_POOL_SIZE` / `pool:` in `database.yml`). **Set it to at least the peak number of threads/fibers in one process that can touch the _same_ tenant at once** (e.g. a Sidekiq role's concurrency for a same-tenant job fan-out); a smaller pool makes those threads block on connection checkout. It is a lazy ceiling — connections are created on demand and idle pools are reaped — so sizing for peak does not hold that many connections open at steady state.
 
 `pool_idle_timeout`: seconds an idle tenant pool must exceed before it is eligible for reaping (default: 300).
 
 `reaper_interval`: seconds between background reap passes. Default `nil` — derives from `pool_idle_timeout`. Set it lower to reap more often without shrinking the idle window.
 
-`max_total_connections`: ceiling on the number of live tenant pools; `nil` for unlimited (default: `nil`). Enforced synchronously at pool-creation time (see `pool_overflow_policy`) and trimmed continuously by the background reaper. Total backend connections ≈ `max_total_connections × tenant_pool_size`.
+`max_tenant_pools`: ceiling on the number of live tenant pools per process; `nil` for unlimited (default: `nil`). Enforced synchronously at pool-creation time (see `pool_overflow_policy`) and trimmed continuously by the background reaper.
 
-`pool_overflow_policy`: behavior when a new pool would breach `max_total_connections` and every existing pool is pinned or in use (no idle pool to evict). `:evict_idle` (default) — allow the new pool, emit a `cap_unmet` notification (soft cap, prioritizes availability). `:raise` — raise `Apartment::PoolCapacityReached` (hard cap, sheds load). When an idle pool *is* available it is always evicted inline regardless of policy. See `docs/designs/pool-admission-control.md`.
+`max_tenant_connections`: ceiling on total *tenant-pool* connections per process (default: `nil`); requires `tenant_pool_size`. The admission controller derives the pool budget as `floor(max_tenant_connections / tenant_pool_size)`. Per-process tenant-pool connections ≈ `effective_pool_budget × tenant_pool_size`, where `effective_pool_budget = min(max_tenant_pools, floor(max_tenant_connections / tenant_pool_size))`; the default pool and any separate pinned pool are additional. A tenant using multiple roles (e.g. `writing` + `reading`) holds one pool per role (`tenant:role` keys), counting once per role against the budget. For a hard external-pooler budget, pair this with `pool_overflow_policy: :raise` (the ceiling is soft under the default `:evict_idle`).
+
+`max_total_connections`: **deprecated** (removed in v5) — it capped tenant-pool *count*, not connections. It now aliases `max_tenant_pools`; rename it. For a true connection ceiling, set `max_tenant_connections`.
+
+`pool_overflow_policy`: behavior when a new pool would breach the pool budget (`max_tenant_pools` / `max_tenant_connections`) and every existing pool is pinned or in use (no idle pool to evict). `:evict_idle` (default) — allow the new pool, emit a `cap_unmet` notification (soft cap, prioritizes availability). `:raise` — raise `Apartment::PoolCapacityReached` (hard cap, sheds load). When an idle pool *is* available it is always evicted inline regardless of policy. See `docs/designs/pool-admission-control.md`.
 
 `reap_in_test`: keep the background reaper running under `Rails.env.test?` (default `false` — the Railtie stops it in test, where fixture transactions make mid-example eviction a liability). Set `true` if a deployed process can run under test-env semantics and must keep reaping — that's cleaner than guarding `RAILS_ENV` at boot to avoid silently leaking connections. It applies to *every* `Rails.env.test?` process, including CI, so enable it only when a real deployment needs it.
 

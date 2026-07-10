@@ -12,6 +12,13 @@ before establishing the new one. When no pool can be evicted (all pinned/in-use)
 emit `:cap_unmet`) or **`:raise`** (`PoolCapacityReached`, hard fail). The reaper keeps
 running as the steady-state trimmer.
 
+> **Naming update.** The cap knob is now `max_tenant_pools` (with `max_total_connections`
+> deprecated as its alias, removed in v5), and a connection ceiling `max_tenant_connections`
+> derives a pool budget on top of it. The bound this document calls `max_total` is
+> `Config#effective_pool_budget` = `min(max_tenant_pools, floor(max_tenant_connections /
+> tenant_pool_size))`. See [`pool-connection-budget.md`](pool-connection-budget.md). The
+> admission mechanism below is unchanged — only the knob names and the derived bound differ.
+
 ## Problem
 
 `PoolManager#fetch_or_create` uses `Concurrent::Map#compute_if_absent`: a new tenant
@@ -121,7 +128,7 @@ silent drop. `:evict_idle` (default) never fails a request.
 ## Configuration
 
 - `pool_overflow_policy` — `:evict_idle` (default) or `:raise`. Only meaningful with
-  `max_total_connections` set.
+  a pool budget set (`max_tenant_pools` / `max_tenant_connections`).
 
 ## Scope / out of scope
 
