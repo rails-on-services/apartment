@@ -119,6 +119,30 @@ RSpec.describe(Apartment::Config) do
     end
   end
 
+  describe '#effective_pool_budget' do
+    it 'returns nil when neither knob is set' do
+      expect(config.effective_pool_budget).to(be_nil)
+    end
+
+    it 'returns max_tenant_pools when only it is set' do
+      config.max_tenant_pools = 8
+      expect(config.effective_pool_budget).to(eq(8))
+    end
+
+    it 'derives the pool budget from the connection ceiling with floor division' do
+      config.tenant_pool_size = 3
+      config.max_tenant_connections = 20
+      expect(config.effective_pool_budget).to(eq(6)) # floor(20 / 3)
+    end
+
+    it 'takes the stricter of the explicit pool cap and the derived budget' do
+      config.tenant_pool_size = 2
+      config.max_tenant_connections = 20 # -> 10 pools
+      config.max_tenant_pools = 4
+      expect(config.effective_pool_budget).to(eq(4))
+    end
+  end
+
   describe '#validate!' do
     it 'raises when tenant_strategy is missing' do
       expect { config.validate! }.to(raise_error(
@@ -198,6 +222,22 @@ RSpec.describe(Apartment::Config) do
       config.tenants_provider = -> { [] }
       config.max_tenant_connections = 0
       expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_tenant_connections/))
+    end
+
+    it 'raises when max_tenant_connections is set without tenant_pool_size' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_pool_size = nil
+      config.max_tenant_connections = 10
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /tenant_pool_size/))
+    end
+
+    it 'raises when max_tenant_connections is below tenant_pool_size' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_pool_size = 5
+      config.max_tenant_connections = 3
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /tenant_pool_size/))
     end
 
     it 'raises when reaper_interval is not a positive number' do

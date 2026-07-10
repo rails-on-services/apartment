@@ -184,6 +184,18 @@ module Apartment
               "max_tenant_connections must be a positive integer or nil, got: #{@max_tenant_connections.inspect}")
       end
 
+      if @max_tenant_connections && @tenant_pool_size.nil?
+        raise(ConfigurationError,
+              'max_tenant_connections requires tenant_pool_size to be set (the pool budget is ' \
+              'derived as max_tenant_connections / tenant_pool_size)')
+      end
+
+      if @max_tenant_connections && @tenant_pool_size && @max_tenant_connections < @tenant_pool_size
+        raise(ConfigurationError,
+              "max_tenant_connections (#{@max_tenant_connections}) must be >= tenant_pool_size " \
+              "(#{@tenant_pool_size}); it cannot fit a single tenant pool")
+      end
+
       unless %i[evict_idle raise].include?(@pool_overflow_policy)
         raise(ConfigurationError,
               'pool_overflow_policy must be :evict_idle or :raise, ' \
@@ -250,6 +262,16 @@ module Apartment
     # Returns the current Rails environment name, falling back to env vars and a safe default.
     def rails_env_name
       (Rails.env if defined?(Rails.env)) || ENV['RAILS_ENV'] || ENV['RACK_ENV'] || 'default_env'
+    end
+
+    # The pool-count bound the admission controller enforces: the stricter of the
+    # explicit pool cap (max_tenant_pools) and the pool budget derived from the
+    # connection ceiling (max_tenant_connections / tenant_pool_size, floored).
+    # Returns nil (uncapped) when neither knob is set. Relies on a global
+    # tenant_pool_size, so tenant-pool connections <= budget * tenant_pool_size.
+    def effective_pool_budget
+      derived = @max_tenant_connections && @tenant_pool_size ? @max_tenant_connections / @tenant_pool_size : nil
+      [@max_tenant_pools, derived].compact.min
     end
   end
 end
