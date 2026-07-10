@@ -14,6 +14,8 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.pool_idle_timeout).to(eq(300)) }
     it { expect(config.reaper_interval).to(be_nil) }
     it { expect(config.max_total_connections).to(be_nil) }
+    it { expect(config.max_tenant_pools).to(be_nil) }
+    it { expect(config.max_tenant_connections).to(be_nil) }
     it { expect(config.pool_overflow_policy).to(eq(:evict_idle)) }
     it { expect(config.seed_after_create).to(be(false)) }
     it { expect(config.seed_data_file).to(be_nil) }
@@ -182,6 +184,20 @@ RSpec.describe(Apartment::Config) do
       config.tenants_provider = -> { [] }
       config.max_total_connections = 0
       expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_total_connections/))
+    end
+
+    it 'raises when max_tenant_pools is not a positive integer' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.max_tenant_pools = 0
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_tenant_pools/))
+    end
+
+    it 'raises when max_tenant_connections is not a positive integer' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.max_tenant_connections = 0
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_tenant_connections/))
     end
 
     it 'raises when reaper_interval is not a positive number' do

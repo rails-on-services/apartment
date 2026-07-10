@@ -17,7 +17,8 @@ module Apartment
     attr_accessor :tenants_provider, :default_tenant,
                   :default_tenant_switch_allowed,
                   :tenant_pool_size, :pool_idle_timeout, :reaper_interval,
-                  :max_total_connections, :pool_overflow_policy,
+                  :max_total_connections, :max_tenant_pools, :max_tenant_connections,
+                  :pool_overflow_policy,
                   :seed_after_create, :seed_data_file,
                   :schema_load_strategy, :schema_file,
                   :parallel_migration_threads,
@@ -38,6 +39,8 @@ module Apartment
       @pool_idle_timeout = 300
       @reaper_interval = nil
       @max_total_connections = nil
+      @max_tenant_pools = nil
+      @max_tenant_connections = nil
       @pool_overflow_policy = :evict_idle
       @seed_after_create = false
       @seed_data_file = nil
@@ -169,6 +172,16 @@ module Apartment
       if @max_total_connections && (!@max_total_connections.is_a?(Integer) || @max_total_connections < 1)
         raise(ConfigurationError,
               "max_total_connections must be a positive integer or nil, got: #{@max_total_connections.inspect}")
+      end
+
+      if @max_tenant_pools && (!@max_tenant_pools.is_a?(Integer) || @max_tenant_pools < 1)
+        raise(ConfigurationError,
+              "max_tenant_pools must be a positive integer or nil, got: #{@max_tenant_pools.inspect}")
+      end
+
+      if @max_tenant_connections && (!@max_tenant_connections.is_a?(Integer) || @max_tenant_connections < 1)
+        raise(ConfigurationError,
+              "max_tenant_connections must be a positive integer or nil, got: #{@max_tenant_connections.inspect}")
       end
 
       unless %i[evict_idle raise].include?(@pool_overflow_policy)
