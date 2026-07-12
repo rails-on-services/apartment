@@ -30,7 +30,10 @@ RSpec.describe(Apartment::PoolObserver) do
   describe '#sample!' do
     let(:stub_manager) { instance_double(Apartment::PoolManager, stats: { total_pools: 3, tenants: [] }) }
 
-    before { allow(Apartment).to(receive(:pool_manager).and_return(stub_manager)) }
+    before do
+      allow(Apartment).to(receive(:pool_manager).and_return(stub_manager))
+      allow(stub_manager).to(receive(:each_pair))
+    end
 
     it 'emits a tenant_pools_live gauge from PoolManager#stats' do
       observer = described_class.new(sink: sink)
@@ -64,10 +67,58 @@ RSpec.describe(Apartment::PoolObserver) do
     end
   end
 
+  describe '#sample! checkout pressure' do
+    def fake_pool(size:, busy:, waiting:)
+      instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool,
+                      stat: { size: size, busy: busy, waiting: waiting })
+    end
+
+    let(:pools) do
+      {
+        'acme:writing' => fake_pool(size: 2, busy: 2, waiting: 3),
+        'beta:writing' => fake_pool(size: 5, busy: 1, waiting: 0),
+      }
+    end
+
+    let(:stub_manager) { instance_double(Apartment::PoolManager, stats: { total_pools: 2, tenants: [] }) }
+
+    before do
+      allow(Apartment).to(receive(:pool_manager).and_return(stub_manager))
+      allow(stub_manager).to(receive(:each_pair)) { |&blk| pools.each(&blk) }
+    end
+
+    it 'counts pools with threads waiting on checkout' do
+      described_class.new(sink: sink).sample!
+      expect(samples.find { |s| s.name == :pools_waiting }.value).to(eq(1))
+    end
+
+    it 'counts saturated pools where busy >= size' do
+      described_class.new(sink: sink).sample!
+      expect(samples.find { |s| s.name == :pools_saturated }.value).to(eq(1))
+    end
+
+    it 'reports the worst waiting count with the tenant in payload, not dimensions' do
+      described_class.new(sink: sink).sample!
+      sample = samples.find { |s| s.name == :max_checkout_waiting }
+      expect(sample).to(have_attributes(kind: :gauge, value: 3, dimensions: {}, payload: { tenant: 'acme:writing' }))
+    end
+
+    it 'skips a pool whose #stat raises without breaking the pass' do
+      broken = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool)
+      allow(broken).to(receive(:stat).and_raise(StandardError, 'pool tearing down'))
+      pools['broken:writing'] = broken
+      described_class.new(sink: sink).sample!
+      expect(samples.map(&:name)).to(include(:pools_waiting, :pools_saturated, :max_checkout_waiting))
+    end
+  end
+
   describe '#start_sampler! / #stop!' do
     let(:stub_manager) { instance_double(Apartment::PoolManager, stats: { total_pools: 2, tenants: [] }) }
 
-    before { allow(Apartment).to(receive(:pool_manager).and_return(stub_manager)) }
+    before do
+      allow(Apartment).to(receive(:pool_manager).and_return(stub_manager))
+      allow(stub_manager).to(receive(:each_pair))
+    end
 
     it 'runs sample! on the configured interval' do
       observer = described_class.new(sink: sink)
@@ -116,14 +167,16 @@ RSpec.describe(Apartment::PoolObserver) do
 
     it 'does not propagate when the sink raises during sample!' do
       allow(Apartment).to(receive(:pool_manager)
-        .and_return(instance_double(Apartment::PoolManager, stats: { total_pools: 1, tenants: [] })))
+        .and_return(instance_double(Apartment::PoolManager, stats: { total_pools: 1, tenants: [] },
+                                                            each_pair: nil)))
       @observer = described_class.new(sink: boom_sink)
       expect { @observer.sample! }.not_to(raise_error)
     end
 
     it 'does not propagate when backend_count raises' do
       allow(Apartment).to(receive(:pool_manager)
-        .and_return(instance_double(Apartment::PoolManager, stats: { total_pools: 1, tenants: [] })))
+        .and_return(instance_double(Apartment::PoolManager, stats: { total_pools: 1, tenants: [] },
+                                                            each_pair: nil)))
       @observer = described_class.new(sink: sink, backend_count: -> { raise('backend boom') })
       expect { @observer.sample! }.not_to(raise_error)
     end
