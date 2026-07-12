@@ -20,10 +20,11 @@ correctness — a PgBouncer setting plus a PostgreSQL version floor — was not 
    `search_path` was not reported to clients before PG 18, and PgBouncer can only track
    parameters the server reports. On PG ≤ 17, **no gem change and no PgBouncer config makes
    transaction-mode pooling safe.** See [The version floor](#the-version-floor).
-4. **RDS Proxy behaves oppositely to PgBouncer: it pins rather than leaks.** Correct, but
-   with the multiplexing benefit erased. Whether libpq `options` avoids the pin is the one
-   open question the spike could not answer locally, and it is now the *only* thing that
-   could justify the original W4 code change. See [RDS Proxy](#rds-proxy).
+4. **RDS Proxy behaves oppositely to PgBouncer: it pins rather than leaks — and Rails pins it
+   with or without Apartment.** Correct, but inert: no connection reduction. Briefly the only
+   surviving rationale for the libpq `options` work, now **closed** — a Rails app trips three
+   *other* pinning triggers we cannot fix from a gem, so fixing ours would change nothing.
+   **Decision: RDS Proxy is not supported as a pooling solution.** See [RDS Proxy](#rds-proxy).
 5. **Rails needs no patching either way.** `options` already reaches libpq untouched, and
    omitting `schema_search_path` already suppresses Rails' `SET`. See [The Rails side](#the-rails-side).
 
@@ -120,12 +121,28 @@ Apartment:
   a *static, per-proxy* string. Per-tenant `search_path` cannot be expressed in it without one
   proxy per tenant, which does not scale to a real tenant list.
 
-**The open question:** a libpq `options` startup parameter is not a `SET` command, so it may
-not trip the pinning rule — but AWS does not document `options` at all, and if RDS Proxy
-neither pins nor pool-keys on it, the result would be the *silent leak* rather than the safe
-pin. It could plausibly be better, or plausibly be catastrophic. This is unresolved and
-**must not be guessed at**; it needs a real RDS Proxy in AWS. It is the only surviving
-rationale for the original W4 code change.
+**Resolved (2026-07-12): RDS Proxy is not supported, and the question is closed.** A libpq
+`options` startup parameter is not a `SET`, so it might have dodged the pin — that possibility
+was briefly the only surviving rationale for the W4 code change. It does not survive contact
+with the rest of the stack. **A Rails app pins on RDS Proxy for three reasons that have
+nothing to do with tenancy**, so fixing Apartment's `search_path` would change nothing:
+
+| Trigger | Origin |
+|---|---|
+| Three unconditional `SET`s in `configure_connection` (`client_min_messages`, `standard_conforming_strings`, `intervalstyle`) | Rails — not configurable off; teams have resorted to monkeypatching `PostgreSQLAdapter` to strip them |
+| The extended query protocol, used **even when `prepared_statements: false`** | Rails — [rails/rails#40207](https://github.com/rails/rails/issues/40207), **closed as stale**, unresolved |
+| `nextval`/`setval`, non-transactional advisory locks | Rails |
+| Per-tenant `search_path` | Apartment — the only line we control |
+
+Fixing the last row while the first three stand buys nothing, and the first two are not
+fixable from a gem. Add that the `options` path carries a **catastrophic downside** — AWS
+documents `options` nowhere, and if the proxy neither pins on it nor keys its backend pool by
+it, a backend carrying one tenant's `search_path` is handed to another, i.e. the silent leak
+in production — and the expected value is plainly negative.
+
+RDS Proxy stays *safe* with Apartment (pinning preserves isolation) and remains useful for
+failover resilience and IAM auth. It is simply not a connection-reduction tool for Rails, and
+we should not document it as one.
 
 ## The Rails side
 
@@ -166,11 +183,13 @@ Ordered by urgency, not by size.
 3. **Prove it in CI.** A PgBouncer service container running the leak test as an assertion:
    the safe config isolates, and — worth pinning down explicitly — the unsafe config leaks. A
    test that fails if PgBouncer or PostgreSQL ever changes this behavior underneath us.
-4. **Drop the libpq `options` implementation from the beta path.** It is dominated on
-   PgBouncer. Re-open it *only* if the RDS Proxy question below comes back positive.
-5. **Answer the RDS Proxy question separately, on real infrastructure.** Evidence-gated, like
-   the member-10 disposition: build nothing until a measurement or an adopter says it matters.
+4. **Drop the libpq `options` implementation entirely.** Dominated on PgBouncer; pointless on
+   RDS Proxy (Rails pins regardless). Not deferred — **closed**.
+5. **State that RDS Proxy is not supported as a pooling solution**, with the reason: the
+   pinning is Rails', not ours. This is a documentation answer to a recurring community ask,
+   not a backlog item.
 
 Beta's correctness floor is met by 1–3, which are documentation, configuration, and a test —
 not the M–L code long pole W4 was sized as. **The libpq `options` work, the thing W4 existed
-to build, should not be built.**
+to build, should not be built at all.** W4 collapses from an M–L code workstream to a docs +
+CI task.

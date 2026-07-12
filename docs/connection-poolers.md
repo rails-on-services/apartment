@@ -22,7 +22,7 @@ and which configurations are safe.
 | PgBouncer, `transaction` mode, **PG 18+**, `track_extra_parameters` includes `search_path` | Safe |
 | PgBouncer, `transaction` mode, PG 18+, default settings | **UNSAFE — silent cross-tenant reads** |
 | PgBouncer, `transaction` mode, **PG ≤ 17** | **UNSAFE — cannot be made safe** |
-| RDS Proxy (PostgreSQL) | Safe, but sessions pin — you lose the multiplexing you paid for |
+| RDS Proxy (PostgreSQL) | Safe, but sessions pin — no connection reduction. **Not supported as a pooling solution**; Rails pins with or without Apartment |
 | Database-per-tenant strategy (`:database_name`) | Not affected — no `search_path` involved |
 
 ## Why this happens
@@ -96,25 +96,43 @@ connection.
 **Not supported. There is no configuration that makes this safe**, and no change Apartment
 can make on its side to fix it. Use `session` mode, or upgrade to PostgreSQL 18.
 
-### RDS Proxy (PostgreSQL)
+### RDS Proxy (PostgreSQL) — safe, but not supported as a pooling solution
 
-**Safe, but it pins.** RDS Proxy pins a session to a backend as soon as the client issues any
-`SET` — which Rails does on every new connection — so the connection stops being shared and
-no cross-tenant leak is possible. The trade-off is that transaction-level multiplexing, the
-point of the proxy, does not happen for your tenant connections.
+**RDS Proxy is safe with Apartment — it *pins* rather than leaking — but it will not reduce
+your connection count, and Apartment is not the reason.** A Rails application on RDS Proxy
+with PostgreSQL pins its sessions with or without this gem. We do not support it as a
+connection-pooling strategy, because there is nothing we could change that would make it one.
 
-This is a property of RDS Proxy's PostgreSQL support, not of Apartment: it maintains no
-tracked-variable list for PostgreSQL (unlike MySQL and SQL Server), and session pinning
-filters are not available for PostgreSQL. Note that a Rails app pins for unrelated reasons
-anyway — RDS Proxy also pins on `nextval`/`setval` and on non-transactional advisory locks.
+RDS Proxy pins a session to a backend the moment it sees session state it cannot track. For
+PostgreSQL it maintains **no tracked-variable list at all** (unlike MySQL and SQL Server) and
+offers **no session pinning filters** (again unlike MySQL). Four independent things trigger
+the pin in a normal Rails app, and only the last is ours:
 
-Its documented escape hatch, moving the `SET` into the proxy's **initialization query**, does
-not help here: that query is a single static string per proxy, and a per-tenant `search_path`
-cannot be expressed in it without running one proxy per tenant.
+| Trigger | Origin |
+|---|---|
+| Three unconditional `SET`s at connection setup (`client_min_messages`, `standard_conforming_strings`, `intervalstyle`) | Rails — not configurable off |
+| The extended query protocol, used **even when `prepared_statements: false`** | Rails — [rails/rails#40207](https://github.com/rails/rails/issues/40207), closed stale |
+| `nextval`/`setval` and non-transactional advisory locks | Rails |
+| Per-tenant `search_path` | Apartment |
 
-If you need real multiplexing in front of a schema-per-tenant app on AWS, PgBouncer on
-PostgreSQL 18 with `track_extra_parameters` is currently the only configuration that
-provides it.
+Once a session is pinned it holds its backend for the life of the client connection, so with
+Rails' long-lived pooled connections the mapping is effectively 1:1 and the proxy reduces
+nothing.
+
+AWS's documented escape hatch — move the `SET`s into the proxy's **initialization query** —
+cannot rescue the tenancy case even if you patch Rails to stop issuing its own (teams have
+done this; it is heavy). The initialization query is **a single static string per proxy**, and
+a per-tenant `search_path` cannot be expressed in it without running one proxy per tenant.
+
+Setting `search_path` via the libpq `options` startup parameter is the only mechanism that
+might avoid the pin, and it is **unverified and dangerous**: AWS does not document `options`,
+and if the proxy neither pins on it nor keys its backend pool by it, a backend carrying one
+tenant's `search_path` would be handed to another — the silent leak, in production. Do not
+attempt this without testing it first (see [Verifying your setup](#verifying-your-setup)).
+
+**If you need real multiplexing in front of a schema-per-tenant app, use PgBouncer on
+PostgreSQL 18 with `track_extra_parameters`.** RDS Proxy remains useful for what it does well
+— failover resilience and IAM authentication — just not for reducing connections.
 
 ## Verifying your setup
 
