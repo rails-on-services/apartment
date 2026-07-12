@@ -351,8 +351,16 @@ Tenant isolation under `:schema` rests on `search_path`, which is session-scoped
 Transaction-mode pooling hands a different backend to each transaction, so a `search_path`
 set by one client is not guaranteed to be the one in effect for the next query. This affects
 v3 and v4 alike; v4 reduces the number of `SET search_path` statements to one per connection
-but does not eliminate them. RDS Proxy is safe by contrast — it *pins* rather than leaks —
-but pinning costs you the multiplexing the proxy exists to provide.
+but does not eliminate them, and one is enough.
+
+**Which pooler to use:** PgBouncer on **PostgreSQL 18+** with
+`track_extra_parameters = IntervalStyle,search_path` is the only setup that safely multiplexes
+a schema-per-tenant app — and it needs no changes to Apartment or your application. **RDS Proxy
+is safe but reduces no connections**: a Rails app pins on it *with or without Apartment* (three
+unconditional `SET`s in `configure_connection`, plus the extended query protocol even at
+`prepared_statements: false` — [rails/rails#40207](https://github.com/rails/rails/issues/40207)),
+and AWS offers no session-pinning filters for PostgreSQL. Keep RDS Proxy if you use it for
+failover or IAM; don't adopt it to cut connections.
 
 Database-per-tenant (`:database_name`) is not affected.
 

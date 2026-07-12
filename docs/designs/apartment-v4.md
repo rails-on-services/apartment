@@ -7,7 +7,7 @@ Apartment v4 is a ground-up rewrite of the `ros-apartment` gem, replacing v3's t
 **Primary goals:**
 - Eliminate tenant context leakage via immutable per-tenant connection pools
 - Full thread and fiber safety via `ActiveSupport::CurrentAttributes`
-- PgBouncer/RDS Proxy compatibility (reduced session pinning via connection-level config)
+- ~~PgBouncer/RDS Proxy compatibility (reduced session pinning via connection-level config)~~ — **partially unreachable; see the honest statement below.** v4 removes the *per-switch* `SET search_path`, which is what makes a connection ceiling and session-mode pooling practical. It does **not** make transaction-mode pooling work by itself: PgBouncer needs PG 18+ and `track_extra_parameters`, and RDS Proxy pins Rails regardless of Apartment. (W4 spike, 2026-07-12.)
 - Rails 7.2, 8.0, 8.1 support; Ruby 3.3+
 - Sub-millisecond tenant switching for cached pools
 
