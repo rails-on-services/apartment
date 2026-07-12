@@ -66,14 +66,15 @@ module Apartment
     # when supplied. Safe to call from start_sampler! or an external scheduler.
     def sample!
       total = Apartment.pool_manager&.stats&.fetch(:total_pools, 0) || 0
-      emit(Sample.new(name: :tenant_pools_live, kind: :gauge, value: total, dimensions: {}, payload: {}))
+      emit_gauge(:tenant_pools_live, total)
+      emit_checkout_pressure!
 
       return unless @backend_count
 
       backends = @backend_count.call
       return if backends.nil?
 
-      emit(Sample.new(name: :backend_connections, kind: :gauge, value: backends, dimensions: {}, payload: {}))
+      emit_gauge(:backend_connections, backends)
     rescue StandardError => e
       warn_failure('sample!', e)
     end
@@ -102,6 +103,43 @@ module Apartment
       @sampler.shutdown
       @sampler.wait_for_termination(5)
       @sampler = nil
+    end
+
+    # Per-tenant-pool checkout pressure, aggregated to low cardinality. waiting>0
+    # means threads are blocked acquiring a connection (the same-tenant fan-out
+    # starvation signal). The worst tenant is carried in the Sample payload, NOT
+    # as a metric dimension, to avoid unbounded time-series churn. Per-pool #stat
+    # is rescued so a pool tearing down mid-sample can't abort the whole pass.
+    def emit_checkout_pressure!
+      manager = Apartment.pool_manager
+      return unless manager
+
+      stats = collect_pool_stats(manager)
+      worst = stats.max_by { |s| s[:pending] } || { tenant: nil, pending: 0 }
+      payload = worst[:pending].positive? ? { tenant: worst[:tenant] } : {}
+
+      emit_gauge(:pools_waiting, stats.count { |s| s[:pending].positive? })
+      emit_gauge(:pools_saturated, stats.count { |s| s[:saturated] })
+      emit_gauge(:max_checkout_waiting, worst[:pending], payload: payload)
+    end
+
+    def emit_gauge(name, value, payload: {})
+      emit(Sample.new(name: name, kind: :gauge, value: value, dimensions: {}, payload: payload))
+    end
+
+    # Read each tenant pool's checkout stats into [{ tenant:, pending:, saturated: }],
+    # skipping any pool whose #stat raises (mid-teardown) so one bad pool can't
+    # abort the whole pass.
+    def collect_pool_stats(manager)
+      stats = []
+      manager.each_pair do |tenant_key, pool|
+        stat = pool.stat
+        stats << { tenant: tenant_key, pending: stat[:waiting].to_i,
+                   saturated: stat[:busy].to_i >= stat[:size].to_i }
+      rescue StandardError
+        next
+      end
+      stats
     end
 
     def record_event(event, payload)

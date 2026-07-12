@@ -155,11 +155,18 @@ The gem ships the mechanisms to bound it (all cross-linked, not restated here):
 
 - **`tenant_pool_size`** — cap connections per tenant pool; injected into each pool's
   config (`AbstractAdapter#apply_tenant_pool_size`). Defaults to `nil` (Rails' own
-  default applies) for back-compat.
-- **`max_total_connections` + synchronous admission control** — a hard-ish ceiling on
-  total pools: a cold create at capacity evicts the LRU idle pool inline before
-  establishing the new one, with `pool_overflow_policy` (`:evict_idle` soft cap /
-  `:raise` hard cap) governing the all-busy case. See
+  default applies) for back-compat. Must be ≥ the peak same-tenant per-process
+  concurrency, or a same-tenant fan-out starves the pool on checkout; it is a lazy
+  ceiling, so sizing for peak does not hold that many connections open at steady state.
+- **`max_tenant_pools` / `max_tenant_connections` + synchronous admission control** —
+  a hard-ish ceiling: `max_tenant_pools` caps live pool count directly, `max_tenant_connections`
+  caps tenant-pool connections and is enforced as the derived pool budget
+  `floor(max_tenant_connections / tenant_pool_size)` (`Config#effective_pool_budget` takes
+  the stricter of the two). A cold create at capacity evicts the LRU idle pool inline
+  before establishing the new one, with `pool_overflow_policy` (`:evict_idle` soft cap /
+  `:raise` hard cap) governing the all-busy case. (`max_total_connections` is the
+  deprecated alias of `max_tenant_pools`.) See
+  [`pool-connection-budget.md`](pool-connection-budget.md) and
   [`pool-admission-control.md`](pool-admission-control.md).
 - **`PoolReaper`** — background idle + LRU eviction so cold tenants don't hold pools
   forever (`lib/apartment/pool_reaper.rb`); reap cadence is decoupled from the idle
@@ -194,6 +201,20 @@ silent-leak is not.
 - **No runtime detection of consumer-fiber leaks.** The async-query contract is a
   documented discipline, not an enforced one — see
   [`apartment-v4.md`](apartment-v4.md) § Async query correctness.
+- **Class-level ActiveRecord memoization can smuggle a tenant name past the pool
+  boundary.** `Model.sequence_name` is memoized once per model class, process-wide, and
+  Rails resolves it to a *schema-qualified* name (via `pg_get_serial_sequence`) on
+  whichever tenant's connection touches it first. Any consumer that renders that value
+  into SQL — `activerecord-import`'s primary-key prefetch does — then draws ids from the
+  first-resolver tenant's sequence in every tenant.
+  `Apartment::Patches::PostgresqlSequenceName` strips the schema prefix at resolution time
+  so the memoized value stays schema-agnostic and re-resolves through each pool's
+  `search_path` — the same invariant this document establishes for tables. Two asymmetries
+  earn their keep: the strip is **unconditional** for routed tables (stripping only the
+  connection's *own* schema would pin a `search_path` fallback schema — reached when a
+  tenant is missing the table — into the process-wide memo for every tenant), and it is
+  **skipped entirely** for schema-qualified table names, i.e. pinned models, whose sequence
+  is correct only *because* it stays qualified to the default tenant.
 
 ## References
 

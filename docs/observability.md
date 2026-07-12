@@ -23,7 +23,7 @@ All events are namespaced `<name>.apartment` and published through
 | `cap_unmet.apartment` | When the pool cap cannot be met by eviction (soft-cap breach) | `max_total:`, `current:`, `unevicted:` |
 | `skip_evict.apartment` | When a candidate pool is skipped during eviction | `tenant:`, `reason:` (`:pinned`, `:in_use`), `eviction_reason:` (`:idle`, `:lru`, `:admission`); plus `busy_connections:` and `open_transactions:` when `reason: :in_use` |
 | `reaper_stopped.apartment` | When the background reaper is deactivated in the test environment | `reason:` (`:test_env`) |
-| `migrate_tenant.apartment` | After migrations run for one tenant | `tenant:`, `versions:` (array of migration version integers) |
+| `migrate_tenant.apartment` | After migrations run for one tenant (or the primary) | `tenant:`, `versions:` (array of migration version integers) |
 | `migrate_tenant_failed.apartment` | When a tenant (or the primary) migration raises | `tenant:`, `error:` (the raised exception), `duration:` (seconds) |
 
 > **`PoolObserver` does not forward the migrate events.** The observer below covers
@@ -147,6 +147,20 @@ Apartment::PoolObserver::Sample
 `PoolManager#stats[:total_pools]`), `:backend_connections` (`value` = your
 `backend_count` callable result; omitted when the callable returns `nil`).
 
+**Checkout-pressure gauges** (per pass, from each tenant pool's AR
+`ConnectionPool#stat`): `:pools_waiting` (count of pools with threads blocked on
+checkout — the same-tenant fan-out starvation signal), `:pools_saturated` (count
+with `busy >= size`), and `:max_checkout_waiting` (the worst pool's `waiting`
+count). The offending tenant is carried in `:max_checkout_waiting`'s **payload**,
+not as a metric dimension, to avoid unbounded time-series churn — promote it to a
+dimension only in a sink you know can absorb the cardinality.
+
+These gauges are sampled **instantaneously** (not peak-held), so a short
+starvation episode can fall between passes. Use a short `sample_interval` (5–10s)
+on Sidekiq/job roles to catch sustained same-tenant fan-out; keep web at the
+default if desired. They show *pressure*, not lossless timeout accounting —
+standard APM captures the resulting `ActiveRecord::ConnectionTimeoutError` itself.
+
 **Dimensions** are curated for cardinality. `reason:` is promoted from payload
 into `dimensions` for any counter event that carries it (currently `:evict`,
 `:skip_evict`, and `:reaper_stopped`). Everything else stays in `payload`.
@@ -178,7 +192,8 @@ sink = lambda do |sample|
 
   case sample.name
   when :cap_unmet
-    # Pool cap is being breached; investigate pool sizing or max_total_connections.
+    # Pool budget is being breached; investigate tenant_pool_size or the
+    # max_tenant_pools / max_tenant_connections ceiling.
     MyAlerts.trigger(:pool_cap_breach, payload: sample.payload)
   when :skip_evict
     # A pool is being skipped repeatedly; may indicate a long-running transaction.

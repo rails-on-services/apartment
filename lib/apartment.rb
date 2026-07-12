@@ -265,21 +265,23 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     end
 
     # Build the pool manager + reaper for a freshly-validated config and start
-    # the background reaper. When max_total_connections is set, wire the reaper
-    # as the pool manager's admission controller so cold creates are bounded
-    # synchronously; otherwise the manager keeps its lock-free create path.
+    # the background reaper. When a pool budget is configured (max_tenant_pools
+    # and/or max_tenant_connections, via Config#effective_pool_budget), wire the
+    # reaper as the pool manager's admission controller so cold creates are
+    # bounded synchronously; otherwise the manager keeps its lock-free create path.
     def setup_pools!(new_config)
+      budget = new_config.effective_pool_budget
       @pool_manager = PoolManager.new
       @pool_reaper = PoolReaper.new(
         pool_manager: @pool_manager,
         interval: new_config.reaper_interval,
         idle_timeout: new_config.pool_idle_timeout,
-        max_total: new_config.max_total_connections,
+        max_total: budget,
         default_tenant: new_config.default_tenant,
         shard_key_prefix: new_config.shard_key_prefix,
         overflow_policy: new_config.pool_overflow_policy
       )
-      @pool_manager.admission_controller = @pool_reaper if new_config.max_total_connections
+      @pool_manager.admission_controller = @pool_reaper if budget
       @pool_reaper.start
     end
 
@@ -368,6 +370,16 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       ActiveRecord::Base.connection_db_config.adapter
     end
   end
+end
+
+# Prepend the sequence-name patch whenever the PostgreSQL adapter loads
+# (immediately, if it already has). Registered at gem load rather than in
+# activate! because ActiveRecord memoizes Model.sequence_name at first touch,
+# which can happen during boot before Apartment.activate! runs. No-op for apps
+# that never load the PostgreSQL adapter, so MySQL/SQLite consumers never pull
+# in pg. See the patch file for the full rationale.
+ActiveSupport.on_load(:active_record_postgresqladapter) do
+  prepend(Apartment::Patches::PostgresqlSequenceName)
 end
 
 # Load Railtie when Rails is present (standard gem convention).

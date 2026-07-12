@@ -322,6 +322,16 @@ RSpec.describe(Apartment) do
       end
       expect(described_class.pool_manager.admission_controller).to(eq(described_class.pool_reaper))
     end
+
+    it 'wires admission from a derived connection ceiling (max_tenant_connections)' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.tenant_pool_size = 2
+        config.max_tenant_connections = 10 # -> floor(10 / 2) = 5 pools
+      end
+      expect(described_class.pool_manager.admission_controller).to(eq(described_class.pool_reaper))
+    end
   end
 
   describe '.configure teardown protection' do

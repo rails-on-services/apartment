@@ -215,7 +215,9 @@ Key config options for pool tuning:
 | `tenant_pool_size` | nil | Max connections per tenant pool; nil inherits the app's base pool size |
 | `pool_idle_timeout` | 300 | Seconds an idle pool must exceed before it is eligible for reaping |
 | `reaper_interval` | nil | Seconds between reap passes; nil derives from `pool_idle_timeout` |
-| `max_total_connections` | nil | Ceiling on live tenant pools; enforced synchronously at create time |
+| `max_tenant_pools` | nil | Ceiling on live tenant pools per process; enforced synchronously at create time |
+| `max_tenant_connections` | nil | Ceiling on tenant-pool connections (requires `tenant_pool_size`); pool budget = `floor(value / tenant_pool_size)` |
+| `max_total_connections` | nil | **Deprecated** (removed in v5); aliases `max_tenant_pools` |
 | `pool_overflow_policy` | `:evict_idle` | At-capacity-with-no-idle-pool behavior: `:evict_idle` (soft) or `:raise` (hard) |
 | `reap_in_test` | `false` | Keep the reaper running under `Rails.env.test?`; `true` avoids a boot guard for deployments that run test-env semantics |
 
@@ -390,16 +392,22 @@ Ensure these names match exactly what `Apartment::Tenant.create` received (case-
 
 ### Connection pool sizing
 
-By default (`tenant_pool_size = nil`) each tenant pool inherits the app's base pool size. For apps with many tenants, set `tenant_pool_size` to size tenant pools independently and `max_total_connections` to bound the live pool count — total backend connections ≈ `max_total_connections × tenant_pool_size`:
+By default (`tenant_pool_size = nil`) each tenant pool inherits the app's base pool size. **Set `tenant_pool_size` to at least the peak number of threads/fibers in one process that can touch the _same_ tenant at once** — a Sidekiq role's concurrency for a same-tenant job fan-out, for example. A smaller pool makes those threads block on connection checkout (v3's shared pool absorbed this; v4 partitions per tenant, so a same-tenant burst concentrates on one pool). It is a lazy ceiling — connections are created on demand and idle pools are reaped — so sizing for peak does not hold that many connections open at steady state.
+
+Bound the fleet with either `max_tenant_pools` (a live-pool-count cap) or `max_tenant_connections` (a true tenant-pool connection ceiling; requires `tenant_pool_size`):
 
 ```ruby
 Apartment.configure do |config|
-  config.tenant_pool_size = 3
-  config.max_total_connections = 100
+  config.tenant_pool_size = 5          # >= peak same-tenant per-process concurrency
+  config.max_tenant_connections = 250  # -> floor(250 / 5) = 50 tenant pools
 end
 ```
 
-`max_total_connections` is enforced synchronously at pool-creation time: a new pool that would breach the cap first evicts the least-recently-used *idle* pool inline. When every pool is pinned or in use, `pool_overflow_policy` decides — `:evict_idle` (default) allows the pool and emits a `cap_unmet` notification; `:raise` raises `Apartment::PoolCapacityReached`. Idle pools are also reaped in the background after `pool_idle_timeout` seconds (on the `reaper_interval` cadence, which defaults to `pool_idle_timeout`). The `PoolReaper` never evicts the default tenant's pool.
+The admission controller enforces `effective_pool_budget = min(max_tenant_pools, floor(max_tenant_connections / tenant_pool_size))`. Per-process tenant-pool connections ≤ `effective_pool_budget × tenant_pool_size`; the default pool and any separate pinned pool are additional. A tenant using multiple roles (`writing` + `reading`) holds one pool per role (`tenant:role` keys) and counts once per role against the budget.
+
+Enforcement is synchronous at pool-creation time: a new pool that would breach the budget first evicts the least-recently-used *idle* pool inline. When every pool is pinned or in use, `pool_overflow_policy` decides — `:evict_idle` (default) allows the pool and emits a `cap_unmet` notification; `:raise` raises `Apartment::PoolCapacityReached`. For a hard external-pooler budget, pair `max_tenant_connections` with `:raise`. Idle pools are also reaped in the background after `pool_idle_timeout` seconds (on the `reaper_interval` cadence, which defaults to `pool_idle_timeout`). The `PoolReaper` never evicts the default tenant's pool.
+
+> **`max_total_connections` is deprecated** (removed in v5). It always capped tenant-pool *count*, not connections, and now aliases `max_tenant_pools` — rename it. For a true connection ceiling, use `max_tenant_connections`.
 
 ### Thread safety
 
