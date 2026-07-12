@@ -20,7 +20,8 @@ lib/apartment/
 │   └── mysql_config.rb        # MysqlConfig: placeholder
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md); v4 uses constructor keyword args, no class-level state; Generic, Subdomain, FirstSubdomain, Domain, Host, HostHash, Header
 ├── patches/               # ActiveRecord patches for tenant-aware connections
-│   └── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
+│   ├── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
+│   └── postgresql_sequence_name.rb # Prepends on the PG adapter — schema-agnostic Model.sequence_name memoization
 ├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
 ├── config.rb              # Configuration with validate!/freeze!
 ├── current.rb             # Fiber-safe tenant context (CurrentAttributes)

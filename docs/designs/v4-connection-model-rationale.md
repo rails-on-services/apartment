@@ -194,6 +194,17 @@ silent-leak is not.
 - **No runtime detection of consumer-fiber leaks.** The async-query contract is a
   documented discipline, not an enforced one — see
   [`apartment-v4.md`](apartment-v4.md) § Async query correctness.
+- **Class-level ActiveRecord memoization can smuggle a tenant name past the pool
+  boundary.** `Model.sequence_name` is memoized once per model class, process-wide, and
+  Rails resolves it to a *schema-qualified* name (via `pg_get_serial_sequence`) on
+  whichever tenant's connection touches it first. Any consumer that renders that value
+  into SQL — `activerecord-import`'s primary-key prefetch does — then draws ids from the
+  first-resolver tenant's sequence in every tenant.
+  `Apartment::Patches::PostgresqlSequenceName` strips the connection's own schema prefix
+  at resolution time so the memoized value stays schema-agnostic and re-resolves through
+  each pool's `search_path` — the same invariant this document establishes for tables.
+  Prefixes naming other schemas (persistent schemas, pinned models' default-tenant
+  qualification) are preserved, because those are correct only *when* qualified.
 
 ## References
 
