@@ -113,6 +113,46 @@ RSpec.describe(Apartment::PoolReaper) do
     end
   end
 
+  # Ties Config's derivation to the admission seam that enforces it. The other
+  # derived-budget specs assert the arithmetic (config_spec) or that admission is
+  # wired at all (apartment_spec); this one asserts the number actually BOUNDS
+  # pool creation -- i.e. that a connection ceiling really is a connection
+  # ceiling, which is the whole claim of the max_tenant_connections knob.
+  describe 'derived connection-budget enforcement' do
+    let(:config) do
+      Apartment::Config.new.tap do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.tenant_pool_size = 2
+        c.max_tenant_connections = 10 # -> floor(10 / 2) = 5 pools
+        c.apply_defaults!
+        c.validate!
+      end
+    end
+
+    let(:reaper) do
+      described_class.new(
+        pool_manager: pool_manager,
+        interval: 999, # timer must not race the admission path under test
+        idle_timeout: 999,
+        max_total: config.effective_pool_budget,
+        on_evict: on_evict
+      )
+    end
+
+    it 'admits at most floor(max_tenant_connections / tenant_pool_size) pools' do
+      pool_manager.admission_controller = reaper
+
+      8.times { |i| pool_manager.fetch_or_create("tenant_#{i}") { "pool_#{i}" } }
+
+      expect(config.effective_pool_budget).to(eq(5))
+      expect(pool_manager.stats[:total_pools]).to(eq(5))
+      # Admission evicted the LRU pools to stay inside the budget, so the
+      # tenant-pool connection ceiling holds: 5 pools * tenant_pool_size 2 = 10.
+      expect(disconnect_calls).to(include('tenant_0'))
+    end
+  end
+
   describe 'pinned pool protection' do
     # A pool Rails' transactional-fixture machinery has pinned to a single
     # connection. Evicting it would strand the fixture transaction.

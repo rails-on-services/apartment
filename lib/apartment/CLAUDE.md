@@ -60,7 +60,7 @@ lib/apartment/
 
 ### pool_manager.rb — Pool Cache
 
-`Concurrent::Map` storing connection pools by tenant key. Monotonic clock timestamps for idle/LRU tracking. `stats_for` returns `{ seconds_idle: N }`. `clear` disconnects all pools before clearing. When `max_total_connections` is set, `Apartment.configure` wires an `admission_controller` (the reaper) so cold creates route through a serialized, capacity-bounded path; otherwise the lock-free `compute_if_absent` fast path is used. See `docs/designs/pool-admission-control.md`.
+`Concurrent::Map` storing connection pools by tenant key. Monotonic clock timestamps for idle/LRU tracking. `stats_for` returns `{ seconds_idle: N }`. `clear` disconnects all pools before clearing. When a pool budget is configured (`max_tenant_pools` and/or `max_tenant_connections`, resolved by `Config#effective_pool_budget`; `max_total_connections` is the deprecated alias of `max_tenant_pools`), `Apartment.configure` wires an `admission_controller` (the reaper) so cold creates route through a serialized, capacity-bounded path; otherwise the lock-free `compute_if_absent` fast path is used. See `docs/designs/pool-connection-budget.md` and `docs/designs/pool-admission-control.md`.
 
 ### pool_reaper.rb — Pool Eviction + Admission
 
@@ -98,7 +98,7 @@ All inherit from `AbstractAdapter`. Override `resolve_connection_config`, `creat
 
 ### pool_observer.rb — Observability (opt-in)
 
-Sink-agnostic subscriber for the pool events (`create`/`evict`/`cap_unmet`/`skip_evict`/`reaper_stopped`) + an optional `Concurrent::TimerTask` gauge sampler (`tenant_pools_live`, optional adopter `backend_count`). Normalizes each to a `Sample` and forwards to a caller `sink`; ships no transport. Error-isolated — never raises into instrumentation. See `docs/observability.md`.
+Sink-agnostic subscriber for the pool events (`create`/`evict`/`cap_unmet`/`skip_evict`/`reaper_stopped`) + an optional `Concurrent::TimerTask` gauge sampler. Gauges: `tenant_pools_live`, optional adopter `backend_count`, and per-pass checkout-pressure gauges from each tenant pool's AR `ConnectionPool#stat` — `pools_waiting` (blocked on checkout), `pools_saturated` (`busy >= size`), `max_checkout_waiting` (worst pool's `waiting`, tenant in payload not a dimension). Per-pool `#stat` is rescued so one tearing-down pool can't abort the pass. Normalizes each to a `Sample` via the shared `emit_gauge` helper and forwards to a caller `sink`; ships no transport. Error-isolated — never raises into instrumentation. See `docs/observability.md`.
 
 ### railtie.rb — v4 Rails Integration
 

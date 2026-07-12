@@ -106,4 +106,27 @@ RSpec.describe('Apartment error hierarchy') do
       expect(error.message).to(include('default_tenant'))
     end
   end
+
+  describe Apartment::PoolCapacityReached do
+    subject(:error) { described_class.new(max_total: 5, current: 5) }
+
+    it 'reports the pool budget and the open pool count' do
+      expect(error.message).to(include('5 tenant pools open'))
+      expect(error.message).to(include('effective pool budget is 5'))
+    end
+
+    # The knob names ARE the fix: max_total_connections is deprecated precisely
+    # because it named a pool count "connections". An error that tells the reader
+    # to raise it would re-tell the lie the rename exists to end.
+    it 'names the current knobs and never the deprecated one' do
+      expect(error.message).to(include('max_tenant_pools'))
+      expect(error.message).to(include('max_tenant_connections'))
+      expect(error.message).not_to(include('max_total_connections'))
+    end
+
+    it 'exposes the budget under both readers' do
+      expect(error.max_total).to(eq(5))
+      expect(error.pool_budget).to(eq(5))
+    end
+  end
 end

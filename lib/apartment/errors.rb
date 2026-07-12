@@ -33,22 +33,31 @@ module Apartment
   # Raised when the tenant connection pool is exhausted.
   class PoolExhausted < ApartmentError; end
 
-  # Raised when admitting a new tenant pool would exceed max_total_connections
-  # and no idle pool can be evicted to make room, under the :raise overflow
-  # policy. Distinct from PoolExhausted (a single pool's connections) — this is
-  # the process-wide pool-count ceiling. See docs/designs/pool-admission-control.md.
+  # Raised when admitting a new tenant pool would exceed the effective pool
+  # budget (Config#effective_pool_budget) and no idle pool can be evicted to make
+  # room, under the :raise overflow policy. Distinct from PoolExhausted (a single
+  # pool's connections) — this is the process-wide pool-COUNT ceiling. The message
+  # names the knobs that set it, never the deprecated max_total_connections: that
+  # name is what made the budget look like a connection count in the first place.
+  # See docs/designs/pool-connection-budget.md and pool-admission-control.md.
   class PoolCapacityReached < ApartmentError
+    # +max_total+ is the effective POOL budget, not a connection count. The
+    # reader keeps its name for compatibility with anything already rescuing this.
     attr_reader :max_total, :current
+
+    alias pool_budget max_total
 
     def initialize(max_total: nil, current: nil)
       @max_total = max_total
       @current = current
       super(
-        "Tenant pool capacity reached: #{current.inspect} pools open, " \
-        "max_total_connections is #{max_total.inspect}, and no idle pool could " \
-        'be evicted to admit another (all pinned or in use). Raise ' \
-        'max_total_connections, reduce concurrent tenants, or set ' \
-        'pool_overflow_policy to :evict_idle to allow soft overflow.'
+        "Tenant pool capacity reached: #{current.inspect} tenant pools open, " \
+        "the effective pool budget is #{max_total.inspect}, and no idle pool " \
+        'could be evicted to admit another (all pinned or in use). Raise ' \
+        'max_tenant_pools, or raise max_tenant_connections (which derives the ' \
+        'pool budget as max_tenant_connections / tenant_pool_size), reduce ' \
+        'concurrent tenants, or set pool_overflow_policy to :evict_idle to ' \
+        'allow soft overflow.'
       )
     end
   end

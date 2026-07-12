@@ -14,6 +14,8 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.pool_idle_timeout).to(eq(300)) }
     it { expect(config.reaper_interval).to(be_nil) }
     it { expect(config.max_total_connections).to(be_nil) }
+    it { expect(config.max_tenant_pools).to(be_nil) }
+    it { expect(config.max_tenant_connections).to(be_nil) }
     it { expect(config.pool_overflow_policy).to(eq(:evict_idle)) }
     it { expect(config.seed_after_create).to(be(false)) }
     it { expect(config.seed_data_file).to(be_nil) }
@@ -117,6 +119,70 @@ RSpec.describe(Apartment::Config) do
     end
   end
 
+  describe '#effective_pool_budget' do
+    it 'returns nil when neither knob is set' do
+      expect(config.effective_pool_budget).to(be_nil)
+    end
+
+    it 'returns max_tenant_pools when only it is set' do
+      config.max_tenant_pools = 8
+      expect(config.effective_pool_budget).to(eq(8))
+    end
+
+    it 'derives the pool budget from the connection ceiling with floor division' do
+      config.tenant_pool_size = 3
+      config.max_tenant_connections = 20
+      expect(config.effective_pool_budget).to(eq(6)) # floor(20 / 3)
+    end
+
+    it 'takes the stricter of the explicit pool cap and the derived budget' do
+      config.tenant_pool_size = 2
+      config.max_tenant_connections = 20 # -> 10 pools
+      config.max_tenant_pools = 4
+      expect(config.effective_pool_budget).to(eq(4))
+    end
+
+    # The deprecated knob reaches the budget through the max_tenant_pools alias
+    # apply_defaults! installs, so it participates in the same min() as an
+    # explicit pool cap. An adopter who keeps max_total_connections and ALSO
+    # adopts the connection ceiling gets the stricter of the two -- the old knob
+    # is not silently outranked by the new one.
+    it 'lets the deprecated max_total_connections bind the budget via its alias' do
+      config.max_total_connections = 3 # -> max_tenant_pools = 3
+      config.tenant_pool_size = 2
+      config.max_tenant_connections = 20 # -> 10 pools
+      # apply_defaults! emits the deprecation notice; consume it so the
+      # expectation below reads against a quiet stderr.
+      expect { config.apply_defaults! }.to(output(/DEPRECATION/).to_stderr)
+
+      expect(config.max_tenant_pools).to(eq(3))
+      expect(config.effective_pool_budget).to(eq(3))
+    end
+  end
+
+  describe 'max_total_connections deprecation' do
+    it 'warns and aliases max_total_connections to max_tenant_pools' do
+      config.max_total_connections = 8
+      expect { config.apply_defaults! }.to(output(/DEPRECATION.*max_total_connections/).to_stderr)
+      expect(config.max_tenant_pools).to(eq(8))
+    end
+
+    it 'does not overwrite an explicitly set max_tenant_pools' do
+      config.max_total_connections = 8
+      config.max_tenant_pools = 8
+      config.apply_defaults!
+      expect(config.max_tenant_pools).to(eq(8))
+    end
+
+    it 'raises when max_total_connections and max_tenant_pools disagree' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.max_total_connections = 8
+      config.max_tenant_pools = 4
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_total_connections/))
+    end
+  end
+
   describe '#validate!' do
     it 'raises when tenant_strategy is missing' do
       expect { config.validate! }.to(raise_error(
@@ -182,6 +248,36 @@ RSpec.describe(Apartment::Config) do
       config.tenants_provider = -> { [] }
       config.max_total_connections = 0
       expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_total_connections/))
+    end
+
+    it 'raises when max_tenant_pools is not a positive integer' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.max_tenant_pools = 0
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_tenant_pools/))
+    end
+
+    it 'raises when max_tenant_connections is not a positive integer' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.max_tenant_connections = 0
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /max_tenant_connections/))
+    end
+
+    it 'raises when max_tenant_connections is set without tenant_pool_size' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_pool_size = nil
+      config.max_tenant_connections = 10
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /tenant_pool_size/))
+    end
+
+    it 'raises when max_tenant_connections is below tenant_pool_size' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.tenant_pool_size = 5
+      config.max_tenant_connections = 3
+      expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /tenant_pool_size/))
     end
 
     it 'raises when reaper_interval is not a positive number' do
