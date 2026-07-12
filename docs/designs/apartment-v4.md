@@ -169,12 +169,15 @@ However, Rails' `PostgreSQLAdapter#configure_connection` still issues a one-time
 
 - **Without PgBouncer**: No issue. Connections are long-lived; the `SET` happens once at creation.
 - **With PgBouncer in session mode**: No issue. Session-pinned connections are expected.
-- **With PgBouncer in transaction mode**: The initial `SET` may cause session pinning. Two mitigations:
-  1. **Preferred**: Use libpq connection string `options: '-c search_path=tenant,ext,public'` which sets the search_path at the protocol level during connection establishment, avoiding a `SET` statement entirely. v4 should attempt this approach first.
-  2. **Fallback**: Configure PgBouncer with `ignore_startup_parameters = search_path` or use `track_extra_parameters = search_path` (PgBouncer 1.20+, requires Citus 12+ for `GUC_REPORT` support on search_path).
-  3. **Alternative**: Use `SET LOCAL search_path` inside each transaction (scoped to transaction, PgBouncer does not pin on `SET LOCAL`). This is closer to v3's approach but only executes once per transaction, not once per switch.
+- **With PgBouncer in transaction mode**: **UNSAFE by default — silent cross-tenant reads**, not merely session pinning. The establishment `SET` lands on an arbitrary backend; with tenants multiplexed onto shared backends the last `SET` wins for everyone, and a client silently receives another tenant's rows. The only safe configurations are `session` mode, or `transaction` mode on **PostgreSQL 18+** with `track_extra_parameters = IntervalStyle,search_path`.
 
-**Status (v4 alpha):** approach (1) is **not yet implemented** — the adapter currently sets `schema_search_path`, which Rails applies as a `SET` once per connection (see `resolve_connection_config` in `postgresql_schema_adapter.rb`). The intended direction is to try approach (1) first and fall back to the Rails default when the driver doesn't support connection-string options. Even unimplemented, this is a significant improvement over v3 regardless — v3 issues `SET search_path` on every request; v4 issues it at most once per connection establishment.
+**Status — superseded by the W4 spike (2026-07-12).** This section previously proposed setting `search_path` via the libpq `options` connection parameter as the "preferred" fix, with `track_extra_parameters` as a fallback requiring Citus 12+. **Both claims were wrong**, and were corrected empirically in [`w4-pgbouncer-libpq-spike.md`](w4-pgbouncer-libpq-spike.md):
+
+- **The libpq `options` approach does not work.** PgBouncer *rejects* the `options` startup packet (`FATAL: unsupported startup parameter in options: search_path`) unless `search_path` is already in `track_extra_parameters` — and once it is, the plain `SET` path v4 uses today is already safe and multiplexed. `options` is dominated; it buys nothing here.
+- **`track_extra_parameters` is the real fix, and it no longer needs Citus.** `search_path` was not reported to clients by PostgreSQL before **version 18**; vanilla PG 18 reports it, so PgBouncer can track it. Citus 12+ backports the same reporting to older servers.
+- **On PostgreSQL ≤ 17, transaction mode cannot be made safe** by any gem change or PgBouncer setting.
+
+The adapter continues to set `schema_search_path` (see `resolve_connection_config` in `postgresql_schema_adapter.rb`), which Rails applies as one `SET` per connection establishment. That remains a real improvement over v3's per-request `SET` — it is what makes a connection ceiling and session-mode pooling practical — but it does **not** make transaction-mode pooling safe on its own. User-facing guidance: [`docs/connection-poolers.md`](../connection-poolers.md).
 
 ### Pool Resolution & Storage
 

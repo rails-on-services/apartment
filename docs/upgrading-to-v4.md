@@ -158,6 +158,11 @@ If you provision tenants outside `Apartment::Tenant.create` / `.drop` (raw `psql
 
 v4 uses pool-per-tenant instead of thread-local switching. Each tenant gets a dedicated `ActiveRecord::ConnectionAdapters::ConnectionPool` managed by `Apartment::PoolManager`.
 
+> [!WARNING]
+> **v4 does not make PgBouncer/RDS-Proxy transaction mode safe — do not assume the upgrade fixed pooling.** v4 removes the *per-request* `SET search_path` that v3 issued, but Rails still issues one per connection establishment, and under PgBouncer transaction mode that is enough to serve one tenant another tenant's rows, silently. Safe configurations are PgBouncer `session` mode, or `transaction` mode on **PostgreSQL 18+** with `track_extra_parameters = IntervalStyle,search_path`. On PostgreSQL ≤ 17, transaction mode cannot be made safe. See [Connection Poolers](connection-poolers.md).
+>
+> This is not a v4 regression — v3 has the same exposure, and more of it. But if you are moving to v4 *because* of its pooler goals, read that guide before changing your pooler configuration.
+
 Tenant context is stored in `Apartment::Current` (an `ActiveSupport::CurrentAttributes` subclass). Rails' default `ActiveSupport::IsolatedExecutionState.isolation_level` is `:thread`; v4 recommends `:fiber` for any fiber-aware concurrency. Set it in your Rails config:
 
 ```ruby

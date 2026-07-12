@@ -338,6 +338,28 @@ Platform notes: parallel migrations use threads. On macOS, libpq has known fork-
 
 ## Known Limitations
 
+### Connection poolers in transaction mode (PgBouncer, RDS Proxy)
+
+> [!WARNING]
+> With the PostgreSQL `:schema` strategy, **PgBouncer in `transaction` pooling mode can
+> silently serve one tenant another tenant's data.** No error is raised — queries return the
+> wrong tenant's rows. It is safe only on **PostgreSQL 18+** with
+> `track_extra_parameters = IntervalStyle,search_path`; on PostgreSQL 17 and older,
+> transaction mode cannot be made safe and you must use `session` mode.
+
+Tenant isolation under `:schema` rests on `search_path`, which is session-scoped state.
+Transaction-mode pooling hands a different backend to each transaction, so a `search_path`
+set by one client is not guaranteed to be the one in effect for the next query. This affects
+v3 and v4 alike; v4 reduces the number of `SET search_path` statements to one per connection
+but does not eliminate them. RDS Proxy is safe by contrast — it *pins* rather than leaks —
+but pinning costs you the multiplexing the proxy exists to provide.
+
+Database-per-tenant (`:database_name`) is not affected.
+
+**Read [Connection Poolers](docs/connection-poolers.md) before putting a pooler in front of a
+schema-per-tenant app**, and verify your configuration rather than assuming it: the failure
+is silent, so a working app proves nothing.
+
 ### `connects_to` with Separate Databases
 
 If a model (or its abstract base class) uses `connects_to` to point at a completely different database (not just different roles on the same DB), Apartment's `connection_pool` patch will attempt to create a tenant pool for it.
