@@ -140,5 +140,22 @@ RSpec.describe('v4 PostgreSQL sequence_name resolution', :integration,
       expect(drawn).to(eq(501)) # public's range
       expect(last_value('seq_a', sequence: 'pinned_settings_id_seq')).to(eq(900)) # tenant copy untouched
     end
+
+    # The inverse order, and the one that actually happens in production: a
+    # pinned model is typically touched at boot (eager load, first request)
+    # while still on the DEFAULT pool, whose current_schema IS the default
+    # tenant. Stripping there would leave an unqualified sequence name that
+    # later re-resolves against a TENANT's search_path -- drawing ids from
+    # the tenant's stale copy of the pinned table's sequence. v3 guarded this
+    # by force-qualifying excluded models to the default tenant.
+    it 'keeps the pinned-model sequence qualified when resolved on the default tenant first' do
+      PinnedSetting.sequence_name # memoize while on the default pool (no switch)
+
+      drawn = Apartment::Tenant.switch('seq_a') { prefetch_id(PinnedSetting) }
+
+      expect(PinnedSetting.sequence_name).to(eq('public.pinned_settings_id_seq'))
+      expect(drawn).to(eq(501)) # public's range, not seq_a's 901
+      expect(last_value('seq_a', sequence: 'pinned_settings_id_seq')).to(eq(900))
+    end
   end
 end

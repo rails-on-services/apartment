@@ -32,6 +32,20 @@ module Apartment
       def default_sequence_name(table_name, primary_key = 'id')
         res = super
         return res if res.nil?
+        # A schema-qualified table name is a PINNED model: Apartment qualifies
+        # those to the default tenant, and they resolve on whatever connection
+        # is current (the schema strategy shares the tenant's connection). Its
+        # sequence must stay qualified — stripping here is the mirror-image bug,
+        # because an unqualified name would later re-resolve against a *tenant's*
+        # search_path and draw ids from that tenant's stale copy of the pinned
+        # table's sequence. Only unqualified (routed) tables get stripped.
+        #
+        # This is order-critical, not theoretical: pinned models are typically
+        # first touched at boot, on the default pool, where current_schema IS
+        # the default tenant — so the prefix we must preserve is exactly the one
+        # the strip below would match. v3 guarded the same case by force-adding
+        # the default_tenant prefix for excluded models.
+        return res if table_name.to_s.include?('.')
 
         prefix = "#{current_schema}."
         res.start_with?(prefix) ? res.delete_prefix(prefix) : res
