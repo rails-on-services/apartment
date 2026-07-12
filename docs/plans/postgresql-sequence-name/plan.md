@@ -18,7 +18,7 @@ Root-cause investigation (2026-07-12, production incident in a consumer app on 4
 - Reset-on-switch is **unsound** in v4: multiple tenants are live concurrently in one process, so the only correct memoized value is a schema-agnostic one, re-resolved per connection via `search_path` — the same invariant `docs/designs/v4-connection-model-rationale.md` establishes for tables.
 - Pinned models are already safe by routing (PG schema strategy qualifies their table names with `public.` and shares the tenant connection; database strategies pin a pool) — the patch must **preserve** their qualified sequence names. Plain AR inserts are unaffected (PG uses `INSERT ... RETURNING` with the column default).
 
-Consumer-side note (outside this repo): apps can mitigate immediately with explicit unqualified `self.sequence_name = '<table>_id_seq'` on imported models — identical behavior under 3.4.4 and v4 — and must re-run sequence repair once after deploying the fixed gem.
+Consumer-side note (outside this repo): **no application code changes are required** — the gem owns this boundary, and an app-level `self.sequence_name = ...` was considered and rejected (it pushes tenancy back into every model, the exact ownership inversion `v4-connection-model-rationale.md` argues against, and it is a footgun on pinned models, whose sequence must stay qualified). Adopters needing the fix before the release point their Gemfile at the branch. A one-time sequence repair is still required **after** deploying the fix; existing drift does not self-heal.
 
 ## Global Constraints
 
@@ -618,6 +618,6 @@ gh release create v4.0.0.alpha8 --verify-tag --prerelease --generate-notes
 ## Self-Review
 
 - **Spec coverage:** the regression contract (touch tenant A, bulk-prefetch into tenant B, assert B's sequence) is Task 1 example 3; unqualified memoization is example 2; patch ancestry (guards against a repeat of the Phase 2.5 silent deletion) is example 1; the excluded-models/pinned direction the v3 patch handled explicitly is the pinned context. Unit spec pins the pure semantics including the `wssu_archive`-vs-`wssu` prefix edge and nil pass-through. Release covered in Task 7.
-- **Consumer rollout invariant** (identical behavior under 3.4.4 and v4): tenant tables memoize the same unqualified value 3.4.4's patch produced; pinned/excluded models stay qualified to the default tenant, same sequence 3.4.4's forced prefix reached. The app-side `self.sequence_name = ...` mitigation is version-independent (noted in Background; not a task in this repo).
+- **Consumer rollout invariant** (identical behavior under 3.4.4 and v4, with zero app code): tenant tables memoize the same unqualified value 3.4.4's patch produced; pinned/excluded models stay qualified to the default tenant, same sequence 3.4.4's forced prefix reached.
 - **Type consistency:** module name `Apartment::Patches::PostgresqlSequenceName` (Zeitwerk casing, matching the `Postgresql*` adapter renames) is identical in patch file, on_load registration, both specs, and docs. Method signature `default_sequence_name(table_name, pk = 'id')` matches Rails' adapter signature.
 - **No placeholders:** every step carries the actual code/command and expected output; the only doc-reference steps point at in-repo files (`RELEASING.md`).
