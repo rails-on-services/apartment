@@ -250,6 +250,139 @@ jobs:
         env:
           DATABASE_ENGINE: sqlite
 
+  # ── PgBouncer transaction-mode safety ──────────────────────────────
+  # Guards docs/connection-poolers.md. With the :schema strategy, PgBouncer in
+  # transaction mode can silently serve one tenant another tenant's rows unless
+  # search_path is tracked — and it can only be tracked on PG 18+, which is the
+  # first release that reports search_path to clients.
+  #
+  # Both PG versions are in the matrix on purpose: 18 proves the fix works, 16
+  # proves the version floor is real. The spec asserts the LEAKING cases too, so
+  # if PostgreSQL or PgBouncer changes this behaviour underneath us the build goes
+  # red and we correct the docs instead of shipping a stale claim about isolation.
+  pgbouncer:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'postgresql' }}
+    name: PgBouncer tx-mode · PG ${{ matrix.pg }}
+    runs-on: ubuntu-latest
+    needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ['16', '18'] # 16 = version floor (must leak), 18 = supported (must isolate)
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_8.1_postgresql.gemfile
+      CI: true
+      RAILS_ENV: test
+      DATABASE_ENGINE: postgresql
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: apartment_v4_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+
+      - name: Install PgBouncer
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pgbouncer
+          pgbouncer --version
+          # track_extra_parameters arrived in PgBouncer 1.20. Below that the safe
+          # configuration cannot even be expressed, so fail loudly rather than
+          # "passing" a suite that silently tested nothing.
+          ver=$(pgbouncer --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          if [ "$(printf '%s\n1.20\n' "$ver" | sort -V | head -1)" != "1.20" ]; then
+            echo "::error::PgBouncer $ver predates 1.20 — track_extra_parameters unavailable"
+            exit 1
+          fi
+
+      - name: Start two PgBouncer instances (safe on 7432, default on 7433)
+        run: |
+          # The Ubuntu package installs AND starts a pgbouncer on the default port
+          # (6432). Stop it and use 7432/7433 so we can never bind against it.
+          sudo systemctl stop pgbouncer 2>/dev/null || true
+          mkdir -p /tmp/pgb
+          printf '"postgres" ""\n' > /tmp/pgb/userlist.txt
+
+          # $1 = listen port, $2 = optional extra directive
+          write_ini() {
+            {
+              echo "[databases]"
+              echo "apartment_v4_test = host=127.0.0.1 port=5432 dbname=apartment_v4_test"
+              echo ""
+              echo "[pgbouncer]"
+              echo "listen_addr = 127.0.0.1"
+              echo "listen_port = $1"
+              echo "auth_type = trust"
+              echo "auth_file = /tmp/pgb/userlist.txt"
+              echo "pool_mode = transaction"
+              # ONE backend, so both tenants are forced to share it. Without this the
+              # clients may never meet and the isolation test would prove nothing.
+              echo "default_pool_size = 1"
+              echo "max_client_conn = 50"
+              echo "logfile = /tmp/pgb/pgbouncer-$1.log"
+              echo "pidfile = /tmp/pgb/pgbouncer-$1.pid"
+              # if/fi, not `[ -n "$2" ] && echo`: the latter returns 1 for an empty $2,
+              # and steps run under `bash -e`, so the unsafe config would kill the step.
+              if [ -n "$2" ]; then echo "$2"; fi
+            } > "/tmp/pgb/pgbouncer-$1.ini"
+          }
+
+          write_ini 7432 'track_extra_parameters = IntervalStyle,search_path'  # documented SAFE config
+          write_ini 7433 ''                                                    # PgBouncer defaults
+
+          pgbouncer -d /tmp/pgb/pgbouncer-7432.ini
+          pgbouncer -d /tmp/pgb/pgbouncer-7433.ini
+
+          for port in 7432 7433; do
+            ready=0
+            for _ in $(seq 1 20); do
+              if psql -h 127.0.0.1 -p "$port" -U postgres -d apartment_v4_test -c 'SELECT 1' >/dev/null 2>&1; then
+                ready=1; break
+              fi
+              sleep 0.5
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "::error::PgBouncer on port $port never became ready"
+              cat "/tmp/pgb/pgbouncer-$port.log" || true
+              exit 1
+            fi
+            echo "PgBouncer ready on $port"
+          done
+
+      - name: Run PgBouncer safety spec
+        run: bundle exec rspec spec/integration/v4/pgbouncer_spec.rb --format documentation
+        env: &pgbouncer_env
+          DATABASE_ENGINE: postgresql
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: apartment_v4_test
+          PGBOUNCER_SAFE_PORT: '7432'
+          PGBOUNCER_UNSAFE_PORT: '7433'
+          # Turns a silent skip into a hard failure here, where the poolers must exist.
+          # A skipped tenant-isolation test that reports green is the failure mode this
+          # job exists to prevent (spec/CLAUDE.md, "CI hard-fail flags").
+          PGBOUNCER_REQUIRED: '1'
+
+      - name: Dump PgBouncer logs on failure
+        if: failure()
+        run: tail -n 50 /tmp/pgb/pgbouncer-*.log || true
+
   # ── CI gate ────────────────────────────────────────────────────────
   # Single aggregation check for branch protection: require just `ci-gate`
   # rather than every matrix cell by name (which would break whenever the
@@ -260,18 +393,19 @@ jobs:
   # evaluates workflow context directly.
   ci-gate:
     if: always()
-    needs: [unit, postgresql, mysql, sqlite]
+    needs: [unit, postgresql, mysql, sqlite, pgbouncer]
     runs-on: ubuntu-latest
     env:
       UNIT: ${{ needs.unit.result }}
       POSTGRESQL: ${{ needs.postgresql.result }}
       MYSQL: ${{ needs.mysql.result }}
       SQLITE: ${{ needs.sqlite.result }}
+      PGBOUNCER: ${{ needs.pgbouncer.result }}
     steps:
       - name: Require all CI jobs to have passed
         run: |
           failed=0
-          for job in UNIT POSTGRESQL MYSQL SQLITE; do
+          for job in UNIT POSTGRESQL MYSQL SQLITE PGBOUNCER; do
             result="${!job}"
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
               echo "::error::Required CI job '$job' concluded '$result'"

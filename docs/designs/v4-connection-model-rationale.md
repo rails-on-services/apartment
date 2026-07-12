@@ -80,12 +80,20 @@ per-switch `SET` at all. **Honest qualification:** Rails' PostgreSQL adapter sti
 **one-time** `SET search_path` when it *establishes* each new connection (it applies the
 pool's baked-in `schema_search_path` once). So v4 does **not** magically unlock
 transaction-mode multiplexing — a freshly established connection has still run a session
-`SET`. That is exactly what issue #438 (set `search_path` via the libpq `options`
-connection parameter, at the protocol level, avoiding the `SET` statement entirely) is
-still open to close. What v4 *does* realize today is that eliminating per-request churn
+`SET`, and one is enough. What v4 *does* realize today is that eliminating per-request churn
 makes a **connection ceiling and session-mode pooling viable** where v3's per-request
 pinning made them impractical. Do not read this as "RDS Proxy compatible" without the
 establishment-`SET` qualification.
+
+**And the consequence is worse than pinning.** Under PgBouncer transaction mode the residual
+`SET` does not pin — it *leaks*: tenants multiplexed onto one backend see whichever
+`search_path` was set last, silently. Safe configurations are `session` mode, or PG 18+ with
+PgBouncer's `track_extra_parameters = IntervalStyle,search_path`; on PG ≤ 17 transaction mode
+cannot be made safe at all. Issue #438 proposed closing the gap with the libpq `options`
+parameter; the [W4 spike](w4-pgbouncer-libpq-spike.md) showed that approach is **dominated**
+(PgBouncer rejects the `options` startup packet unless the `track_extra_parameters` fix that
+makes it redundant is already in place) and it should not be built. User-facing guidance:
+[`docs/connection-poolers.md`](../connection-poolers.md).
 
 ## Alternatives considered, and why not chosen for the gem
 
@@ -220,8 +228,12 @@ silent-leak is not.
 
 - **Issues** — #200, #302, #438: variants of "why not fully-qualify table names / avoid
   `search_path` entirely?" #302 is the PgBouncer / RDS Proxy session-pinning report that
-  motivated removing per-request `SET`; #438 tracks the still-open libpq `options` path
-  that would remove even the one-time establishment `SET`.
+  motivated removing per-request `SET`; #438 proposed the libpq `options` path to remove even
+  the one-time establishment `SET`, and the [W4 spike](w4-pgbouncer-libpq-spike.md) closed it
+  as dominated — PgBouncer rejects the `options` startup packet outright.
+- **Pooler safety (user-facing)** — [`../connection-poolers.md`](../connection-poolers.md):
+  which PgBouncer / RDS Proxy configurations are safe, and the silent cross-tenant read that
+  transaction mode causes when they are not.
 - **Architecture (what / how)** — [`apartment-v4.md`](apartment-v4.md): pool resolution,
   `CurrentAttributes`, async-query correctness, PgBouncer section, open-issue resolution
   table.
