@@ -309,8 +309,11 @@ jobs:
             exit 1
           fi
 
-      - name: Start two PgBouncer instances (safe on 6432, default on 6433)
+      - name: Start two PgBouncer instances (safe on 7432, default on 7433)
         run: |
+          # The Ubuntu package installs AND starts a pgbouncer on the default port
+          # (6432). Stop it and use 7432/7433 so we can never bind against it.
+          sudo systemctl stop pgbouncer 2>/dev/null || true
           mkdir -p /tmp/pgb
           printf '"postgres" ""\n' > /tmp/pgb/userlist.txt
 
@@ -332,17 +335,19 @@ jobs:
               echo "max_client_conn = 50"
               echo "logfile = /tmp/pgb/pgbouncer-$1.log"
               echo "pidfile = /tmp/pgb/pgbouncer-$1.pid"
-              [ -n "$2" ] && echo "$2"
+              # if/fi, not `[ -n "$2" ] && echo`: the latter returns 1 for an empty $2,
+              # and steps run under `bash -e`, so the unsafe config would kill the step.
+              if [ -n "$2" ]; then echo "$2"; fi
             } > "/tmp/pgb/pgbouncer-$1.ini"
           }
 
-          write_ini 6432 'track_extra_parameters = IntervalStyle,search_path'  # documented SAFE config
-          write_ini 6433 ''                                                    # PgBouncer defaults
+          write_ini 7432 'track_extra_parameters = IntervalStyle,search_path'  # documented SAFE config
+          write_ini 7433 ''                                                    # PgBouncer defaults
 
-          pgbouncer -d /tmp/pgb/pgbouncer-6432.ini
-          pgbouncer -d /tmp/pgb/pgbouncer-6433.ini
+          pgbouncer -d /tmp/pgb/pgbouncer-7432.ini
+          pgbouncer -d /tmp/pgb/pgbouncer-7433.ini
 
-          for port in 6432 6433; do
+          for port in 7432 7433; do
             ready=0
             for _ in $(seq 1 20); do
               if psql -h 127.0.0.1 -p "$port" -U postgres -d apartment_v4_test -c 'SELECT 1' >/dev/null 2>&1; then
@@ -367,8 +372,8 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: apartment_v4_test
-          PGBOUNCER_SAFE_PORT: '6432'
-          PGBOUNCER_UNSAFE_PORT: '6433'
+          PGBOUNCER_SAFE_PORT: '7432'
+          PGBOUNCER_UNSAFE_PORT: '7433'
           # Turns a silent skip into a hard failure here, where the poolers must exist.
           # A skipped tenant-isolation test that reports green is the failure mode this
           # job exists to prevent (spec/CLAUDE.md, "CI hard-fail flags").
