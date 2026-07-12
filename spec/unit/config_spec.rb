@@ -141,6 +141,23 @@ RSpec.describe(Apartment::Config) do
       config.max_tenant_pools = 4
       expect(config.effective_pool_budget).to(eq(4))
     end
+
+    # The deprecated knob reaches the budget through the max_tenant_pools alias
+    # apply_defaults! installs, so it participates in the same min() as an
+    # explicit pool cap. An adopter who keeps max_total_connections and ALSO
+    # adopts the connection ceiling gets the stricter of the two -- the old knob
+    # is not silently outranked by the new one.
+    it 'lets the deprecated max_total_connections bind the budget via its alias' do
+      config.max_total_connections = 3 # -> max_tenant_pools = 3
+      config.tenant_pool_size = 2
+      config.max_tenant_connections = 20 # -> 10 pools
+      # apply_defaults! emits the deprecation notice; consume it so the
+      # expectation below reads against a quiet stderr.
+      expect { config.apply_defaults! }.to(output(/DEPRECATION/).to_stderr)
+
+      expect(config.max_tenant_pools).to(eq(3))
+      expect(config.effective_pool_budget).to(eq(3))
+    end
   end
 
   describe 'max_total_connections deprecation' do
