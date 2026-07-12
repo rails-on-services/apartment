@@ -370,6 +370,16 @@ module Apartment # rubocop:disable Metrics/ModuleLength
   end
 end
 
+# Prepend the sequence-name patch whenever the PostgreSQL adapter loads
+# (immediately, if it already has). Registered at gem load rather than in
+# activate! because ActiveRecord memoizes Model.sequence_name at first touch,
+# which can happen during boot before Apartment.activate! runs. No-op for apps
+# that never load the PostgreSQL adapter, so MySQL/SQLite consumers never pull
+# in pg. See the patch file for the full rationale.
+ActiveSupport.on_load(:active_record_postgresqladapter) do
+  prepend(Apartment::Patches::PostgresqlSequenceName)
+end
+
 # Load Railtie when Rails is present (standard gem convention).
 # Railtie is Zeitwerk-ignored — this explicit require is the only load path.
 require_relative 'apartment/railtie' if defined?(Rails::Railtie)
