@@ -97,6 +97,59 @@ RSpec.describe('v4 PostgreSQL sequence_name resolution', :integration,
     expect(last_value('seq_b')).to(eq(2_001))  # target advanced
   end
 
+  # Gemini (AI review panel) surfaced this one; confirmed empirically.
+  #
+  # When a tenant schema is missing the table (un-migrated tenant), PG's
+  # search_path falls through to the next schema that HAS it, so the resolved
+  # sequence carries a schema that is NOT the connection's current_schema.
+  # Stripping only the connection's own prefix would leave that fallback schema
+  # qualified -- and memoize it process-wide, so EVERY tenant (including
+  # correctly-migrated ones) draws from the fallback schema's sequence forever.
+  # Stripping unconditionally for routed tables keeps the memo unqualified, so
+  # the sequence re-resolves per pool exactly like the table name does, and the
+  # un-migrated tenant self-heals once its table exists.
+  context 'when the tenant schema is missing the table and search_path falls back' do
+    before do
+      Apartment.clear_config
+      Apartment::Current.reset
+      config = V4IntegrationHelper.default_connection_config
+
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [] }
+        c.default_tenant = 'public'
+        c.check_pending_migrations = false
+        c.configure_postgres { |pg| pg.persistent_schemas = ['public'] }
+      end
+      Apartment.adapter = V4IntegrationHelper.build_adapter(config)
+      Apartment.activate!
+
+      # The table exists in public (the fallback) and in seq_b, but NOT in the
+      # un-migrated tenant seq_c.
+      ActiveRecord::Base.connection.create_table(:sequence_widgets, force: true) { |t| t.string(:name) }
+      ActiveRecord::Base.connection.select_value(%(SELECT setval('public.sequence_widgets_id_seq', 5000)))
+
+      Apartment.adapter.create('seq_c')
+      created_tenants << 'seq_c'
+    end
+
+    after do
+      ActiveRecord::Base.connection.drop_table(:sequence_widgets, if_exists: true)
+    end
+
+    it 'does not memoize the fallback schema for every other tenant' do
+      # First touch happens in the un-migrated tenant: PG resolves the sequence
+      # through search_path and answers with public's.
+      Apartment::Tenant.switch('seq_c') { SequenceWidget.sequence_name }
+
+      drawn = Apartment::Tenant.switch('seq_b') { prefetch_id(SequenceWidget) }
+
+      expect(SequenceWidget.sequence_name).to(eq('sequence_widgets_id_seq'))
+      expect(drawn).to(eq(2_001))                # seq_b's own range, not public's 5001
+      expect(last_value('public')).to(eq(5_000)) # fallback sequence untouched
+    end
+  end
+
   context 'with a pinned model' do
     before do
       # Same-named table in BOTH public and seq_a: the sharp version of the

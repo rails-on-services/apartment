@@ -33,22 +33,29 @@ module Apartment
         res = super
         return res if res.nil?
         # A schema-qualified table name is a PINNED model: Apartment qualifies
-        # those to the default tenant, and they resolve on whatever connection
-        # is current (the schema strategy shares the tenant's connection). Its
+        # those to the default tenant, and they resolve on whatever connection is
+        # current (the schema strategy shares the tenant's connection). Its
         # sequence must stay qualified — stripping here is the mirror-image bug,
         # because an unqualified name would later re-resolve against a *tenant's*
         # search_path and draw ids from that tenant's stale copy of the pinned
-        # table's sequence. Only unqualified (routed) tables get stripped.
-        #
-        # This is order-critical, not theoretical: pinned models are typically
-        # first touched at boot, on the default pool, where current_schema IS
-        # the default tenant — so the prefix we must preserve is exactly the one
-        # the strip below would match. v3 guarded the same case by force-adding
-        # the default_tenant prefix for excluded models.
+        # table's sequence. That order is the common one, not a corner case:
+        # pinned models are typically first touched at boot, on the default pool.
+        # v3 guarded the same case by force-adding the default_tenant prefix.
         return res if table_name.to_s.include?('.')
 
-        prefix = "#{current_schema}."
-        res.start_with?(prefix) ? res.delete_prefix(prefix) : res
+        # Routed table: drop whatever schema PostgreSQL qualified the sequence
+        # with — not just the connection's own. The two differ when the tenant
+        # schema is missing the table and search_path falls through to a schema
+        # that has it: the resolved sequence then names the FALLBACK schema, and
+        # preserving that would memoize it process-wide, so every tenant —
+        # including correctly-migrated ones — would draw from the fallback's
+        # sequence forever. Unqualified is the only value that lets the sequence
+        # re-resolve per pool exactly like the table name does.
+        #
+        # Parsed with AR's own splitter (rather than by hand) because it is what
+        # produced `res`, so it round-trips quoting and dotted identifiers.
+        ActiveRecord::ConnectionAdapters::PostgreSQL::Utils
+          .extract_schema_qualified_name(res).identifier
       end
     end
   end

@@ -2,70 +2,77 @@
 
 require 'spec_helper'
 
-# Pure-logic spec: the module only needs `super` (the Rails-resolved,
-# possibly schema-qualified sequence name) and `current_schema` (the
-# connection's own schema), so a fake adapter class exercises every
-# branch without a database.
+# Pure-logic spec: the module only needs `super` (the Rails-resolved, possibly
+# schema-qualified sequence name) and the table name, so a fake adapter class
+# exercises every branch without a database.
+#
+# Requires real ActiveRecord + pg for the PostgreSQL::Utils name splitter.
+# Skips gracefully otherwise (run via any postgresql appraisal).
+PG_UTILS_AVAILABLE = begin
+  require('active_record')
+  require('active_record/connection_adapters/postgresql_adapter')
+  true
+rescue LoadError => e
+  warn "[postgresql_sequence_name_spec] Skipping: #{e.message}"
+  false
+end
+
 RSpec.describe(Apartment::Patches::PostgresqlSequenceName) do
+  before { skip('requires the pg gem (run via a postgresql appraisal)') unless PG_UTILS_AVAILABLE }
+
   let(:adapter_class) do
     Class.new do
       prepend(Apartment::Patches::PostgresqlSequenceName)
 
-      def initialize(resolved:, schema:)
+      def initialize(resolved:)
         @resolved = resolved
-        @schema = schema
       end
 
       def default_sequence_name(_table, _column)
         @resolved
       end
-
-      def current_schema
-        @schema
-      end
     end
   end
 
-  def resolve(resolved:, schema:, table: 'widgets')
-    adapter_class.new(resolved: resolved, schema: schema)
-      .default_sequence_name(table, 'id')
+  def resolve(resolved:, table: 'widgets')
+    adapter_class.new(resolved: resolved).default_sequence_name(table, 'id')
   end
 
-  it "strips the connection's own schema prefix" do
-    expect(resolve(resolved: 'wssu.widgets_id_seq', schema: 'wssu'))
-      .to(eq('widgets_id_seq'))
-  end
+  describe 'routed (unqualified) tables' do
+    it "strips the connection's own schema prefix" do
+      expect(resolve(resolved: 'wssu.widgets_id_seq')).to(eq('widgets_id_seq'))
+    end
 
-  it 'preserves a prefix from another schema (persistent schemas, pinned public. qualification)' do
-    expect(resolve(resolved: 'extensions.counters_id_seq', schema: 'wssu'))
-      .to(eq('extensions.counters_id_seq'))
-  end
+    # The search_path-fallback case: the tenant schema is missing the table, so
+    # PG resolves the sequence in whichever schema HAS it. Preserving that
+    # prefix would memoize the fallback schema for every tenant, process-wide.
+    it 'strips a FOREIGN schema prefix too, so the memo never pins a fallback schema' do
+      expect(resolve(resolved: 'public.widgets_id_seq')).to(eq('widgets_id_seq'))
+    end
 
-  it 'does not mangle a schema whose name merely starts with the current schema' do
-    expect(resolve(resolved: 'wssu_archive.widgets_id_seq', schema: 'wssu'))
-      .to(eq('wssu_archive.widgets_id_seq'))
-  end
+    it 'handles a schema name that required quoting (AR hands us the unquoted form)' do
+      expect(resolve(resolved: 'Weird-Tenant.widgets_id_seq')).to(eq('widgets_id_seq'))
+    end
 
-  it 'passes through an already-unqualified name' do
-    expect(resolve(resolved: 'widgets_id_seq', schema: 'wssu'))
-      .to(eq('widgets_id_seq'))
-  end
+    it 'passes through an already-unqualified name' do
+      expect(resolve(resolved: 'widgets_id_seq')).to(eq('widgets_id_seq'))
+    end
 
-  it 'passes through nil (table has no serial sequence)' do
-    expect(resolve(resolved: nil, schema: 'wssu')).to(be_nil)
+    it 'passes through nil (table has no serial sequence)' do
+      expect(resolve(resolved: nil)).to(be_nil)
+    end
   end
 
   # A qualified table name means a pinned model (Apartment qualifies those to
-  # the default tenant). Its sequence must stay qualified even when the
-  # connection's own schema is the one in the prefix -- which is exactly the
-  # case at boot, on the default pool.
-  it 'preserves the sequence of a schema-qualified (pinned) table, even on that schema' do
-    expect(resolve(resolved: 'public.settings_id_seq', schema: 'public', table: 'public.settings'))
-      .to(eq('public.settings_id_seq'))
-  end
-
-  it 'preserves the sequence of a pinned table while on a tenant connection' do
-    expect(resolve(resolved: 'public.settings_id_seq', schema: 'wssu', table: 'public.settings'))
-      .to(eq('public.settings_id_seq'))
+  # the default tenant). Its sequence must stay qualified, whichever connection
+  # resolves it -- including the default pool at boot, where the connection's own
+  # schema IS the prefix. Which connection is current no longer enters the logic
+  # here, so this is one case at the unit level; the integration spec covers both
+  # resolution orders against a real search_path.
+  describe 'pinned (schema-qualified) tables' do
+    it 'preserves the qualified sequence' do
+      expect(resolve(resolved: 'public.settings_id_seq', table: 'public.settings'))
+        .to(eq('public.settings_id_seq'))
+    end
   end
 end
