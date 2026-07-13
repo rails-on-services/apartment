@@ -70,19 +70,49 @@ So the seam the original design doc identified is real. It is a **resource-leak 
 wedge seam**, not a recovery seam — and no helper is needed to close it, because the
 correct thing is for neither half to be independently reachable.
 
-**The fix**: `Apartment.deregister_shard` also removes the pool from `PoolManager`,
-manager-first. It becomes one whole operation that cannot leave the two registries
-disagreeing. Every internal caller already removes from the manager before
-deregistering — `PoolReaper#evict_tenant`, `Migrator#evict_migration_pools`,
-`AbstractAdapter#drop` — so the change is a no-op for all of them. The one caller that
-never has a pool in the manager is the rescue path in
-[`connection_handling.rb`](../../lib/apartment/patches/connection_handling.rb): its
-pool is established but not yet stored, because `fetch_or_admit` only stores after the
-block returns. Removing a key that isn't there is a no-op too.
+**The fix**: `Apartment.deregister_shard` also removes the pool from `PoolManager`. It
+becomes one whole operation that cannot leave the two registries disagreeing. Every
+internal caller already removes from the manager before deregistering —
+`PoolReaper#evict_tenant`, `Migrator#evict_migration_pools`, `AbstractAdapter#drop` —
+so the change is a no-op for all of them.
 
-Manager-first ordering is deliberate. If AR's removal raises after the manager has
-forgotten the pool, we land in the *leak* direction, which self-heals on the next
-access. The reverse order would land in the *wedge* direction, which does not.
+Three details are load-bearing, and each was found by probing rather than reasoning.
+
+**Order: ActiveRecord first, manager removal in an `ensure`.** The manager removal is
+an in-memory delete that cannot meaningfully fail; AR's removal does IO and can raise.
+Running the *fallible* step first, with the *infallible* one guaranteed after, means
+the call always ends with both registries clear.
+
+The reverse (manager-first) is a race, and it reintroduces the very wedge this fix
+exists to remove. Between the manager delete and AR's removal, a concurrent tenant
+switch misses the manager and calls `establish_connection` — which **returns the
+still-registered old pool**, because `ConnectionHandler#establish_connection` reuses a
+pool whose `db_config` is equal — and stores that doomed pool back in the manager. AR
+then unregisters and disconnects it, and the manager is left holding a dead pool,
+permanently. In the shipped order the same interleaving costs at most one failed
+request. A regression spec drives a real switch inside the window; it fails under
+manager-first ordering.
+
+**The pool is disconnected explicitly, not left to ActiveRecord.** AR disconnects only
+a pool it actually finds registered (`disconnect_pool_from_pool_manager` guards
+`pool_config.disconnect!` behind `if pool_config`). A manager-held pool with *no*
+matching AR registration is reachable — the integration suite swaps the
+`ConnectionHandler` per example — and since we have just removed it from the manager,
+no later `PoolManager#clear` will disconnect it either. Without an explicit
+`disconnect!` its connections leak silently. This mirrors `AbstractAdapter#drop`, which
+already removes, disconnects, then deregisters.
+
+**The rescue path inside the pool-creation block must NOT use this method.**
+`PoolManager`'s `@pools` is a `Concurrent::Map` whose MRI backend guards
+`compute_if_absent` and `delete` with the **same non-reentrant mutex**. The
+post-establish rescue in
+[`connection_handling.rb`](../../lib/apartment/patches/connection_handling.rb) runs
+*inside* the create block, so removing from the manager there raises `ThreadError:
+deadlock; recursive locking` — which, being a `StandardError`, was swallowed by the
+rescue and silently skipped the deregistration, orphaning the very pool the rescue
+exists to reclaim. That path calls `Apartment.deregister_ar_shard` (the AR half only),
+which is correct there anyway: `compute_if_absent` does not store the pool until the
+block returns, so there is nothing in the manager to remove.
 
 ### `PoolManager` is internal
 

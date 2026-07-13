@@ -86,12 +86,21 @@ module Apartment
           # to the reaper and to max_total accounting (a connection leak that also
           # undercounts the cap). Deregister it before re-raising so AR and the
           # manager stay consistent. The next request re-establishes cleanly.
+          #
+          # deregister_ar_shard, NOT deregister_shard: we are running inside
+          # PoolManager's create block, and the full form removes from PoolManager's
+          # Concurrent::Map — whose MRI backend guards compute_if_absent and delete
+          # with the same non-reentrant mutex, so that would raise ThreadError
+          # ("deadlock; recursive locking") and skip this deregistration entirely,
+          # orphaning the very pool this rescue exists to reclaim. There is nothing
+          # to remove from the manager here regardless: the pool is not stored until
+          # this block returns.
           begin
             raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
 
             load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
           rescue StandardError
-            Apartment.deregister_shard(pool_key)
+            Apartment.deregister_ar_shard(pool_key)
             raise
           end
 

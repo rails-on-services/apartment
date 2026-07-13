@@ -227,11 +227,58 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     #
     # Manager-first is deliberate: if AR's removal raises, the leak state self-heals
     # on next access, whereas the wedge state does not.
+    #
+    # The pool is disconnected here rather than left to AR, which disconnects only a
+    # pool it actually finds registered (ConnectionHandler#disconnect_pool_from_pool_manager
+    # guards `pool_config.disconnect!` behind `if pool_config`). A manager-held pool
+    # with no matching AR registration is reachable — the integration suite swaps the
+    # ConnectionHandler per example — and since we have just removed it from the
+    # manager, no later `PoolManager#clear` will disconnect it either. Mirrors
+    # AbstractAdapter#drop, which already removes, disconnects, then deregisters.
     # See docs/designs/out-of-band-tenant-ddl.md.
+    # NOT SAFE inside a PoolManager create block — use +deregister_ar_shard+ there.
+    # PoolManager's @pools is a Concurrent::Map whose MRI backend guards
+    # +compute_if_absent+ and +delete+ with the SAME non-reentrant mutex, so removing
+    # a pool from inside the create block raises ThreadError ("deadlock; recursive
+    # locking"). The manager removal below is exactly that call.
+    #
+    # ORDER: AR first, manager removal in an +ensure+. The manager removal is an
+    # in-memory delete that cannot meaningfully fail, so it is the step that may run
+    # unconditionally; AR's removal does IO and is the one that can raise. Running the
+    # fallible step first, with the infallible one guaranteed after, means the call
+    # always ends with BOTH registries clear.
+    #
+    # Manager-first would be a race: between the manager delete and AR's removal, a
+    # concurrent tenant switch misses the manager, calls establish_connection — which
+    # RETURNS THE STILL-REGISTERED OLD POOL (ConnectionHandler#establish_connection
+    # reuses a pool whose db_config is equal) — and stores that doomed pool back in
+    # the manager. AR then unregisters and disconnects it, leaving the manager holding
+    # a dead pool: the permanent wedge this method exists to prevent, reintroduced.
+    # In this order the same interleaving costs at most one failed request, and the
+    # ensure clears the manager so the next switch rebuilds cleanly.
+    #
+    # Deliberately un-rescued at this level: both steps rescue their own failures, and
+    # swallowing everything here is what once hid a ThreadError, silently orphaning the
+    # pool the caller asked us to discard. Misuse should be loud.
     def deregister_shard(pool_key)
       return unless @config && defined?(ActiveRecord::Base)
 
-      @pool_manager&.remove(pool_key)
+      begin
+        deregister_ar_shard(pool_key)
+      ensure
+        disconnect_removed_pool(@pool_manager&.remove(pool_key), pool_key)
+      end
+    end
+
+    # @api private
+    # The ActiveRecord half only: deregister the shard (which disconnects the pool AR
+    # holds), leaving PoolManager untouched. This is the ONLY form that is safe to call
+    # from inside a PoolManager create block — see the re-entrancy note on
+    # +deregister_shard+. The create-block caller (Patches::ConnectionHandling's
+    # post-establish rescue) has no manager entry to remove anyway: the pool is not
+    # stored until the block returns.
+    def deregister_ar_shard(pool_key)
+      return unless @config && defined?(ActiveRecord::Base)
 
       _, separator, role_str = pool_key.to_s.rpartition(':')
       role = separator.empty? || role_str.empty? ? ActiveRecord.writing_role : role_str.to_sym
@@ -268,6 +315,19 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     end
 
     private
+
+    # Disconnect a pool just removed from PoolManager. Idempotent with AR's own
+    # disconnect on the happy path (disconnect! is safe to call twice); load-bearing
+    # only when AR has no matching registration to disconnect. Rescued so one broken
+    # pool cannot abort the caller — deregister_shard's contract is that both
+    # registries end up consistent, not that the socket closed cleanly.
+    def disconnect_removed_pool(pool, pool_key)
+      return unless pool.respond_to?(:disconnect!)
+
+      pool.disconnect!
+    rescue StandardError => e
+      warn "[Apartment] Failed to disconnect pool for #{pool_key}: #{e.class}: #{e.message}"
+    end
 
     # Double-checked locking: the common path (already built) skips the mutex;
     # concurrent first callers serialize so exactly one validator is built.

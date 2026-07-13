@@ -552,6 +552,73 @@ RSpec.describe(Apartment) do
       expect(described_class.pool_manager.tracked?('acme:reading')).to(be(true))
     end
 
+    # AR only disconnects a pool it actually finds registered (ConnectionHandler
+    # #disconnect_pool_from_pool_manager: `pool_config.disconnect!` guarded by
+    # `if pool_config`). A pool can sit in PoolManager with NO matching AR
+    # registration — the integration suite swaps the ConnectionHandler per example,
+    # and teardown reconfigures. Since we now remove it from the manager, the
+    # trailing `PoolManager#clear` in reset_tenant_pools! no longer sees it, so if
+    # we did not disconnect it here its connections would leak silently.
+    it 'disconnects the pool it removed, even when AR has no matching registration' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool)) # AR finds nothing: no disconnect from AR
+      pool = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+      allow(pool).to(receive(:disconnect!))
+      described_class.pool_manager.fetch_or_create('acme:writing') { pool }
+
+      described_class.deregister_shard('acme:writing')
+
+      expect(pool).to(have_received(:disconnect!))
+    end
+
+    # PoolManager's @pools is a Concurrent::Map whose MRI backend guards
+    # compute_if_absent and delete with the SAME non-reentrant mutex. deregister_shard
+    # removes from the manager, so calling it inside a create block deadlocks; the
+    # AR-only form is what the create block (ConnectionHandling's post-establish
+    # rescue) must use. Pinning both halves: the hazard is real, and the escape is safe.
+    it 'deadlocks if called from inside a PoolManager create block (why deregister_ar_shard exists)' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool))
+      pool = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+
+      expect do
+        described_class.pool_manager.fetch_or_create('acme:writing') do
+          described_class.deregister_shard('acme:writing')
+          pool
+        end
+      end.to(raise_error(ThreadError, /recursive locking/))
+    end
+
+    it 'deregister_ar_shard is safe inside a PoolManager create block' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool))
+      pool = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+
+      expect do
+        described_class.pool_manager.fetch_or_create('acme:writing') do
+          described_class.deregister_ar_shard('acme:writing')
+          pool
+        end
+      end.not_to(raise_error)
+
+      expect(handler).to(have_received(:remove_connection_pool))
+    end
+
+    it 'survives a pool that raises on disconnect' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool))
+      pool = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+      allow(pool).to(receive(:disconnect!).and_raise(StandardError, 'already gone'))
+      described_class.pool_manager.fetch_or_create('acme:writing') { pool }
+
+      expect { described_class.deregister_shard('acme:writing') }.not_to(raise_error)
+      expect(handler).to(have_received(:remove_connection_pool)) # AR removal still runs
+    end
+
     # The manager removal must happen even if AR's removal blows up: landing in
     # the "manager forgot, AR remembers" state leaks a registration but self-heals
     # on the next access, whereas the reverse state wedges the tenant permanently.

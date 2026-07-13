@@ -59,10 +59,12 @@ RSpec.describe('v4 out-of-band tenant DDL', :integration,
     raw&.close
   end
 
-  def backend_count
+  # Assert on the SPECIFIC backend, not a database-wide session count: a count is
+  # sensitive to any other connection on the same database (the counting connection
+  # itself, a parallel CI job, another example's pool) and would flake.
+  def backend_alive?(pid)
     out_of_band do |raw|
-      raw.exec("SELECT count(*) FROM pg_stat_activity WHERE datname = '#{@config['database']}'")
-        .first['count'].to_i
+      raw.exec("SELECT 1 FROM pg_stat_activity WHERE pid = #{pid.to_i}").ntuples.positive?
     end
   end
 
@@ -204,17 +206,17 @@ RSpec.describe('v4 out-of-band tenant DDL', :integration,
     # deregister_shard now does both, so neither state is reachable.
     it 'discards the pool whole: the tenant recovers, and no registration or backend leaks' do
       create_widgets!
-      baseline = backend_count
       warm = warm_pool!
       expect(tenant_pools_in_ar.map(&:object_id)).to(include(warm[:pool]))
+      expect(backend_alive?(warm[:pid])).to(be(true))
 
       Apartment.deregister_shard("#{tenant}:writing")
 
       # Forgotten by BOTH registries — this is what used to wedge the tenant.
       expect(Apartment.pool_manager.tracked?("#{tenant}:writing")).to(be(false))
       expect(tenant_pools_in_ar).to(be_empty)
-      # And the old backend is gone — this is what used to leak.
-      expect(backend_count).to(eq(baseline))
+      # And that tenant's backend is actually gone — this is what used to leak.
+      expect(backend_alive?(warm[:pid])).to(be(false))
 
       # The tenant still works: the next switch builds a fresh pool.
       rebuilt = Apartment::Tenant.switch(tenant) do
@@ -225,6 +227,38 @@ RSpec.describe('v4 out-of-band tenant DDL', :integration,
       end
       expect(rebuilt[:rows]).to(eq(['original']))
       expect(rebuilt[:pool]).not_to(eq(warm[:pool]))
+    end
+
+    # A concurrent tenant switch landing INSIDE deregister_shard is the ordering trap.
+    # AR's establish_connection REUSES a still-registered pool with an equal db_config
+    # (ConnectionHandler#establish_connection), so if we removed from PoolManager first,
+    # this switch would re-adopt the doomed pool, we would then disconnect it out from
+    # under the manager, and the tenant would be permanently wedged — the exact state
+    # this method exists to prevent. Driving a real switch inside the window.
+    it 'a tenant switch racing the discard cannot wedge the tenant' do
+      create_widgets!
+      warm_pool!
+
+      raced = nil
+      handler = ActiveRecord::Base.connection_handler
+      allow(handler).to(receive(:remove_connection_pool).and_wrap_original do |original, *args, **kwargs|
+        result = original.call(*args, **kwargs)
+        # The window: AR has just dropped the shard, the manager has not been cleared.
+        raced = Apartment::Tenant.switch(tenant) { ActiveRecord::Base.connection_pool.object_id }
+        result
+      end)
+
+      Apartment.deregister_shard("#{tenant}:writing")
+      RSpec::Mocks.space.proxy_for(handler).reset # stop wrapping before we assert
+
+      expect(raced).not_to(be_nil) # the racing switch really did run inside the window
+
+      # Whatever the racer resolved, the end state is consistent: the manager is clear,
+      # and the next switch gets a working pool rather than a disconnected orphan.
+      expect(Apartment.pool_manager.tracked?("#{tenant}:writing")).to(be(false))
+      expect(Apartment::Tenant.switch(tenant) do
+        ActiveRecord::Base.connection.select_values('SELECT name FROM widgets')
+      end).to(eq(['original']))
     end
   end
 end
