@@ -7,7 +7,7 @@ Status: living. Defines what "beta" means for `ros-apartment` v4 and the scoped,
 - **W5 — Cursor debt** ✅ shipped (#453): physical-name validation seam + advisory-lock ivar guard. Plus a review-driven follow-up (#454): validate pool-key-unsafe tenant names before admission/eviction.
 - **W2 — Member 8** ✅ reactive half shipped (#455): the brainstorm collapsed this from the "design-first long pole" to a minimal `Apartment::Tenant.reload_schema_cache!` helper + a fix for the latent `schema_cache_per_tenant` load path. v4's pool-per-tenant already isolates schema caches and AR self-heals prepared statements, so the residual was only the shared/pinned-table amplifier. Design: `docs/designs/v4-schema-cache-recovery.md`.
 - **W4 — PgBouncer libpq** ❌ **closed, not built (2026-07-12)**: the spike refuted the premise. `options` is dominated by a PgBouncer setting; correctness is governed by a **PG 18 floor**; the failure mode is a **silent cross-tenant read**, now shipped as a warning; and **RDS Proxy is not supported** (Rails pins it regardless of Apartment). W4 collapses to docs + a CI job. See [`w4-pgbouncer-libpq-spike.md`](w4-pgbouncer-libpq-spike.md).
-- **Adopter answered the three open questions (2026-07-12)** — see W1/W3/W6 below. Net: **W1 is confirmed real and is now the only internal *code* work left; W3 collapsed to docs + a helper; W6 is in progress and gated on the adopter refreshing a stale gem lock.**
+- **Adopter answered the three open questions (2026-07-12)** — see W1/W3/W6 below. Net: **W1 is confirmed real and is now the only internal *code* work left; W3 collapsed to docs + a helper; W6 is in progress on a current gem (adopter is on alpha8), bounded by the rollout itself rather than by evidence.**
 - **Remaining beta-blocking**: W1 (member 7 — build it), W3 (member 9 — contract + helper, no gem fix), W6 (adopter `:reading` rollout), then Track C packaging.
 - **Critical path now**: **W1 is the only internal code item.** The beta date is still bounded below by W6, which is externally paced; W1/W3 fit inside that window.
 
@@ -49,7 +49,7 @@ This split is the whole design: **loose on promises, strict on behavior.**
 | Member 7 (W1) | ✅ **Confirmed real — build the gem-side recovery** | Adopter's `PQTRANS_INERROR` `ROLLBACK` loop is **v4-era and test-only**; they already concluded the fix is ours. Not a v3 ghost. |
 | Member 9 (W3) | ✅ **Contract + helper; no gem fix** | Adopter audit found **none** of the risky threading patterns. Shape the helper around the hand-rolled pool eviction they *do* run, not a hypothetical bug. |
 | W6 replication lag | ❌ **Not a beta gate** | The adopter's test replica shares the primary's database, so the lane proves **pool separation** — which is the gem seam. Lag is an app concern. |
-| W6 completion bar | Adopter lock must be **current** | Their green today is against a ~53-commit-stale gem. W6 closes when the lock is refreshed and the lane is still green. |
+| W6 completion bar | Rollout reaching production, not the gem version | The adopter's v4 bundle is already on **alpha8** (current). The lane validates a current gem; what remains is the rollout itself. |
 
 ## Scoped workstreams
 
@@ -81,11 +81,11 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 
 - **W6 — Adopter `:reading`-separated rollout green** (—) — 🟡 **IN PROGRESS; the adopter's v4 CI lane is the agreed evidence.** Confirmed 2026-07-12: their main spec suite runs the v4 bundle against PostgreSQL 18 (the v3 bundle is kept only as a narrow regression lane), `ApplicationRecord` declares a `reading` role on a distinct database config, and read routing is opt-in through a concern with **no test-env escape hatch** — so reads genuinely cross into a separate `tenant:reading` pool. Their rollout doc states the position plainly: reading role yes, opt-in, read-touched tenants get a second pool.
 
-  **Two caveats, and only one of them matters to us:**
-  - *Does not matter:* the test `replica` config points at the **same database** as primary (flagged `replica: true`), so the lane exercises **pool separation** but not replication lag. That is fine — **pool separation IS the gem seam** (member 10 is cross-role read visibility under fixtures). Replication lag is an application concern; the gem has no stake in it. Do not hold beta for it.
-  - *Does matter:* **the adopter's v4 lock is stale** (pinned ~53 commits behind `main` as of 2026-07-12), so the green validates an old gem — it predates the `sequence_name` fix, the connection-budget knobs, and the pooler work. **W6 is satisfied when that lock is current and the lane is still green**, not before.
+  **The gem is current.** The adopter's v4 bundle pins **`4.0.0.alpha8`** — the latest release, carrying the `sequence_name` cross-tenant fix (#468), the connection-budget knobs (#466), and the checkout gauges (#467). So the green lane validates a current gem, not a stale snapshot. (An earlier draft of this section claimed the lock was ~53 commits behind; that was measured against the adopter's *v3 production* branch, whose v4 lockfile is naturally stale, rather than the branch the v4 work lives on. Corrected.)
 
-  Externally paced. With member 8 and W4 closed, this is the binding constraint on the beta date.
+  **One caveat, and it does not block us:** the test `replica` config points at the **same database** as primary (flagged `replica: true`), so the lane exercises **pool separation** but not replication lag. That is fine — **pool separation IS the gem seam** (member 10 is cross-role read visibility under fixtures). Replication lag is an application concern the gem has no stake in. Do not hold beta for it.
+
+  **What remains is the rollout itself**, not the evidence: the adopter describes the `:reading` rollout as in-progress (adopted for test; production still ahead). Externally paced. With member 8 and W4 closed, this is the binding constraint on the beta date.
 - **W7 — Member 10 disposition** (S now / L if-fix). Ship the cheap test-env guard (force `read_only_query`→`:writing` under `Rails.env.test?`; no gem change) as the supported answer now. Build the apartment-side fix (connection-share tenant `:reading` pools under fixtures) *only* if the adopter reports a need for replica-read test fidelity — historically rare. Resolves when W6 surfaces the behavior for real.
 
 ### Track C — Beta packaging (finalize last)
