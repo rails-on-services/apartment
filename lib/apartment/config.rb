@@ -27,7 +27,8 @@ module Apartment
                   :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
                   :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
-                  :force_separate_pinned_pool, :test_fixture_cleanup, :reap_in_test
+                  :force_separate_pinned_pool, :test_fixture_cleanup, :reap_in_test,
+                  :heal_tainted_connections
 
     def initialize # rubocop:disable Metrics/AbcSize
       @tenant_strategy = nil
@@ -63,6 +64,13 @@ module Apartment
       @check_pending_migrations = true
       @force_separate_pinned_pool = false
       @reap_in_test = false
+      # Reset a tenant connection left in an aborted transaction when it is checked
+      # back into its pool. On by default: without it the poisoned connection is
+      # served to the next caller, and under pool-per-tenant that connection is the
+      # tenant's ONLY connection, so the tenant is dead on that worker until the
+      # process restarts. ActiveRecord's active? cannot detect the state.
+      # PostgreSQL-only in effect. See docs/designs/transaction-taint-detection.md.
+      @heal_tainted_connections = true
       @test_fixture_cleanup = true
     end
 
@@ -256,6 +264,12 @@ module Apartment
       unless [true, false].include?(@reap_in_test)
         raise(ConfigurationError,
               "reap_in_test must be true or false, got: #{@reap_in_test.inspect}")
+      end
+
+      unless [true, false].include?(@heal_tainted_connections)
+        raise(ConfigurationError,
+              'heal_tainted_connections must be true or false, ' \
+              "got: #{@heal_tainted_connections.inspect}")
       end
 
       unless @tenant_validator.nil? || @tenant_validator == false || @tenant_validator.respond_to?(:call)

@@ -10,6 +10,8 @@ module Apartment
     # to the environmentified tenant name. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class PostgresqlDatabaseAdapter < AbstractAdapter
+      include PostgresqlTransactionState
+
       def resolve_connection_config(tenant, base_config: nil)
         config = base_config || send(:base_config)
         config.merge('database' => environmentify(tenant))

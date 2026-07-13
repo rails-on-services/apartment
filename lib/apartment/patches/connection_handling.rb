@@ -95,6 +95,12 @@ module Apartment
             raise
           end
 
+          # After the post-establish checks (a pool that fails them is discarded, so
+          # extending it would be wasted), and before the pool is handed out (so the
+          # very first checkin is already covered).
+          # See docs/designs/transaction-taint-detection.md.
+          Apartment::TransactionTaint.install(pool, tenant: tenant, pool_key: pool_key)
+
           pool
         end
       rescue Apartment::ApartmentError

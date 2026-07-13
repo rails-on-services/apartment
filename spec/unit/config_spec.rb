@@ -32,6 +32,7 @@ RSpec.describe(Apartment::Config) do
     it { expect(config.test_fixture_cleanup).to(be(true)) }
     it { expect(config.reap_in_test).to(be(false)) }
     it { expect(config.default_tenant_switch_allowed).to(be(true)) }
+    it { expect(config.heal_tainted_connections).to(be(true)) }
   end
 
   describe '#default_tenant_switch_allowed validation' do
@@ -313,6 +314,22 @@ RSpec.describe(Apartment::Config) do
       config.tenants_provider = -> { [] }
       config.reap_in_test = 'yes'
       expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /reap_in_test/))
+    end
+
+    it 'raises when heal_tainted_connections is not a boolean' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.heal_tainted_connections = 'yes'
+      expect do
+        config.validate!
+      end.to(raise_error(Apartment::ConfigurationError, /heal_tainted_connections must be true or false/))
+    end
+
+    it 'accepts heal_tainted_connections = false' do
+      config.tenant_strategy = :schema
+      config.tenants_provider = -> { [] }
+      config.heal_tainted_connections = false
+      expect { config.validate! }.not_to(raise_error)
     end
 
     it 'accepts reap_in_test = true' do

@@ -47,9 +47,13 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
   end
 
   let(:mock_adapter) do
+    # aborted_transaction? is consulted by the checkin heal on every connection
+    # returned to a tenant pool. sqlite3 has no aborted-transaction state, so false
+    # is also what the real Sqlite3Adapter answers here.
     double('AbstractAdapter',
            validated_connection_config: { 'adapter' => 'sqlite3', 'database' => ':memory:' },
-           shared_pinned_connection?: false)
+           shared_pinned_connection?: false,
+           aborted_transaction?: false)
   end
 
   # Capture the default pool with no tenant set, for comparison in tests.
@@ -83,6 +87,41 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
         expect(Apartment.pool_manager).not_to(receive(:fetch_or_create))
         expect { ActiveRecord::Base.connection_pool }
           .to(raise_error(Apartment::ConfigurationError, /colon/))
+      end
+    end
+
+    # Failure-class member 7 (W1). The heal lives on the pool, so it has to be
+    # installed at pool creation -- after the post-establish checks (a pool that
+    # fails them is discarded and must not be extended), before the pool is handed
+    # out (so the very first checkin is covered).
+    # Design: docs/designs/transaction-taint-detection.md
+    context 'when a tenant pool is created' do
+      it 'extends it with the checkin heal' do
+        Apartment::Current.tenant = 'acme'
+        expect(ActiveRecord::Base.connection_pool)
+          .to(be_a(Apartment::TransactionTaint::PoolHeal))
+      end
+
+      it 'stamps it with the tenant and pool key for the event payload' do
+        Apartment::Current.tenant = 'acme'
+        pool = ActiveRecord::Base.connection_pool
+        expect([pool.apartment_tenant, pool.apartment_pool_key])
+          .to(eq(['acme', 'acme:writing']))
+      end
+
+      it 'leaves the pool unextended when heal_tainted_connections is false' do
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme widgets] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.heal_tainted_connections = false
+        end
+        Apartment.adapter = mock_adapter
+
+        Apartment::Current.tenant = 'acme'
+        expect(ActiveRecord::Base.connection_pool)
+          .not_to(be_a(Apartment::TransactionTaint::PoolHeal))
       end
     end
 
