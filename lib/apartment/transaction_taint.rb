@@ -64,21 +64,38 @@ module Apartment
         open_transactions = conn.open_transactions
         conn.reset!
         warn_once(pool)
-        instrument(pool, open_transactions: open_transactions)
+        instrument(pool, open_transactions: open_transactions, healed: true)
       rescue StandardError => e
-        warn('[Apartment::TransactionTaint] failed to heal a tainted connection for ' \
-             "'#{pool.apartment_pool_key}': #{e.class}: #{e.message}")
+        discard(conn, pool, e)
       end
 
       private
 
-      def instrument(pool, open_transactions:)
+      # reset! failed, and +super+ is about to put this connection back in the pool's
+      # available list. Checking a STILL-POISONED connection back in would rebuild the
+      # exact outage we came to fix — the next lease gets it and the tenant stays dead.
+      # So drop the handle instead: disconnect! sends no SQL and cannot fail to nil out
+      # @raw_connection, so the pool keeps a dead shell that Rails transparently
+      # reconnects, fresh, on the next checkout. Checking in a disconnected connection
+      # is normal Rails (it is what flush/reap leave behind).
+      def discard(conn, pool, error)
+        conn.disconnect!
+        warn('[Apartment] could not reset the tainted connection for tenant ' \
+             "'#{pool.apartment_tenant}' (#{error.class}: #{error.message}); the connection " \
+             'was dropped and will be reopened on next use.')
+        instrument(pool, open_transactions: nil, healed: false, error: error.class.name)
+      rescue StandardError
+        nil # Nothing further is safe to attempt inside checkin.
+      end
+
+      def instrument(pool, open_transactions:, healed:, error: nil)
         Instrumentation.instrument(
           'transaction_taint',
           tenant: pool.apartment_tenant,
           pool_key: pool.apartment_pool_key,
           open_transactions: open_transactions,
-          healed: true
+          healed: healed,
+          error: error
         )
       end
 

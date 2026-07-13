@@ -303,6 +303,41 @@ heal covers Apartment's tenant pools; it deliberately does not cover the primary
 (Never #4), so the upstream fix still matters and we should not let shipping ours reduce the
 pressure for it.
 
+## Known consequences (accepted, not defects)
+
+Surfaced by adversarial review of the implementation. Each is a real property of the
+design; none changes the verdict, and each is cheaper than the outage it replaces.
+
+**`DISCARD ALL` destroys session state beyond the transaction.** `reset!` drops prepared
+statements, temp tables, `LISTEN` registrations, session GUCs, `SET ROLE`/session
+authorization, and session-level advisory locks. Only `schema_search_path` is restored (by
+`attempt_configure_connection` — Evidence D, and the guard test that proves it). This is
+acceptable because **the connection we are resetting cannot execute any statement at all**:
+a poisoned session is not safely reusable, so there is no state on it worth preserving. AR
+reaches the same conclusion — `reset!` is what its own `reap` and `unpin_connection!` call.
+Adopters holding session advisory locks (migrations do) are unaffected: those run on a
+connection that is not in `PQTRANS_INERROR`, or they have already failed.
+
+**Only `PQTRANS_INERROR` is healed.** `PQTRANS_UNKNOWN` means the connection itself is
+broken, not that its transaction is aborted — a real query fails against it, so AR's own
+`active?`/`verify!`/`reconnect!` path reclaims it correctly. That case needs no help from
+us, and widening the predicate to cover it would re-introduce exactly the over-broad-match
+error that produced the adopter's savepoint regression. `PQTRANS_INTRANS` (an open but
+healthy transaction) is likewise never healed — there is a test for it.
+
+**The heal fires at checkin, not at checkout.** A connection poisoned mid-request stays
+poisoned for the rest of *that* request; we cannot reset it without destroying a transaction
+the application still owns. Recovery is guaranteed for the *next* lease, which is the
+property that keeps the tenant alive. If `reset!` itself fails, the connection is
+disconnected rather than re-pooled, so the next checkout reconnects fresh — the one path
+that would otherwise rebuild the original outage.
+
+**The default tenant's pool is not healed.** It is the primary ActiveRecord pool, not one
+Apartment creates (Never #4). Adopters who serve real traffic from `default_tenant` keep the
+stock Rails exposure there. Healing it would mean patching the main pool of every Rails app
+that loads this gem — a much larger claim than the one this design makes, and the reason the
+upstream issue below still matters.
+
 ## Open decision
 
 **Should the heal be default-on with a config escape hatch, or opt-in?**
