@@ -1,219 +1,249 @@
-# Transaction Taint Detection (W1 / failure-class member 7)
+# Transaction Taint: Detection and Checkin Heal (W1 / failure-class member 7)
 
-Status: living. Design for `PQTRANS_INERROR` taint detection, and the reasoned
-rejection of every recovery shape. Supersedes the scope sketched for W1 in
-[`v4-beta-readiness.md`](v4-beta-readiness.md) and for member 7 in
-[`fixture-pool-lifecycle.md`](fixture-pool-lifecycle.md); both proposed "a recovery
-path in `Apartment::Tenant.switch`'s ensure block," which the evidence below
-refutes.
+Status: living. Design for `PQTRANS_INERROR` taint on tenant pools: where it is
+detected, where it is healed, and the reasoned rejection of every other seam.
+Supersedes the scope sketched for W1 in [`v4-beta-readiness.md`](v4-beta-readiness.md)
+and for member 7 in [`fixture-pool-lifecycle.md`](fixture-pool-lifecycle.md); both
+proposed "a recovery path in `Apartment::Tenant.switch`'s ensure block," which the
+evidence below refutes twice over.
 
 ## Verdict
 
-- **Ship detection, not recovery.** A named instrumentation event plus a warning at the
-  switch boundary. No `ROLLBACK`, no savepoint, no connection reset. See
-  [What we ship](#what-we-ship).
-- **A raw `ROLLBACK` recovery is actively dangerous, and it is what the workaround in
-  the field does.** It silently destroys the *enclosing* transaction, desyncs
-  ActiveRecord's bookkeeping, raises nothing, and lets subsequent writes autocommit and
-  leak across examples. See [Evidence B](#evidence-b--the-savepoint-regression-is-silent).
-- **Savepoint containment inside `switch` is structurally unavailable**, not merely
-  expensive: a `SAVEPOINT` needs a connection, and at switch entry the tenant's pool
-  has none. See [Never #2](#never).
-- **No gem in the ecosystem heals a poisoned pooled connection.** The convention,
-  including in the one other PostgreSQL schema-switching gem, is detect-and-avoid. See
-  [Prior art](#prior-art--what-the-ecosystem-actually-does).
-- **v4 already closed half of this failure class by construction.** v3's `search_path`
-  mutation would have had the exact bug chronomodel works around; v4's `switch` executes
-  no SQL. Lock it with a regression test. See [The v4 dividend](#the-v4-dividend).
-- **Production taint is real but is a Rails gap, not ours.** A connection in a failed
-  transaction passes AR's health check and is handed to the next caller. Report it
-  upstream; do not paper over it. See [The upstream Rails gap](#the-upstream-rails-gap).
+- **One hook, at connection checkin, on Apartment-owned tenant pools.** Detect
+  `PQTRANS_INERROR`, instrument, warn, and heal with ActiveRecord's own `conn.reset!`.
+  See [What we ship](#what-we-ship).
+- **`switch` stays a pure `CurrentAttributes` swap.** It executes no SQL and checks out
+  no connection. Detection there was the previous design and is now rejected: it cannot
+  observe the production failure it was written to address. See [Never #5](#never).
+- **The heal is proven safe, not argued safe.** `reset!` clears the failed state, resets
+  AR's own transaction bookkeeping, **preserves the tenant's `search_path` through
+  `DISCARD ALL`**, and cannot touch a fixture transaction because pinned connections
+  never check in. Green on Rails 7.2 / 8.0 / 8.1. See [Evidence D](#evidence-d--the-heal-is-safe).
+- **A raw `ROLLBACK` recovery must never ship, and it is what the field workaround does.**
+  It silently destroys the enclosing transaction and leaks writes across examples. See
+  [Evidence B](#evidence-b--the-savepoint-regression-is-silent).
+- **PostgreSQL only.** MySQL fails the statement, not the transaction; there is no sticky
+  aborted state and no `transaction_status` API. The predicate lives behind an adapter
+  method. See [Evidence E](#evidence-e--mysql-has-no-analogous-state).
+- **Rails' health check lies, and that stays a Rails bug we report.** We heal our own
+  tenant pools; we do not patch the primary pool. See
+  [The upstream Rails gap](#the-upstream-rails-gap).
 
 ## Contents
 
 - [The mechanism](#the-mechanism)
+- [Why the gem owns this](#why-the-gem-owns-this)
 - [Evidence](#evidence)
-- [The v4 dividend](#the-v4-dividend)
-- [Prior art — what the ecosystem actually does](#prior-art--what-the-ecosystem-actually-does)
 - [What we ship](#what-we-ship)
+- [The v4 dividend](#the-v4-dividend)
 - [Never](#never)
 - [The upstream Rails gap](#the-upstream-rails-gap)
-- [Open questions](#open-questions)
+- [Open decision](#open-decision)
 - [Cross-references](#cross-references)
 
 ## The mechanism
 
 **A PostgreSQL connection enters `PQTRANS_INERROR` when a statement fails inside a
-transaction.** Every subsequent statement on it raises `PG::InFailedSqlTransaction`
-until the transaction ends. That much is PostgreSQL, not Rails and not Apartment.
+transaction.** Every subsequent statement raises `PG::InFailedSqlTransaction` until the
+transaction ends. That is PostgreSQL, not Rails and not Apartment.
 
-**ActiveRecord heals this automatically whenever the failing statement is inside an AR
-transaction block**, because the `TransactionManager` unwinds via `ROLLBACK` or
-`ROLLBACK TO SAVEPOINT`. Verified: a failure inside `transaction(requires_new: true)`
-leaves the connection `INTRANS`, fully usable.
+**ActiveRecord heals this whenever the failing statement is inside an AR transaction
+block**, because the `TransactionManager` unwinds via `ROLLBACK` or
+`ROLLBACK TO SAVEPOINT`. A failure inside `transaction(requires_new: true)` leaves the
+connection `INTRANS` and fully usable (Evidence A).
 
-**The taint therefore survives only in the gap:** a statement AR did not wrap, failing
-while a transaction AR will not unwind stays open. Two populations land in that gap.
+**The taint survives only in the gap:** a statement AR did not wrap, failing while a
+transaction AR will not unwind stays open. Two populations land there.
 
 | | Fixture pool (pinned) | Production pool |
 |---|---|---|
-| Who holds the transaction open | the fixture transaction | app code (`begin_transaction` without a block, raw `execute("BEGIN")`, a thread killed mid-rollback) |
-| Typical tainting statement | raw `execute`, DDL, a query against a missing table | same |
+| Who holds the transaction open | the fixture transaction | app code: `begin_transaction` without a block, raw `execute("BEGIN")`, a thread killed mid-rollback |
 | Does AR heal it? | at teardown, yes | **never** |
 | Outlives the example / request? | no | **yes, indefinitely** |
-| Does `checkin` fire? | no (pinned connections skip checkin) | yes, but it does not reset |
+| Does `checkin` fire? | no (pinned connections skip it) | yes, but AR does not reset on checkin |
 | Blast radius | rest of the example, one tenant | that tenant, on that worker, until process restart |
 
-**Apartment's contribution is amplification, not causation.** Pool-per-tenant means the
-poisoned connection belongs to *one tenant*, so the production failure shape is "one
-tenant is dead on one worker while every other tenant is fine, and nothing in the logs
-explains why." That is why the gem should name the tenant, and it is the whole
-justification for detection living here.
+**The two populations want opposite things**, which is why one seam serves both. The
+fixture connection must keep its transaction (teardown owns the rollback). The production
+connection must be reset before reuse. Checkin distinguishes them for free: pinned
+connections never reach it.
+
+## Why the gem owns this
+
+**The taint mechanism is generic Rails/PG. The consequence is specific to us.** In a
+shared Rails pool a poisoned connection is one of N, and the app limps on. Under
+pool-per-tenant it is the *only* connection for that tenant, so the production failure
+reads as: **one tenant is dead on one worker, every other tenant is fine, and nothing in
+the logs explains why.**
+
+**That is why "no other gem does this" is weak evidence.** chronomodel,
+sequel-search-path, and pg-osc detect `INERROR` and avoid, and none of them heal — but
+none of them own pools either. They are schema-switching gems, not connection-lifecycle
+managers. The comparison set cannot have our failure, so its silence is not a verdict.
+Rails does not heal because Rails does not need to as badly; and Rails' actual precedent
+([#12330](https://github.com/rails/rails/issues/12330), a prepared-statement poisoning
+that permanently bricked app servers) is that **the layer owning the poisoned cache fixes
+it.** Apartment owns the tenant pools.
 
 ## Evidence
 
-Reproduced against PostgreSQL 18 / Rails 8.1, driving the real
-`setup_fixtures` / `teardown_fixtures` lifecycle. Not mocked. The probes become the
-integration spec at implementation time.
+Reproduced against PostgreSQL 18, driving the real `setup_fixtures` /
+`teardown_fixtures` lifecycle. Not mocked. These probes become the integration spec.
 
 ### Evidence A — the taint, and its real bounds
 
 ```
-after first read on tenant pool (open_transactions)  => 1
-status                                               => INTRANS
 status after raw failing execute                     => INERROR   <- taint
 open_transactions                                    => 1         <- AR did NOT roll back
 status on re-entering same tenant                    => INERROR   <- survives switch exit
 subsequent SELECT 1                                  => FAILED: PG::InFailedSqlTransaction
 OTHER tenant's pool status                           => INTRANS   <- pool-per-tenant contains it
-other tenant SELECT 1                                => SUCCEEDED
 status after failure INSIDE transaction(requires_new)=> INTRANS   <- AR's savepoint heals
 post-teardown pool acme:writing                      => IDLE      <- teardown heals
 ```
 
-**Two findings constrain every candidate design.** Pool-per-tenant already contains the
-blast radius to one tenant, and `transaction(requires_new: true)` already heals the
-taint. The recovery primitive we might have invented is one Rails already ships.
+**Two findings constrain every design.** Pool-per-tenant already contains the blast radius
+to one tenant, and `transaction(requires_new: true)` already heals the taint: the
+containment primitive we might have invented is one Rails ships (it is Rails' expression of
+psql's `ON_ERROR_ROLLBACK`).
 
 ### Evidence B — the savepoint regression is silent
 
-The naive recovery: see `INERROR`, issue a raw `ROLLBACK`. Run it while an AR savepoint
-stack is open:
+The naive recovery, run while an AR savepoint stack is open:
 
 ```
 open_transactions inside savepoint  => 2
-status                              => INTRANS
 status after raw ROLLBACK           => IDLE     <- the ENCLOSING transaction is gone
 AR still believes open_transactions => 2        <- bookkeeping desynced
 survived savepoint block exit       => yes      <- NO exception raised
 WARNING:  there is no transaction in progress   <- the outer COMMIT hit nothing
 ```
 
-**Nothing raises.** The enclosing transaction is destroyed, AR never notices, and the
-outer `COMMIT` becomes a no-op. Under transactional fixtures this means the example's
-fixture transaction is gone and every subsequent write **autocommits and leaks
-permanently into the database**, which is precisely the order-dependent flake family
+**Nothing raises.** Under transactional fixtures the example's fixture transaction is
+destroyed and every subsequent write **autocommits and leaks permanently into the
+database**, which is exactly the order-dependent flake family
 [`fixture-pool-lifecycle.md`](fixture-pool-lifecycle.md) exists to close.
 
-**This is not hypothetical.** The best-effort `ROLLBACK` loop in the field is this
-shape. Documenting the hazard is the highest-value output of this workstream: the
-workaround is not merely unnecessary, it is a live source of the flakes it was written
-to prevent.
+**The best-effort `ROLLBACK` loop seen in the field is this shape.** Documenting the hazard
+is independently worth the workstream: that workaround is not merely unnecessary, it is a
+live source of the flakes it was written to prevent.
 
 ### Evidence C — production taint is real, and AR's health check lies
 
 ```
 status after manual begin_transaction + swallowed failure => INERROR
-raw_connection.query(';') on tainted conn                 => SUCCEEDED  (active? => true)
-conn.active?                                              => true
-post-checkin pooled conn acme:writing                     => INERROR    <- back in the pool, tainted
-post-checkin open_transactions                            => 1
+raw_connection.query(';') on tainted conn                 => SUCCEEDED (active? => true)
+post-checkin pooled conn acme:writing                     => INERROR   <- back in the pool, tainted
 next-request leased conn status                           => INERROR
 next-request SELECT 1                                     => FAILED
 ```
 
-**The mechanism is an empty query.** AR's `active?` runs `raw_connection.query(";")`,
-and an empty query does *not* error in an aborted transaction. So `active?` returns
-`true`, `verify!` pronounces a poisoned connection healthy, `checkin` does not reset
-it, and the pool hands it to the next caller. Forever.
+**The mechanism is an empty query.** AR's `active?` probes with
+`raw_connection.query(";")`, and an empty query does not error in an aborted transaction.
+So `active?` returns `true`, `verify!` pronounces a poisoned connection healthy, `checkin`
+does not reset it, and the pool serves it to the next caller. Indefinitely.
 
-This refutes the "structurally test-only" reading that an earlier draft of this design
-rested on. It does not, however, make recovery ours to ship. See
-[The upstream Rails gap](#the-upstream-rails-gap).
+### Evidence D — the heal is safe
 
-## The v4 dividend
+`conn.reset!` at checkin, on a poisoned tenant connection. **Green on Rails 7.2, 8.0, and
+8.1.**
 
-**v3 would have had this bug in its switch path; v4 does not.** v3 mutated
-`search_path` on switch and restored it in an `ensure`. Against a tainted connection
-that restore silently fails, because every statement raises. The tenant context would
-then be *wrong* rather than merely broken, which is the class of bug this gem exists to
-prevent.
+```
+A. status after poison                       => INERROR
+A. open_transactions after poison            => 1
+A. status after reset!                       => IDLE
+A. open_transactions after reset!            => 0        <- AR's bookkeeping reset too, no desync
+B. search_path BEFORE poison                 => acme_799e0c26
+B. search_path AFTER reset! (DISCARD ALL)    => acme_799e0c26
+B. SEARCH_PATH PRESERVED?                    => YES      <- no cross-tenant leak
+B. current_schema() after heal               => acme_799e0c26
+D. pinned? (under fixtures)                  => true
+D. heals fired (must be [])                  => []       <- pinned connection SKIPPED
+D. open_transactions (fixture tx intact?)    => 1        <- fixture transaction untouched
+E. poison -> checkin -> next-request query    => SUCCEEDED -- POOL HEALED
+```
 
-chronomodel (see below) documents exactly that failure and works around it. **v4's
-`switch` is a pure `Current.tenant` swap that executes no SQL**, so the tainted-ensure
-failure mode is gone by construction, not by defense.
+**Check B was the make-or-break.** `reset!` issues `DISCARD ALL`, which resets session
+state. Had it dropped the tenant's `search_path`, healing a connection would silently
+repoint it at the `public` schema, turning a bricked tenant into a **cross-tenant data
+leak** — a catastrophically worse bug than the one being fixed. It does not:
+`attempt_configure_connection` re-applies `schema_search_path` from the pool's connection
+config. Verified by `SHOW search_path` and `current_schema()` on both sides of the reset.
 
-**Lock the property with a regression test.** "Switch's ensure issues no SQL" is now
-load-bearing, and nothing currently asserts it.
+**Check D is why one seam serves both populations.** Fixture-pinned connections never
+reach `checkin` (`ConnectionPool#checkin` returns early for `@pinned_connection`), so the
+heal is structurally incapable of touching a fixture transaction. Evidence B's hazard
+cannot apply at checkin either: no caller holds the connection, so there is no enclosing
+transaction to destroy.
 
-## Prior art — what the ecosystem actually does
+### Evidence E — MySQL has no analogous state
 
-**No gem heals a poisoned pooled connection.** A GitHub code search for
-`set_callback :checkin` combined with rollback returns zero results. What gems do with
-`PQTRANS_INERROR` is uniformly *detect and avoid*:
+```
+adapter                                        => Mysql2
+raw_connection responds to transaction_status? => false      <- no such API
+INSERT after failed statement                  => SUCCEEDED -- no sticky abort state
+SELECT after failed statement                  => SUCCEEDED (count=2)
+rows after rollback                            => 0          <- transaction intact throughout
+```
 
-- **[chronomodel](https://github.com/ifad/chronomodel)** — a PostgreSQL schema-switching
-  gem, structurally the closest analogue to Apartment that exists. Its `on_schema`
-  ensure block hits our exact problem, and its comment could have been written for us:
-
-  > *"If the transaction is aborted, any `execute()` call will raise 'transaction is
-  > aborted' errors, thus calling the Adapter's setter won't update the memoized
-  > variable. Here we reset it to `nil` to refresh it on the next call, as there is no
-  > way to know which path will be restored when the transaction ends."*
-
-  It checks `INERROR` and **invalidates its cached state instead of executing
-  anything**. It does not roll back. It does not heal.
-- **[sequel-search-path](https://github.com/chanks/sequel-search-path)** — checks
-  `INERROR` purely to *skip* setting the search path.
-- **[pg-osc](https://github.com/shayonj/pg-osc)** — checks `INERROR` and bails out.
-
-**Rails' own precedent points the same way.**
-[rails/rails#12330](https://github.com/rails/rails/issues/12330) reported an analogous
-poisoning: a failed `DEALLOCATE` inside an aborted transaction left a permanently broken
-prepared-statement cache ("all old app servers are now permanently broken without a
-restart"). Same shape, different cache. Rails fixed that one **in Rails**, not in a gem
-downstream of it.
+**MySQL fails the statement, not the transaction.** Member 7 is PostgreSQL-only. The
+predicate therefore lives behind an adapter method, defaulting to `false`, implemented on
+the PG adapters — not as an engine-agnostic check that would be dead code on MySQL and
+SQLite.
 
 ## What we ship
 
-1. **Detection + instrumentation at the switch boundary.** In `Apartment::Tenant.switch`'s
-   ensure, inspect *only an already-leased* connection for the tenant's pool: a
-   `pool_manager` lookup plus `active_connection?`, so nothing is materialized and cold
-   pools stay cold. On `INERROR`, emit `transaction_taint.apartment` (payload: `tenant:`,
-   `pool_key:`) and `warn`. Add the event to the catalog in `docs/observability.md`.
+1. **A pool-scoped checkin heal.** Apartment extends a module onto the tenant pools it
+   creates (`PoolManager`), overriding `ConnectionPool#checkin`. Before delegating: if the
+   adapter reports an aborted transaction and the connection is **not pinned**, instrument,
+   warn, and call `conn.reset!`. Scoped by construction to pools Apartment owns; the
+   primary pool and every app pool are untouched. No global adapter patch.
 
-2. **Never `raise` from the `ensure`.** A `raise` in an `ensure` block *replaces* the
-   in-flight exception, so the original failure (the one that actually caused the taint)
-   would be swallowed. Warn and instrument; do not raise. If a strict mode is ever wanted,
-   it must raise only when `$!` is nil, and that is out of scope here.
+2. **An adapter predicate.** `aborted_transaction?(conn)` on `AbstractAdapter` returning
+   `false`; the PostgreSQL adapters check
+   `raw_connection.transaction_status == PG::PQTRANS_INERROR`. Evidence E is the reason
+   this is not inlined.
 
-3. **Integration spec that reproduces the taint for real.** Evidence A and B become
-   `spec/integration/v4/transaction_taint_spec.rb`, driving the real fixture lifecycle.
-   No mocking of `transaction_status`.
+3. **Instrumentation.** `transaction_taint.apartment` (payload: `tenant:`, `pool_key:`,
+   `open_transactions:`, `healed:`), added to the catalog in `docs/observability.md`. The
+   heal fixes the pool; the event preserves the signal that app code is wrong. **Both, not
+   either** — a silent heal would paper over the adopter's bug, which is the one fair
+   criticism of healing.
 
-4. **Regression test for the v4 dividend.** Assert `switch`'s ensure issues no SQL, so a
-   tainted connection can never corrupt tenant restoration.
+4. **Rate-limited warning.** Warn-once-per-pool-per-taint. Not polish: a poisoned pool in a
+   `Tenant.each` fan-out would otherwise emit N warnings during the exact incident where
+   the signal matters.
 
-5. **Docs.** `transaction(requires_new: true)` as the supported containment recipe (it is
-   Rails' expression of psql's `ON_ERROR_ROLLBACK`, and Evidence A proves it heals), plus
-   the raw-`ROLLBACK` hazard from Evidence B written up where a consumer will find it
-   before they write the workaround.
+5. **Integration spec.** Evidence A–E become `spec/integration/v4/transaction_taint_spec.rb`,
+   driving the real fixture lifecycle. No mocking of `transaction_status`. Must include the
+   negative cases: the pinned connection is skipped, and the fixture transaction survives.
 
-6. **An upstream Rails issue** for the `active?` gap. See below.
+6. **Regression test for the v4 dividend** (below).
 
-**What the adopter deletes, and why.** Not because the gem mopped up: because the
-instrumentation names the call site that taints, `requires_new` fixes it there, and the
-`ROLLBACK` loop they have today is doing active harm (Evidence B).
+7. **Docs.** `transaction(requires_new: true)` as the containment recipe, and the
+   raw-`ROLLBACK` hazard from Evidence B written where a consumer finds it *before* they
+   write the workaround.
+
+8. **An upstream Rails issue** for the `active?` gap.
+
+**What the adopter gets, stated honestly.** Their `ROLLBACK` loop goes away and is not
+replaced by a warning: the pool heals itself at checkin. The instrumentation still names
+the tainting tenant so they can fix the call site with `requires_new`. And Evidence B tells
+them the loop they have today is actively harmful, which is true whether or not they adopt
+anything else here.
+
+## The v4 dividend
+
+**v3 would have had this bug in its switch path; v4 does not.** v3 mutated `search_path` on
+switch and restored it in an `ensure`. Against a tainted connection that restore silently
+fails, leaving the tenant context *wrong* rather than merely broken.
+
+chronomodel documents exactly this and works around it: its `on_schema` ensure block checks
+`INERROR` and invalidates its memoized search path rather than trying to restore it,
+because "there is no way to know which path will be restored when the transaction ends."
+**v4's `switch` executes no SQL**, so the failure mode is gone by construction rather than
+by defense. Nothing currently asserts that property, and it is now load-bearing: lock it
+with a regression test.
 
 ## Never
 
@@ -221,81 +251,92 @@ Explicit rejections, recorded so they are not re-litigated.
 
 1. **A raw `ROLLBACK` recovery, anywhere.** Evidence B: silently destroys the enclosing
    transaction, desyncs AR, raises nothing, converts a loud intra-example failure into
-   permanent cross-example database pollution. This is the single most important
-   rejection in this document, because it is what the field workaround does today.
+   permanent cross-example database pollution. Distinct from `reset!` (Evidence D), which is
+   AR's own primitive and resets AR's bookkeeping along with the connection. Conflating the
+   two was an error in the previous draft of this document.
 
-2. **Savepoint containment inside `switch`.** Structurally unavailable, not merely
-   costly. Issuing a `SAVEPOINT` requires a connection, and at switch *entry* the
-   tenant's pool typically has none: `switch` is a `Current.tenant` swap and the block
-   may never touch the database. Containment would force a connection checkout on every
-   switch, materializing pools that lazy creation deliberately leaves cold and undoing
-   the lazy-enrollment property established by the (a′) tiebreaker in
+2. **Savepoint containment at switch entry.** A `SAVEPOINT` requires a connection, and at
+   switch entry the tenant's pool typically has none: `switch` is a `Current.tenant` swap and
+   the block may never touch the database. Containment would force a checkout on every
+   switch, materializing pools that lazy creation deliberately leaves cold and undoing the
+   lazy-enrollment property established by the (a′) tiebreaker in
    [`fixture-pool-lifecycle.md`](fixture-pool-lifecycle.md).
 
-3. **Deferred savepoint containment via AR's `checkout` callback.** Proposed during
-   review as the fix for #2 (establish the savepoint at first checkout rather than at
-   switch entry, preserving lazy pools). It fails in exactly the environment the taint
-   lives in: `ConnectionPool#checkout` returns a pinned connection *directly*, never
-   reaching `checkout_and_verify`, which is the only caller of `_run_checkout_callbacks`.
-   **Under transactional fixtures the checkout callback never fires.**
+3. **Deferred savepoint containment via AR's `checkout` callback.** The obvious fix for #2
+   (establish the savepoint at first checkout, preserving lazy pools). It fails in exactly
+   the environment the taint lives in: `ConnectionPool#checkout` returns a pinned connection
+   *directly*, never reaching `checkout_and_verify`, the only caller of
+   `_run_checkout_callbacks`. **Under transactional fixtures the checkout callback never
+   fires.**
 
-4. **Healing at checkin (`conn.reset!` on `INERROR`, scoped to Apartment tenant pools).**
-   The one *safe* heal: at checkin no caller holds the connection, so Evidence B's hazard
-   cannot apply, and `reset!` is AR's own primitive (`ROLLBACK` + `DISCARD ALL` +
-   `reset_transaction`). Rejected anyway, on three grounds. **No gem does this** and Rails
-   does not either, so it is unprecedented surface on connections we did not poison. **The
-   failure it prevents requires an app already doing something broken** (manual
-   `begin_transaction`, raw `execute("BEGIN")`, a thread killed mid-rollback). **And it
-   would paper over a Rails defect** we should instead report, leaving Apartment carrying a
-   patch forever. Reconsider only on adopter-reported production evidence, which does not
-   exist today. Code is a liability.
+4. **Healing the primary / default pool.** The same defect poisons any Rails pool, but the
+   primary is not ours and the blast radius there is one connection of N, not a dead tenant.
+   Patching it would make Apartment a permanent workaround for a Rails bug on connections it
+   did not create. Report upstream instead.
 
-5. **Detecting by widening the predicate** (treating any non-`IDLE` status as taint, or
-   probing connections the switch did not touch). This is what produced the savepoint
-   regression in the field. The predicate stays narrow: `PQTRANS_INERROR`, on an
-   already-leased connection, for the tenant being left.
+5. **Detection at the switch boundary.** This was the previous design, and it is wrong on
+   four counts. It **cannot see the production failure**: by the time a request's `switch`
+   ensure runs, the poisoned connection's fate is decided at checkin, and detecting it there
+   names a landmine without removing it. It **misses `switch!`, `reset`, and `each`**, which
+   have no block boundary. It **couples a pure context swap to pool internals**
+   (`pool_manager` lookup, lease probe, adapter `transaction_status`), soiling the very v4
+   dividend this document celebrates. And a `PoolManager#get` on every switch exit would
+   **distort the reaper's LRU timestamps**. Checkin is strictly better on all four.
+
+6. **Raising from the `ensure` block.** A `raise` in `ensure` replaces the in-flight
+   exception (attaching the original only as `#cause`), so the failure that *caused* the
+   taint would be masked behind a report *about* the taint. Moot under the checkin design,
+   recorded because the previous draft proposed the seam.
 
 ## The upstream Rails gap
 
-**A connection in a failed transaction passes ActiveRecord's health check and is served
-to the next caller** (Evidence C). `active?` probes with `raw_connection.query(";")`; an
-empty query does not error in an aborted transaction, so `verify!` reports the connection
-healthy and `checkin` never resets it.
+**A connection in a failed transaction passes ActiveRecord's health check and is served to
+the next caller** (Evidence C). `active?` probes with `raw_connection.query(";")`; an empty
+query does not error in an aborted transaction, so `verify!` reports the connection healthy
+and `checkin` never resets it.
 
-**No Rails issue exists for this.** The closest precedent, #12330, is the
-prepared-statement variant of the same poisoning and was fixed in Rails.
+**No Rails issue exists for this.** The closest precedent, #12330, is the prepared-statement
+variant of the same poisoning, and it was fixed in Rails.
 
-**Action: open an issue against rails/rails** with the Evidence C reproduction. This is
-not Apartment's to fix, and #4 in [Never](#never) records why we decline to.
+**Action: open an issue against rails/rails** with the Evidence C reproduction. Our checkin
+heal covers Apartment's tenant pools; it deliberately does not cover the primary pool
+(Never #4), so the upstream fix still matters and we should not let shipping ours reduce the
+pressure for it.
 
-## Open questions
+## Open decision
 
-- **Should the warning be rate-limited?** A tainted connection in a loop could warn on
-  every switch. Probably warn-once-per-pool-per-taint; settle during implementation.
-- **Does MySQL have an analogous state?** MySQL does not abort a transaction on statement
-  error the way PostgreSQL does, so member 7 is expected to be PG-only. Confirm, and if so
-  scope the detection to the PG adapters and say so in the docs rather than shipping a
-  no-op on MySQL.
+**Should the heal be default-on with a config escape hatch, or opt-in?**
+
+Recommendation: **default-on**, disableable. A knob named "don't brick my tenant" is a
+strange thing to make an adopter discover, and off-by-default means the outage is the
+default experience. Evidence D is green across the matrix, the heal cannot reach a fixture
+transaction, and it is a no-op on healthy connections (a status read).
+
+The conservative alternative (opt-in, flagged experimental for the beta) is defensible under
+a "pragmatic posture" beta and was argued for in review. This is the one call left; it does
+not block writing the plan.
 
 ## Cross-references
 
-- [`fixture-pool-lifecycle.md`](fixture-pool-lifecycle.md) — the failure class; member 7
-  is this document. Members 1–5 closed; the (a′) lazy-enrollment result that Never #2
-  depends on lives there.
+- [`fixture-pool-lifecycle.md`](fixture-pool-lifecycle.md) — the failure class; member 7 is
+  this document. The (a′) lazy-enrollment result that Never #2 depends on lives there.
 - [`v4-beta-readiness.md`](v4-beta-readiness.md) — W1. Its "recovery path in `switch`'s
   ensure block" scope is superseded here.
 - `docs/observability.md` — event catalog; `transaction_taint.apartment` is added there.
-- `docs/testing.md` — where the `requires_new` containment recipe and the raw-`ROLLBACK`
-  hazard belong.
-- `lib/apartment/tenant.rb` — `switch` (the detection site).
-- `lib/apartment/instrumentation.rb` — the `*.apartment` notification wrapper.
+- `docs/testing.md` — the `requires_new` containment recipe and the raw-`ROLLBACK` hazard.
+- `lib/apartment/pool_manager.rb` — creates the tenant pools the heal is scoped to.
+- `lib/apartment/adapters/abstract_adapter.rb` — home of the `aborted_transaction?` predicate.
+- `lib/apartment/tenant.rb` — `switch`, which this design deliberately leaves untouched.
 
 ## Origin
 
 2026-07-12. Scoped from `v4-beta-readiness.md` W1 as "instrumented detection + a recovery
-path." Reproduction of the taint against a real fixture lifecycle, plus an adversarial
-review panel, inverted the design: the recovery path is the dangerous half, the detection
-is the valuable half, and the production reachability that the panel correctly forced into
-the open turns out to be a Rails defect rather than a gem one. The panel's counter-proposal
-(deferred savepoint containment at checkout) was itself refuted from ActiveRecord source
-and is recorded as Never #3.
+path in switch's ensure." Reproduction against a real fixture lifecycle inverted it twice.
+First: the recovery path, as written in the field, is the dangerous half (Evidence B), and an
+early draft concluded the taint was test-only and shipped detection alone. An adversarial
+panel refuted that — production poisoning is real (Evidence C), and the detector was placed
+where it structurally could not observe the failure it was written for. The panel also named
+the argument the first draft leaned on: "no gem heals a pooled connection" is an argument
+from absence, and the absence is explained by the fact that no comparable gem owns pools.
+The heal was then proven rather than argued (Evidence D), and the engine scope measured
+rather than assumed (Evidence E).
