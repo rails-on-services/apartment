@@ -12,7 +12,15 @@ module Apartment
     # at pool checkin; see docs/designs/transaction-taint-detection.md.
     module PostgresqlTransactionState
       def aborted_transaction?(conn)
-        raw = conn.raw_connection
+        # NOT conn.raw_connection. That is the escape hatch for code about to *use*
+        # the driver, so it materializes lazy transactions, marks the connection
+        # dirty, and CONNECTS one that was never connected — at every checkin, on
+        # every pooled connection, which defeats Rails' lazy connect and burns a
+        # backend per tenant pool. We only read a status flag, so we take the handle
+        # directly. `connected?` keeps us off the never-connected path.
+        return false unless conn.connected?
+
+        raw = conn.instance_variable_get(:@raw_connection)
         return false unless raw.respond_to?(:transaction_status)
 
         raw.transaction_status == ::PG::PQTRANS_INERROR

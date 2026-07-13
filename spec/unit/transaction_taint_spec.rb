@@ -35,9 +35,25 @@ RSpec.describe('transaction taint') do
       end.new({})
     end
 
+    # Deliberately NOT an instance_double stubbing `raw_connection`. That double is
+    # what hid the original bug: it made AR's `raw_connection` — a method that
+    # materializes transactions and OPENS an unconnected connection — look like a
+    # pure reader. This fake mirrors AR's real shape instead: a `connected?`
+    # predicate over an @raw_connection ivar. It also FAILS LOUDLY if the detector
+    # ever reaches for `raw_connection` again.
+    let(:fake_conn) do
+      Class.new do
+        def initialize(raw) = @raw_connection = raw
+        def connected? = !@raw_connection.nil?
+
+        def raw_connection
+          raise('detector must not call raw_connection — it has side effects')
+        end
+      end
+    end
+
     def conn_with(status)
-      raw = instance_double(PG::Connection, transaction_status: status)
-      instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter, raw_connection: raw)
+      fake_conn.new(instance_double(PG::Connection, transaction_status: status))
     end
 
     it 'is true when the raw connection reports PQTRANS_INERROR' do
@@ -52,15 +68,12 @@ RSpec.describe('transaction taint') do
       expect(adapter.aborted_transaction?(conn_with(PG::PQTRANS_IDLE))).to(be(false))
     end
 
-    it 'is false when the connection has no raw connection yet' do
-      conn = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter, raw_connection: nil)
-      expect(adapter.aborted_transaction?(conn)).to(be(false))
+    it 'is false — and does NOT connect — when the connection is not yet connected' do
+      expect(adapter.aborted_transaction?(fake_conn.new(nil))).to(be(false))
     end
 
     it 'is false — never raises — when the raw connection cannot answer' do
-      conn = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter,
-                             raw_connection: Object.new)
-      expect(adapter.aborted_transaction?(conn)).to(be(false))
+      expect(adapter.aborted_transaction?(fake_conn.new(Object.new))).to(be(false))
     end
   end
 end
@@ -99,6 +112,7 @@ RSpec.describe(Apartment::TransactionTaint) do
                            pinned: pinned,
                            open_transactions: open_transactions)
     allow(conn).to(receive(:reset!))
+    allow(conn).to(receive(:disconnect!))
     allow(adapter).to(receive(:aborted_transaction?).with(conn).and_return(aborted))
     conn
   end
@@ -175,6 +189,36 @@ RSpec.describe(Apartment::TransactionTaint) do
     allow(conn).to(receive(:reset!).and_raise(StandardError, 'boom'))
     pool.checkin(conn)
     expect(pool.checked_in).to(eq([conn]))
+  end
+
+  # Checking a STILL-POISONED connection back in would rebuild the outage this whole
+  # feature exists to prevent: the next lease gets it and the tenant stays dead. Drop
+  # the handle instead; Rails reconnects it, fresh, on the next checkout.
+  it 'DISCARDS the connection when reset! fails, rather than re-pooling it poisoned' do
+    conn = connection(aborted: true)
+    allow(conn).to(receive(:reset!).and_raise(StandardError, 'boom'))
+    pool.checkin(conn)
+    expect(conn).to(have_received(:disconnect!))
+  end
+
+  it 'reports the failed heal as healed: false with the error class' do
+    conn = connection(aborted: true)
+    allow(conn).to(receive(:reset!).and_raise(StandardError, 'boom'))
+    events = []
+
+    ActiveSupport::Notifications.subscribed(->(*, payload) { events << payload },
+                                            'transaction_taint.apartment') do
+      pool.checkin(conn)
+    end
+
+    expect(events.first).to(include(healed: false, error: 'StandardError'))
+  end
+
+  it 'never raises even when the discard fallback ALSO fails' do
+    conn = connection(aborted: true)
+    allow(conn).to(receive(:reset!).and_raise(StandardError, 'boom'))
+    allow(conn).to(receive(:disconnect!).and_raise(StandardError, 'boom too'))
+    expect { pool.checkin(conn) }.not_to(raise_error)
   end
 
   it 'does not extend the pool at all when heal_tainted_connections is false' do

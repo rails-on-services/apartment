@@ -160,6 +160,80 @@ RSpec.describe('v4 transaction taint heal', :integration,
       expect(events.first).to(include(tenant: tenant, pool_key: "#{tenant}:writing", healed: true))
     end
 
+    # The predicate must be NARROW. An open transaction that is merely UNFINISHED is
+    # not an aborted one, and resetting it would destroy work the app still owns --
+    # the same over-broad-predicate mistake that produced the adopter's savepoint
+    # regression. PQTRANS_INTRANS must not be healed; only PQTRANS_INERROR.
+    it 'does NOT heal a connection with an open but healthy transaction' do
+      events = []
+      subscriber = ->(*, payload) { events << payload }
+      conn = nil
+
+      ActiveSupport::Notifications.subscribed(subscriber, 'transaction_taint.apartment') do
+        Apartment::Tenant.switch(tenant) do
+          conn = ActiveRecord::Base.connection
+          conn.begin_transaction
+          conn.execute("INSERT INTO #{table_name} (name) VALUES ('kept')")
+
+          expect(conn.raw_connection.transaction_status).to(eq(PG::PQTRANS_INTRANS))
+        end
+
+        ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+      end
+
+      expect(events).to(be_empty)
+      expect(conn.open_transactions).to(eq(1)) # survived checkin: not reset out from under the app
+    ensure
+      # The transaction holds a lock on the tenant's table; leaving it open makes the
+      # after-hook's DROP SCHEMA ... CASCADE block until it times out.
+      conn.rollback_transaction if conn&.transaction_open?
+    end
+
+    # REGRESSION LOCK. The detector must never call conn.raw_connection: that method
+    # materializes lazy transactions and OPENS a connection that was never connected.
+    # Reading it at checkin -- on every pooled connection -- defeated Rails' lazy
+    # connect and burned a real backend per tenant pool. Measured, not theorised.
+    it 'does not connect a connection that was never connected' do
+      pool = Apartment::Tenant.switch(tenant) { ActiveRecord::Base.connection_pool }
+      pool.connections.each(&:disconnect!)
+
+      conn = pool.checkout
+      expect(conn.connected?).to(be(false))
+
+      pool.checkin(conn)
+
+      expect(conn.connected?).to(be(false))
+    end
+
+    # If reset! fails we must NOT hand the still-poisoned connection back to the pool:
+    # the next lease would get it and the tenant would stay dead, which is the very
+    # outage this feature exists to prevent. We drop the handle instead and let Rails
+    # reconnect on next use. Proven against a real connection, with a real failure.
+    it 'discards the connection — never re-pools it — when reset! fails' do
+      events = []
+      subscriber = ->(*, payload) { events << payload }
+
+      ActiveSupport::Notifications.subscribed(subscriber, 'transaction_taint.apartment') do
+        Apartment::Tenant.switch(tenant) do
+          conn = ActiveRecord::Base.connection
+          poison!(conn)
+          allow(conn).to(receive(:reset!).and_raise(PG::UnableToSend, 'connection lost'))
+        end
+
+        ActiveRecord::Base.connection_handler.clear_active_connections!(:all)
+      end
+
+      expect(events.first).to(include(healed: false, error: 'PG::UnableToSend'))
+
+      # The whole point: the tenant is USABLE on the next request, not bricked.
+      Apartment::Tenant.switch(tenant) do
+        conn = ActiveRecord::Base.connection
+        expect(aborted?(conn)).to(be(false))
+        expect(conn.select_value("SELECT count(*) FROM #{table_name}")).to(eq(0))
+        expect(conn.select_value('SELECT current_schema()')).to(eq(tenant))
+      end
+    end
+
     it 'leaves a healthy connection untouched' do
       events = []
       subscriber = ->(*, payload) { events << payload }
