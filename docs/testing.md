@@ -314,3 +314,81 @@ Three notes on the recipe:
 - **Inheritance is sticky.** `self.use_transactional_tests = false` at the group level applies to nested describes too. Prefer narrow opt-in (`describe '…', cross_tenant: true do`) over flipping it globally; the metadata makes the opt-out grep-able.
 
 Apartment does not ship an `Apartment::Test::CrossTenant` module. The mechanism above is Rails-native, the cleanup recipe is sensitive to the suite's other tools (DatabaseCleaner, test-prof, factory caching), and the cost of getting it wrong is a noisy `FixtureLifecycleViolation`, not silent data loss. Copy the recipe and adapt.
+
+## Aborted transactions (PostgreSQL `PQTRANS_INERROR`)
+
+**A statement that fails inside a PostgreSQL transaction poisons the connection.** Every
+subsequent statement raises `PG::InFailedSqlTransaction` until the transaction ends.
+ActiveRecord heals this automatically whenever the failing statement sits inside a
+`transaction` block, because it unwinds with `ROLLBACK` or `ROLLBACK TO SAVEPOINT`.
+
+**The taint survives only in the gap:** a statement Rails did not wrap fails while a
+transaction Rails will not unwind stays open. Under transactional fixtures that transaction
+is the fixture transaction, open for the whole example. In production it is an app-held
+transaction — a raw `execute("BEGIN")`, a `begin_transaction` without the block form, or a
+thread killed mid-rollback.
+
+**Apartment resets such a connection when it is checked back into its tenant pool**, so it is
+never served to the next caller. Without that, ActiveRecord would hand it out again:
+`active?` probes with an empty query, which does *not* error in an aborted transaction, so
+Rails considers a poisoned connection healthy. Under pool-per-tenant that connection is the
+tenant's only one, so the tenant would be dead on that worker until the process restarted.
+
+Fixture-pinned connections are deliberately left alone: their transaction belongs to
+`teardown_fixtures`. The [`transaction_taint.apartment`](observability.md) event fires on
+every reset; `config.heal_tainted_connections = false` disables the behaviour.
+
+### Containing it at the source
+
+**Wrap the risky call in a savepoint.** This is Rails' expression of psql's
+`ON_ERROR_ROLLBACK`, and it is the supported fix:
+
+```ruby
+ActiveRecord::Base.transaction(requires_new: true) do
+  ActiveRecord::Base.connection.execute(sql_that_might_fail)
+end
+# the connection is usable again; only the savepoint rolled back
+```
+
+The gem's reset keeps your suite and your production workers alive. It does not fix the code
+that poisoned the connection — subscribe to `transaction_taint.apartment` to find the call
+site, then contain it here.
+
+### Never write a `ROLLBACK` loop
+
+**Do not do this**, in a test hook or anywhere else:
+
+```ruby
+# WRONG. This is actively harmful.
+after do
+  ActiveRecord::Base.connection_pool.connections.each do |conn|
+    raw = conn.raw_connection
+    raw.query('ROLLBACK') if raw.transaction_status == PG::PQTRANS_INERROR
+  end
+end
+```
+
+A raw `ROLLBACK` **destroys the enclosing transaction**, not merely the failed statement.
+Measured, with an ActiveRecord savepoint stack open:
+
+```
+open_transactions inside savepoint  => 2
+status after raw ROLLBACK           => IDLE     <- the whole transaction is gone
+AR still believes open_transactions => 2        <- bookkeeping desynced
+survived savepoint block exit       => yes      <- NO exception raised
+WARNING:  there is no transaction in progress   <- the outer COMMIT hit nothing
+```
+
+**Nothing raises.** Under transactional fixtures this means the example's fixture transaction
+is gone, and every subsequent write **autocommits and leaks permanently into the database** —
+producing exactly the order-dependent flakes the loop was written to prevent. The failure is
+silent, so a suite can carry one of these for a long time while blaming the flakes on
+something else.
+
+If you have such a loop, **delete it.** Apartment's checkin reset replaces it, and
+`requires_new` fixes the call site that made you write it in the first place.
+
+> Why the gem does not simply do this for you at any other seam: at checkin the connection is
+> leaving the caller's hands, so there is no enclosing transaction to destroy. Anywhere else —
+> including inside `Apartment::Tenant.switch` — there may be, which is what makes the loop
+> above dangerous. See [`designs/transaction-taint-detection.md`](designs/transaction-taint-detection.md).
