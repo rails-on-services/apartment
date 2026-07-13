@@ -64,3 +64,123 @@ RSpec.describe('transaction taint') do
     end
   end
 end
+
+RSpec.describe(Apartment::TransactionTaint) do
+  # Stands in for ActiveRecord's ConnectionPool. `checkin` only records the call,
+  # so `super` running (or not) is observable.
+  let(:pool_class) do
+    Class.new do
+      attr_reader :checked_in
+
+      def initialize
+        @checked_in = []
+      end
+
+      def checkin(conn)
+        @checked_in << conn
+      end
+    end
+  end
+
+  let(:pool)    { pool_class.new }
+  let(:adapter) { instance_double(Apartment::Adapters::AbstractAdapter) }
+
+  def configure_apartment(heal: true)
+    Apartment.configure do |c|
+      c.tenant_strategy = :schema
+      c.tenants_provider = -> { [] }
+      c.default_tenant = 'public'
+      c.heal_tainted_connections = heal
+    end
+  end
+
+  def connection(aborted:, pinned: false, open_transactions: 1)
+    conn = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter,
+                           pinned: pinned,
+                           open_transactions: open_transactions)
+    allow(conn).to(receive(:reset!))
+    allow(adapter).to(receive(:aborted_transaction?).with(conn).and_return(aborted))
+    conn
+  end
+
+  before do
+    configure_apartment
+    allow(Apartment).to(receive(:adapter).and_return(adapter))
+    allow(described_class).to(receive(:warn)) # keep the suite output clean
+    described_class.install(pool, tenant: 'acme', pool_key: 'acme:writing')
+  end
+
+  it 'resets a connection left in an aborted transaction' do
+    conn = connection(aborted: true)
+    pool.checkin(conn)
+    expect(conn).to(have_received(:reset!))
+  end
+
+  it 'still checks the connection in after healing it' do
+    conn = connection(aborted: true)
+    pool.checkin(conn)
+    expect(pool.checked_in).to(eq([conn]))
+  end
+
+  it 'leaves a healthy connection alone' do
+    conn = connection(aborted: false)
+    pool.checkin(conn)
+    expect(conn).not_to(have_received(:reset!))
+  end
+
+  # The invariant that lets ONE seam serve both populations: a fixture-pinned
+  # connection's transaction belongs to teardown_fixtures. Resetting it here would
+  # destroy the fixture transaction and let subsequent writes autocommit.
+  it 'SKIPS a fixture-pinned connection' do
+    conn = connection(aborted: true, pinned: true)
+    pool.checkin(conn)
+    expect(conn).not_to(have_received(:reset!))
+  end
+
+  it 'still checks a pinned connection in' do
+    conn = connection(aborted: true, pinned: true)
+    pool.checkin(conn)
+    expect(pool.checked_in).to(eq([conn]))
+  end
+
+  it 'emits transaction_taint.apartment naming the tenant' do
+    conn = connection(aborted: true, open_transactions: 2)
+    events = []
+
+    ActiveSupport::Notifications.subscribed(->(*, payload) { events << payload },
+                                            'transaction_taint.apartment') do
+      pool.checkin(conn)
+    end
+
+    expect(events.first).to(include(tenant: 'acme', pool_key: 'acme:writing',
+                                    open_transactions: 2, healed: true))
+  end
+
+  it 'warns once per pool, not once per taint' do
+    allow(described_class).to(receive(:warn))
+    3.times { pool.checkin(connection(aborted: true)) }
+    expect(described_class).to(have_received(:warn).once)
+  end
+
+  # A raise here would abort ConnectionPool#checkin and leak the connection out of
+  # the pool for good -- strictly worse than the taint.
+  it 'never raises out of checkin, even when reset! blows up' do
+    conn = connection(aborted: true)
+    allow(conn).to(receive(:reset!).and_raise(StandardError, 'boom'))
+    expect { pool.checkin(conn) }.not_to(raise_error)
+  end
+
+  it 'still checks the connection in when the heal itself failed' do
+    conn = connection(aborted: true)
+    allow(conn).to(receive(:reset!).and_raise(StandardError, 'boom'))
+    pool.checkin(conn)
+    expect(pool.checked_in).to(eq([conn]))
+  end
+
+  it 'does not extend the pool at all when heal_tainted_connections is false' do
+    configure_apartment(heal: false)
+    plain = pool_class.new
+    described_class.install(plain, tenant: 'acme', pool_key: 'acme:writing')
+    expect(plain).not_to(be_a(described_class::PoolHeal))
+  end
+end
