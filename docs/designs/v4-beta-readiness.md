@@ -7,9 +7,10 @@ Status: living. Defines what "beta" means for `ros-apartment` v4 and the scoped,
 - **W5 — Cursor debt** ✅ shipped (#453): physical-name validation seam + advisory-lock ivar guard. Plus a review-driven follow-up (#454): validate pool-key-unsafe tenant names before admission/eviction.
 - **W2 — Member 8** ✅ reactive half shipped (#455): the brainstorm collapsed this from the "design-first long pole" to a minimal `Apartment::Tenant.reload_schema_cache!` helper + a fix for the latent `schema_cache_per_tenant` load path. v4's pool-per-tenant already isolates schema caches and AR self-heals prepared statements, so the residual was only the shared/pinned-table amplifier. Design: `docs/designs/v4-schema-cache-recovery.md`.
 - **W4 — PgBouncer libpq** ❌ **closed, not built (2026-07-12)**: the spike refuted the premise. `options` is dominated by a PgBouncer setting; correctness is governed by a **PG 18 floor**; the failure mode is a **silent cross-tenant read**, now shipped as a warning; and **RDS Proxy is not supported** (Rails pins it regardless of Apartment). W4 collapses to docs + a CI job. See [`w4-pgbouncer-libpq-spike.md`](w4-pgbouncer-libpq-spike.md).
-- **Adopter answered the three open questions (2026-07-12)** — see W1/W3/W6 below. Net: **W1 is confirmed real and is now the only internal *code* work left; W3 collapsed to docs + a helper; W6 is in progress on a current gem (adopter is on alpha8), bounded by the rollout itself rather than by evidence.**
-- **Remaining beta-blocking**: W1 (member 7 — build it), W3 (member 9 — contract + helper, no gem fix), W6 (adopter `:reading` rollout), then Track C packaging.
-- **Critical path now**: **W1 is the only internal code item.** The beta date is still bounded below by W6, which is externally paced; W1/W3 fit inside that window.
+- **Adopter answered the three open questions (2026-07-12)** — see W1/W3/W6 below. Net: W1 was confirmed real, W3 collapsed to docs + a helper, W6 is in progress on a current gem (adopter is on alpha8), bounded by the rollout itself rather than by evidence.
+- **W1 — Member 7** ✅ **shipped**: detect-and-heal at pool checkin, PostgreSQL-only. The workstream landed at a different seam and a wider blast radius than scoped — the taint is production-reachable, not test-only — and it rejects the raw-`ROLLBACK` recovery that the field workaround uses. Design: [`transaction-taint-detection.md`](transaction-taint-detection.md).
+- **Remaining beta-blocking**: W3 (member 9 — contract + helper, no gem fix), W6 (adopter `:reading` rollout), then Track C packaging.
+- **Critical path now**: **no internal code work remains.** W3 is docs + a small helper. The beta date is bounded below by W6, which is externally paced.
 
 ## TLDR
 
@@ -46,7 +47,7 @@ This split is the whole design: **loose on promises, strict on behavior.**
 | PgBouncer CI | Free via service container | Public-repo runners are free; add a `pgbouncer` service to `ci.yml` — no spend, just config |
 | Member 8 design depth | Resolved (#455) — minimal helper, not full invalidation | Brainstorm showed v4 already isolates schema caches per pool; shipped a manual recovery helper + load-path fix |
 | Member 10 | Cheap test-env guard now (force read→`:writing` in test) | Apartment-side fix built only on adopter-reported replica-read-test need |
-| Member 7 (W1) | ✅ **Confirmed real — build the gem-side recovery** | Adopter's `PQTRANS_INERROR` `ROLLBACK` loop is **v4-era and test-only**; they already concluded the fix is ours. Not a v3 ghost. |
+| Member 7 (W1) | ✅ **Shipped — checkin heal, not a `switch` recovery path** | Reachable in production, not just tests: AR's `active?` cannot see an aborted transaction, so the poisoned connection is reused. Healed at pool checkin. The `ROLLBACK` loop is a hazard to delete, not a pattern to adopt. |
 | Member 9 (W3) | ✅ **Contract + helper; no gem fix** | Adopter audit found **none** of the risky threading patterns. Shape the helper around the hand-rolled pool eviction they *do* run, not a hypothetical bug. |
 | W6 replication lag | ❌ **Not a beta gate** | The adopter's test replica shares the primary's database, so the lane proves **pool separation** — which is the gem seam. Lag is an app concern. |
 | W6 completion bar | Rollout reaching production, not the gem version | The adopter's v4 bundle is already on **alpha8** (current). The lane validates a current gem; what remains is the rollout itself. |
@@ -57,11 +58,11 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 
 ### Track A — Correctness (beta-blocking)
 
-- **W1 — Member 7, `PQTRANS_INERROR` taint** (M) — ✅ **CONFIRMED REAL; BUILD IT. Now the only internal code work before beta.** Instrumented detection + recovery in `Apartment::Tenant.switch`'s ensure block, plus an integration spec.
+- **W1 — Member 7, `PQTRANS_INERROR` taint** — ✅ **SHIPPED.** Design: [`transaction-taint-detection.md`](transaction-taint-detection.md).
 
-  Adopter confirmation (2026-07-12) closed the open question of whether this was a v3 ghost. It is not: the adopter's defensive `ROLLBACK` loop checks `raw_connection.transaction_status == PG::Connection::PQTRANS_INERROR` and issues a `ROLLBACK` on every writing-pool connection after each cross-tenant example — and `git log -S` dates it to their **v4 migration**, not a v3 leftover. It is **test-only**: no production code path wraps `Tenant.switch`/`switch!` with it (their elevator rescues only connection-failure errors, not failed-transaction state). Their own analysis of a failed attempt to widen the predicate concluded the fix belongs in the gem rather than in app-side `ROLLBACK` hooks.
+  **Not the scope this section originally named**, and the corrections are the design. Reproduction against a real fixture lifecycle refuted both halves of the sketch. The taint is **not test-only** — that was an inference from the fact that the adopter's `ROLLBACK` loop lives in test cleanup, but their *workaround* being test-only says nothing about the *failure*. AR's `active?` probes with an empty query, which does not error in an aborted transaction, so a poisoned connection is pronounced healthy, returned to the pool, and served to the next caller; under pool-per-tenant it is that tenant's only connection, so the tenant is dead on that worker until the process restarts while every other tenant looks fine. And `switch`'s ensure is the **wrong seam**: it cannot observe that failure, misses `switch!` / `reset` / `each`, and would couple a SQL-free context swap to pool internals.
 
-  So the shape is settled: a *test-only* workaround, in the adopter's v4 lane, that they have already diagnosed as ours. Build the recovery path; the workaround is what it should delete. See `fixture-pool-lifecycle.md` member 7.
+  Shipped as a **detect-and-heal at pool checkin** on Apartment-owned tenant pools (PostgreSQL-only; MySQL fails the statement, not the transaction). Fixture-pinned connections are skipped by construction — they never reach `checkin` — so one seam serves both populations. The adopter's savepoint regression is now explained: a raw `ROLLBACK` silently destroys the *enclosing* transaction while AR still believes its stack is intact, so their loop is a delete-candidate on its own merits, not a pattern for the gem to adopt. The `active?` gap is Rails', and is drafted for upstream rather than patched on the primary pool.
 - **W2 — Member 8, schema-cache / prepared-statement drift after tenant DDL** ✅ **shipped (#455)**. The brainstorm showed v4's pool-per-tenant already isolates schema caches per pool and AR self-heals prepared statements, collapsing the original long-pole scope. Shipped: the manual `Apartment::Tenant.reload_schema_cache!` recovery helper for the pinned/shared-table-DDL amplifier, plus a fix for the latent `schema_cache_per_tenant` load path. Design: `docs/designs/v4-schema-cache-recovery.md`.
 - **W3 — Member 9, within-process thread/job boundaries** (S, was M) — ✅ **SCOPE COLLAPSED: documented contract + a small helper. No gem-level fix needed.** The suspicion was that Sidekiq-inline, async executors, `parallel_tests` workers, or app threads that `switch` inside a worker thread resolve pools differently from the originating thread.
 
@@ -96,11 +97,11 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 
 ## Critical path & sequencing
 
-With W5 and W2 (member 8) shipped, **W4 (PgBouncer libpq) is the remaining internal long pole** — start it with a `ruby-pg` driver-support spike. W6 (adopter `:reading` rollout) runs the whole window, externally paced. W1 (member 7) and W3 (member 9) are independent and parallelizable. Track C closes last, once W1/W3/W4 lock behavior.
+**No internal code work remains.** W5, W2 (member 8) and W1 (member 7) are shipped; W4 (PgBouncer libpq) was closed unbuilt when its spike refuted the premise. What is left is W3 (member 9 — a documented contract plus a small helper, no gem fix), then Track C packaging (W8–W10).
 
-**Beta date is now bounded below by the adopter `:reading`-separated rollout green (W6)**, with W4 the longest internal pole. Everything else fits inside that envelope.
+**Beta date is bounded below by W6**, the adopter's `:reading`-separated rollout, which is externally paced. Everything else fits inside that envelope.
 
-Suggested order of remaining plans: **W4** (longest internal pole, CI-unblocked via a free PgBouncer service container), then **W1 / W3** (members 7 and 9, parallelizable), then **Track C** packaging (W8–W10). W6 proceeds in parallel on the adopter's timeline.
+Suggested order of remaining plans: **W3** (the pool-eviction helper the adopter's audit surfaced), then **Track C** packaging (W8–W10), which can only finalize once W3 settles the last of the public surface. W6 proceeds in parallel on the adopter's timeline.
 
 ## Cross-references
 
