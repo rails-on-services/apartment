@@ -92,12 +92,12 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 ### Track C — Beta packaging (finalize last)
 
 - **W8 — API-freeze decision + deprecation-policy paragraph** (S). Pragmatic-posture wording; lock the pool-knob config names. Finalize after W1/W3 settle the surface (W2/W4/W5 already settled).
-- **W9 — Docs completeness** (M). Production checklist; prominent async consumer-fiber contract. The PgBouncer/RDS-Proxy docs already shipped ([`../connection-poolers.md`](../connection-poolers.md)); what remains is the PgBouncer CI job asserting the safe config isolates and the unsafe one leaks.
-- **W10 — Open-issue enumeration + triage sweep** (S). Confirm the public tracker has nothing beta-blocking open before declaring triage clean. (`gh issue list` returned empty in the framing check — re-verify.)
+- **W9 — Docs completeness** (S, was M). Production checklist; prominent async consumer-fiber contract. The PgBouncer/RDS-Proxy docs shipped ([`../connection-poolers.md`](../connection-poolers.md)) **and so did the CI guard** — #470 added the `pgbouncer` job (`.github/workflows/ci.yml`) plus `spec/integration/v4/pgbouncer_spec.rb`, asserting both directions: the safe config isolates, the unsafe one leaks. So we learn if PgBouncer or PostgreSQL changes this underneath us. What remains is prose only.
+- **W10 — Open-issue enumeration + triage sweep** (S). **Re-verified 2026-07-13: zero open issues, zero open PRs.** Nothing beta-blocking on the public tracker. Re-run immediately before the beta cut, since this is a point-in-time claim.
 
 ## Critical path & sequencing
 
-**No internal code work remains.** W5, W2 (member 8) and W1 (member 7) are shipped; W4 (PgBouncer libpq) was closed unbuilt when its spike refuted the premise. What is left is W3 (member 9 — a documented contract plus a small helper, no gem fix), then Track C packaging (W8–W10).
+**W1 merged as #471 (2026-07-13), so Track A is closed.** W5, W2 (member 8) and W1 (member 7) are shipped; W4 (PgBouncer libpq) was closed unbuilt when its spike refuted the premise, and its CI guard shipped with #470. The only code left in the whole plan is **W3's small helper** — a documented contract absorbing the eviction the adopter hand-rolls — after which Track C (W8–W10) is prose and a release cut.
 
 **Beta date is bounded below by W6**, the adopter's `:reading`-separated rollout, which is externally paced. Everything else fits inside that envelope.
 
