@@ -68,7 +68,15 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 
   Adopter audit (2026-07-12) came back **clean, and it is a real signal rather than an absence of looking**: Sidekiq runs faked in specs (the two inline opt-ins execute synchronously on the example's own thread, so there is no cross-thread exposure); there is no `parallel_tests` — CI shards across *OS processes*, so per-tenant pool keying never crosses a thread boundary; and there are **zero** occurrences of `Tenant.switch`/`switch!` inside `Thread.new`, `Concurrent::Future`, or similar. Their one async executor never touches ActiveRecord.
 
-  **The useful find is an API signal, not a bug.** Their single pool-aware call site hand-rolls the workaround — manually evicting the stale per-tenant pool (`Apartment.pool_manager&.remove_tenant`) before switching, on the main thread. That hand-rolled eviction is precisely what the helper should absorb. Design the contract + helper around *that*, not around a hypothetical threading bug.
+  **The useful find is an API signal, not a bug — and the real use case is out-of-band DDL, not threads.** The one pool-aware call site is a *restore* path: an external tool (a shell `pg_restore`) drops and recreates a tenant's schema entirely outside ActiveRecord. v4's warm pool for that tenant still holds a connection with a baked `search_path` and a schema cache full of now-dead table OIDs, so the next `switch` raises `PG::UndefinedTable`. They evict the tenant's pools first to survive it.
+
+  **What the helper must absorb is a two-step dance.** Recovery today means calling `Apartment.pool_manager.remove_tenant(tenant)` and then `Apartment.deregister_shard(key)` for each removed pool — miss the second and AR's `ConnectionHandler` keeps a registration the manager has forgotten. That pairing is the leaky seam; a supported call should make it one step.
+
+  **Reconcile against two things already in the gem, do not add a third beside them:**
+  - `Apartment::Migrator#evict_migration_pools` (`lib/apartment/migrator.rb:221`) already performs exactly that `remove` + `deregister_shard` pair, scoped **by role**. W3 is largely promoting this twin to public API, scoped **by tenant**.
+  - `Apartment::Tenant.reload_schema_cache!` (shipped, W2/#455) clears schema caches but **does not** evict pools or rebuild connections — so it cannot fix a baked `search_path` or a dropped-and-recreated schema. Where the line falls between "reload the cache" and "throw the pool away" is the design question; answer it explicitly rather than shipping two helpers with overlapping names.
+
+  Design the contract around *out-of-band tenant DDL*, not around the threading hazard originally hypothesized.
 - **W4 — PgBouncer libpq `options` (approach 1)** — ❌ **CLOSED, NOT BUILT (2026-07-12).** No longer a long pole; no longer a code workstream. The `ruby-pg`/PG-16/18 spike this workstream called for was run and it refuted the premise ([`w4-pgbouncer-libpq-spike.md`](w4-pgbouncer-libpq-spike.md)):
   - **libpq `options` is dominated.** PgBouncer **rejects** the `options` startup packet unless `search_path` is in `track_extra_parameters` — and once it is, v4's existing `SET`-based path is already safe *and* genuinely multiplexed. The approach buys nothing.
   - **What actually governs correctness** is PostgreSQL's version. `search_path` was not reported to clients before **PG 18** (so the "requires Citus 12+" note above is obsolete — vanilla PG 18 reports it), and on **PG ≤ 17 transaction mode cannot be made safe at all**.
@@ -92,12 +100,12 @@ Three tracks. Size is relative (S/M/L). Long poles flagged.
 ### Track C — Beta packaging (finalize last)
 
 - **W8 — API-freeze decision + deprecation-policy paragraph** (S). Pragmatic-posture wording; lock the pool-knob config names. Finalize after W1/W3 settle the surface (W2/W4/W5 already settled).
-- **W9 — Docs completeness** (M). Production checklist; prominent async consumer-fiber contract. The PgBouncer/RDS-Proxy docs already shipped ([`../connection-poolers.md`](../connection-poolers.md)); what remains is the PgBouncer CI job asserting the safe config isolates and the unsafe one leaks.
-- **W10 — Open-issue enumeration + triage sweep** (S). Confirm the public tracker has nothing beta-blocking open before declaring triage clean. (`gh issue list` returned empty in the framing check — re-verify.)
+- **W9 — Docs completeness** (S, was M). Production checklist; prominent async consumer-fiber contract. The PgBouncer/RDS-Proxy docs shipped ([`../connection-poolers.md`](../connection-poolers.md)) **and so did the CI guard** — #470 added the `pgbouncer` job (`.github/workflows/ci.yml`) plus `spec/integration/v4/pgbouncer_spec.rb`, asserting both directions: the safe config isolates, the unsafe one leaks. So we learn if PgBouncer or PostgreSQL changes this underneath us. What remains is prose only.
+- **W10 — Open-issue enumeration + triage sweep** (S). **Re-verified 2026-07-13: zero open issues, zero open PRs.** Nothing beta-blocking on the public tracker. Re-run immediately before the beta cut, since this is a point-in-time claim.
 
 ## Critical path & sequencing
 
-**No internal code work remains.** W5, W2 (member 8) and W1 (member 7) are shipped; W4 (PgBouncer libpq) was closed unbuilt when its spike refuted the premise. What is left is W3 (member 9 — a documented contract plus a small helper, no gem fix), then Track C packaging (W8–W10).
+**W1 merged as #471 (2026-07-13), so Track A is closed.** W5, W2 (member 8) and W1 (member 7) are shipped; W4 (PgBouncer libpq) was closed unbuilt when its spike refuted the premise, and its CI guard shipped with #470. The only code left in the whole plan is **W3's small helper** — a documented contract absorbing the eviction the adopter hand-rolls — after which Track C (W8–W10) is prose and a release cut.
 
 **Beta date is bounded below by W6**, the adopter's `:reading`-separated rollout, which is externally paced. Everything else fits inside that envelope.
 
