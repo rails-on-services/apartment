@@ -1151,16 +1151,17 @@ git commit -m "Docs: draft the upstream Rails issue for the active?/aborted-tran
 
 ### Task 10: Reconcile the superseded docs (the #471 fix)
 
-**#471 is open and would land a claim this work refutes.** Its diff asserts the failure is
-*"test-only — no production path wraps `Tenant.switch`/`switch!` with it"* and scopes the fix
-as *"a recovery path in `Apartment::Tenant.switch`'s ensure block."* The first is a true
-statement about the adopter's *workaround* that the doc leans on to frame the *failure class*
-as test-only; Evidence C shows the failure is not. The second is the wrong seam.
+**This work ships as #471**, whose earlier commits on this same branch land a claim it
+refutes. They assert the failure is *"test-only — no production path wraps
+`Tenant.switch`/`switch!` with it"* and scope the fix as *"a recovery path in
+`Apartment::Tenant.switch`'s ensure block."* The first is a true statement about the
+adopter's *workaround* that the doc then leans on to frame the *failure class* as test-only;
+Evidence C shows the failure is not. The second is the wrong seam.
 
 **Keep the dispositions, correct the conclusions.** The 2026-07-12 adopter findings are a
-faithful snapshot and stay. Doing this here rather than on #471's branch keeps one reviewable
-artifact instead of two touching the same files. **Tell the maintainer to close #471 in favour
-of this PR, or to merge #471 first and rebase** — do not leave both open with conflicting text.
+faithful snapshot and stay. Because the correction lives on the same branch and #471
+squash-merges, `main` only ever sees the corrected net result — the stale text never lands.
+There is no second PR and nothing to close.
 
 **Files:**
 - Modify: `docs/designs/fixture-pool-lifecycle.md` (member 7 row in the table; the Wishlist bullet)
