@@ -338,18 +338,20 @@ stock Rails exposure there. Healing it would mean patching the main pool of ever
 that loads this gem — a much larger claim than the one this design makes, and the reason the
 upstream issue below still matters.
 
-## Open decision
+## Decisions (settled)
 
-**Should the heal be default-on with a config escape hatch, or opt-in?**
+**The heal is default-on** (`heal_tainted_connections`, disableable). Off-by-default would
+make the outage the default experience, and a knob named "don't brick my tenant" is a strange
+thing to make an adopter discover. Evidence D is green across the matrix, the heal cannot
+reach a fixture transaction, and on a healthy connection it is a status read and nothing
+more. The conservative alternative — opt-in, flagged experimental for the beta — was argued
+in review and rejected on those grounds.
 
-Recommendation: **default-on**, disableable. A knob named "don't brick my tenant" is a
-strange thing to make an adopter discover, and off-by-default means the outage is the
-default experience. Evidence D is green across the matrix, the heal cannot reach a fixture
-transaction, and it is a no-op on healthy connections (a status read).
-
-The conservative alternative (opt-in, flagged experimental for the beta) is defensible under
-a "pragmatic posture" beta and was argued for in review. This is the one call left; it does
-not block writing the plan.
+**Scope stays as written**: Apartment's tenant pools, PostgreSQL, checkin. Review pushed to
+widen it to the default tenant's pool; declined, because that is the primary ActiveRecord
+pool and healing it means patching the main pool of every Rails app that loads this gem — a
+much larger claim than this design makes. That exposure is real, it is stock Rails, and it is
+what the upstream issue below exists to close.
 
 ## Cross-references
 
