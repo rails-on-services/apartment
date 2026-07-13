@@ -175,6 +175,42 @@ RSpec.describe('v4 transaction taint heal', :integration,
     end
   end
 
+  # v3 mutated search_path on switch and restored it in an ensure. Against a
+  # connection in an aborted transaction that restore SILENTLY FAILS -- every
+  # statement raises -- leaving the tenant context WRONG rather than merely broken.
+  # That is the bug chronomodel documents and has to work around in its own
+  # schema-switching ensure block.
+  #
+  # v4's switch is a pure CurrentAttributes swap that executes no SQL, so the whole
+  # failure mode is gone by construction rather than by defence. Nothing asserted
+  # that before, and it is now load-bearing: any SQL added to switch reintroduces
+  # v3's bug. See docs/designs/transaction-taint-detection.md ("The v4 dividend").
+  describe 'the v4 dividend: switch executes no SQL' do
+    it 'runs no queries entering or leaving a tenant' do
+      queries = []
+      subscriber = lambda do |*, payload|
+        queries << payload[:sql] unless payload[:name] == 'SCHEMA'
+      end
+
+      ActiveSupport::Notifications.subscribed(subscriber, 'sql.active_record') do
+        Apartment::Tenant.switch(tenant) { nil }
+      end
+
+      expect(queries).to(be_empty)
+    end
+
+    it 'restores tenant context even when the connection is in an aborted transaction' do
+      # The v3 killer: the ensure block had to talk to a connection that could no
+      # longer accept statements. v4's ensure touches no connection, so a tainted
+      # connection cannot corrupt tenant restoration.
+      Apartment::Tenant.switch(tenant) do
+        poison!(ActiveRecord::Base.connection)
+      end
+
+      expect(Apartment::Tenant.current).to(eq('public'))
+    end
+  end
+
   describe 'fixture-pinned connections' do
     # The invariant that lets ONE seam serve both populations. A pinned connection's
     # transaction belongs to teardown_fixtures; healing it would destroy the fixture
