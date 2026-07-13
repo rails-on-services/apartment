@@ -213,11 +213,25 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       ActiveRecord::QueryLogs.tags = ActiveRecord::QueryLogs.tags + [:tenant]
     end
 
-    # Deregister a single tenant's shard from AR's ConnectionHandler.
+    # Discard one tenant pool: forget it in PoolManager, then deregister its shard
+    # from AR's ConnectionHandler (which disconnects the pool).
     # Safe to call when AR is not loaded or config is not set (no-op).
     # Used by PoolReaper eviction, AbstractAdapter#drop, and teardown.
+    #
+    # Both registries are updated because either one alone is wrong: deregistering
+    # from AR while the manager still holds the pool wedges the tenant permanently
+    # (the manager keeps handing back a pool AR has forgotten), and forgetting it in
+    # the manager alone leaks the AR registration and a live backend when the tenant
+    # is never re-accessed. Every internal caller already removes from the manager
+    # first, so the removal here is a no-op for them.
+    #
+    # Manager-first is deliberate: if AR's removal raises, the leak state self-heals
+    # on next access, whereas the wedge state does not.
+    # See docs/designs/out-of-band-tenant-ddl.md.
     def deregister_shard(pool_key)
       return unless @config && defined?(ActiveRecord::Base)
+
+      @pool_manager&.remove(pool_key)
 
       _, separator, role_str = pool_key.to_s.rpartition(':')
       role = separator.empty? || role_str.empty? ? ActiveRecord.writing_role : role_str.to_sym

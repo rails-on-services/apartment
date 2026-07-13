@@ -520,6 +520,51 @@ RSpec.describe(Apartment) do
       described_class.clear_config
       expect { described_class.deregister_shard('acme') }.not_to(raise_error)
     end
+
+    # Deregistering from AR while PoolManager still holds the pool wedges the
+    # tenant for the life of the process: the manager keeps handing back a pool
+    # AR has forgotten, so every switch raises ConnectionNotEstablished. The two
+    # registries must not be able to disagree.
+    # See docs/designs/out-of-band-tenant-ddl.md.
+    it 'also removes the pool from PoolManager, so the two registries cannot diverge' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool))
+      pool = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+      described_class.pool_manager.fetch_or_create('acme:writing') { pool }
+
+      described_class.deregister_shard('acme:writing')
+
+      expect(described_class.pool_manager.tracked?('acme:writing')).to(be(false))
+    end
+
+    it 'removes only the named pool key, leaving the tenant\'s other roles alone' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool))
+      writing = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+      reading = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+      described_class.pool_manager.fetch_or_create('acme:writing') { writing }
+      described_class.pool_manager.fetch_or_create('acme:reading') { reading }
+
+      described_class.deregister_shard('acme:writing')
+
+      expect(described_class.pool_manager.tracked?('acme:reading')).to(be(true))
+    end
+
+    # The manager removal must happen even if AR's removal blows up: landing in
+    # the "manager forgot, AR remembers" state leaks a registration but self-heals
+    # on the next access, whereas the reverse state wedges the tenant permanently.
+    it 'forgets the pool even when AR deregistration raises' do
+      handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
+      allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+      allow(handler).to(receive(:remove_connection_pool).and_raise(StandardError, 'boom'))
+      pool = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+      described_class.pool_manager.fetch_or_create('acme:writing') { pool }
+
+      expect { described_class.deregister_shard('acme:writing') }.not_to(raise_error)
+      expect(described_class.pool_manager.tracked?('acme:writing')).to(be(false))
+    end
   end
 
   describe '.detect_database_adapter (private)' do

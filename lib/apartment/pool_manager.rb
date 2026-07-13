@@ -40,12 +40,22 @@ module Apartment
 
     # Delete pool first, then timestamp. This ordering prevents a concurrent
     # #get from orphaning a timestamp (get checks @pools, skips touch if absent).
+    #
+    # @api private
+    # Forgetting a pool here is only HALF of discarding it — the pool stays
+    # registered in AR's ConnectionHandler, leaking the registration and a live
+    # backend if the tenant is never re-accessed. Callers outside the gem want
+    # Apartment.deregister_shard (one pool) or Apartment.reset_tenant_pools! (all).
+    # These mutators also bypass PoolReaper's in-use guard: they will drop a pool
+    # with a checked-out connection or an open transaction.
+    # See docs/designs/out-of-band-tenant-ddl.md.
     def remove(tenant_key)
       pool = @pools.delete(tenant_key)
       @timestamps.delete(tenant_key)
       pool
     end
 
+    # @api private — see #remove.
     def remove_tenant(tenant)
       prefix = "#{tenant}:"
       removed = []
@@ -58,6 +68,7 @@ module Apartment
       removed
     end
 
+    # @api private — see #remove.
     def evict_by_role(role)
       suffix = ":#{role}"
       removed = []
