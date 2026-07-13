@@ -118,6 +118,16 @@ module Apartment
         false
       end
 
+      # Whether +conn+ sits in an aborted-transaction state that every subsequent
+      # statement will fail against until the transaction ends. PostgreSQL is the
+      # only supported engine with such a state (PQTRANS_INERROR); MySQL fails the
+      # statement and leaves the transaction usable, and its raw connection has no
+      # transaction_status at all. Base is conservative: never reclassify.
+      # See docs/designs/transaction-taint-detection.md (Evidence E).
+      def aborted_transaction?(_conn)
+        false
+      end
+
       # Request-path fail-safe contract. The elevator wraps the
       # tenant switch; on one of these error classes it asks
       # #tenant_container_gone? whether the tenant's storage actually vanished (a
