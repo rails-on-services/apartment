@@ -95,12 +95,16 @@ module Apartment
           # orphaning the very pool this rescue exists to reclaim. There is nothing
           # to remove from the manager here regardless: the pool is not stored until
           # this block returns.
+          #
+          # Reached with +send+ because the AR-only half is private: it is a
+          # half-operation, and leaving one publicly reachable is the exact footgun
+          # this seam exists to close. This is the one place it is correct.
           begin
             raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
 
             load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
           rescue StandardError
-            Apartment.deregister_ar_shard(pool_key)
+            Apartment.send(:deregister_ar_shard, pool_key)
             raise
           end
 

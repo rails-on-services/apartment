@@ -591,6 +591,9 @@ RSpec.describe(Apartment) do
       end.to(raise_error(ThreadError, /recursive locking/))
     end
 
+    # Private on purpose (a reachable half-operation is the footgun this seam closes),
+    # so the one legitimate caller — ConnectionHandling's post-establish rescue —
+    # reaches it with send, exactly as this spec does.
     it 'deregister_ar_shard is safe inside a PoolManager create block' do
       handler = instance_double('ActiveRecord::ConnectionAdapters::ConnectionHandler')
       allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
@@ -599,12 +602,35 @@ RSpec.describe(Apartment) do
 
       expect do
         described_class.pool_manager.fetch_or_create('acme:writing') do
-          described_class.deregister_ar_shard('acme:writing')
+          described_class.send(:deregister_ar_shard, 'acme:writing')
           pool
         end
       end.not_to(raise_error)
 
       expect(handler).to(have_received(:remove_connection_pool))
+    end
+
+    it 'keeps the AR-only half private, so it cannot be called as a shard helper' do
+      expect(described_class).not_to(respond_to(:deregister_ar_shard))
+    end
+
+    # PoolReaper#evict_tenant, Migrator#evict_migration_pools and AbstractAdapter#drop
+    # all remove the pool from the manager THEMSELVES and then call deregister_shard —
+    # whose own removal therefore returns nil, leaving it nothing to disconnect. If AR
+    # has no matching registration either (handler drift), nobody closes the pool and
+    # the backend leaks. Each of those callers disconnects what it removed; this pins
+    # the shared helper they rely on.
+    it 'disconnect_removed_pool closes a pool its caller already removed' do
+      pool = instance_double('ActiveRecord::ConnectionAdapters::ConnectionPool')
+      allow(pool).to(receive(:disconnect!))
+
+      described_class.disconnect_removed_pool(pool, 'acme:writing')
+
+      expect(pool).to(have_received(:disconnect!))
+    end
+
+    it 'disconnect_removed_pool tolerates nil (nothing was removed)' do
+      expect { described_class.disconnect_removed_pool(nil, 'acme:writing') }.not_to(raise_error)
     end
 
     it 'survives a pool that raises on disconnect' do

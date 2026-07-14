@@ -244,12 +244,13 @@ RSpec.describe('v4 out-of-band tenant DDL', :integration,
       allow(handler).to(receive(:remove_connection_pool).and_wrap_original do |original, *args, **kwargs|
         result = original.call(*args, **kwargs)
         # The window: AR has just dropped the shard, the manager has not been cleared.
-        raced = Apartment::Tenant.switch(tenant) { ActiveRecord::Base.connection_pool.object_id }
+        # Once only — the racing switch itself deregisters nothing, but teardown does,
+        # and re-entering here would recurse.
+        raced = Apartment::Tenant.switch(tenant) { ActiveRecord::Base.connection_pool.object_id } if raced.nil?
         result
       end)
 
       Apartment.deregister_shard("#{tenant}:writing")
-      RSpec::Mocks.space.proxy_for(handler).reset # stop wrapping before we assert
 
       expect(raced).not_to(be_nil) # the racing switch really did run inside the window
 

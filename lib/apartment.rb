@@ -213,8 +213,8 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       ActiveRecord::QueryLogs.tags = ActiveRecord::QueryLogs.tags + [:tenant]
     end
 
-    # Discard one tenant pool: forget it in PoolManager, then deregister its shard
-    # from AR's ConnectionHandler (which disconnects the pool).
+    # Discard one tenant pool, whole: deregister its shard from AR's ConnectionHandler
+    # and forget it in PoolManager, disconnecting it either way.
     # Safe to call when AR is not loaded or config is not set (no-op).
     # Used by PoolReaper eviction, AbstractAdapter#drop, and teardown.
     #
@@ -225,9 +225,6 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # is never re-accessed. Every internal caller already removes from the manager
     # first, so the removal here is a no-op for them.
     #
-    # Manager-first is deliberate: if AR's removal raises, the leak state self-heals
-    # on next access, whereas the wedge state does not.
-    #
     # The pool is disconnected here rather than left to AR, which disconnects only a
     # pool it actually finds registered (ConnectionHandler#disconnect_pool_from_pool_manager
     # guards `pool_config.disconnect!` behind `if pool_config`). A manager-held pool
@@ -235,7 +232,12 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # ConnectionHandler per example — and since we have just removed it from the
     # manager, no later `PoolManager#clear` will disconnect it either. Mirrors
     # AbstractAdapter#drop, which already removes, disconnects, then deregisters.
+    # (Callers that remove the pool from the manager THEMSELVES must disconnect it
+    # themselves too — the removal here returns nil for them, so there is nothing left
+    # for us to disconnect. PoolReaper#evict_tenant and Migrator#evict_migration_pools
+    # do exactly that.)
     # See docs/designs/out-of-band-tenant-ddl.md.
+    #
     # NOT SAFE inside a PoolManager create block — use +deregister_ar_shard+ there.
     # PoolManager's @pools is a Concurrent::Map whose MRI backend guards
     # +compute_if_absent+ and +delete+ with the SAME non-reentrant mutex, so removing
@@ -271,26 +273,21 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     end
 
     # @api private
-    # The ActiveRecord half only: deregister the shard (which disconnects the pool AR
-    # holds), leaving PoolManager untouched. This is the ONLY form that is safe to call
-    # from inside a PoolManager create block — see the re-entrancy note on
-    # +deregister_shard+. The create-block caller (Patches::ConnectionHandling's
-    # post-establish rescue) has no manager entry to remove anyway: the pool is not
-    # stored until the block returns.
-    def deregister_ar_shard(pool_key)
-      return unless @config && defined?(ActiveRecord::Base)
+    # Disconnect a pool that has been removed from PoolManager. Idempotent with AR's
+    # own disconnect on the happy path (ConnectionPool#disconnect! empties @connections,
+    # so a second call has nothing left to close); load-bearing only when AR has no
+    # matching registration to disconnect, in which case nothing else will close it.
+    #
+    # Public because the callers that remove a pool from the manager THEMSELVES — and
+    # therefore get nil back from deregister_shard's own removal — must disconnect what
+    # they removed: PoolReaper#evict_tenant, Migrator#evict_migration_pools,
+    # AbstractAdapter#drop. Rescued so one broken pool cannot abort the caller.
+    def disconnect_removed_pool(pool, pool_key)
+      return unless pool.respond_to?(:disconnect!)
 
-      _, separator, role_str = pool_key.to_s.rpartition(':')
-      role = separator.empty? || role_str.empty? ? ActiveRecord.writing_role : role_str.to_sym
-
-      shard_key = :"#{@config.shard_key_prefix}_#{pool_key}"
-      ActiveRecord::Base.connection_handler.remove_connection_pool(
-        'ActiveRecord::Base',
-        role: role,
-        shard: shard_key
-      )
+      pool.disconnect!
     rescue StandardError => e
-      warn "[Apartment] Failed to deregister AR pool for #{pool_key}: #{e.class}: #{e.message}"
+      warn "[Apartment] Failed to disconnect pool for #{pool_key}: #{e.class}: #{e.message}"
     end
 
     # Deregister all tenant pools from AR's ConnectionHandler and clear the
@@ -316,17 +313,30 @@ module Apartment # rubocop:disable Metrics/ModuleLength
 
     private
 
-    # Disconnect a pool just removed from PoolManager. Idempotent with AR's own
-    # disconnect on the happy path (disconnect! is safe to call twice); load-bearing
-    # only when AR has no matching registration to disconnect. Rescued so one broken
-    # pool cannot abort the caller — deregister_shard's contract is that both
-    # registries end up consistent, not that the socket closed cleanly.
-    def disconnect_removed_pool(pool, pool_key)
-      return unless pool.respond_to?(:disconnect!)
+    # The ActiveRecord half of a discard: deregister the shard (which disconnects the
+    # pool AR holds), leaving PoolManager untouched. The ONLY form that is safe inside
+    # a PoolManager create block — see the re-entrancy note on +deregister_shard+ —
+    # and correct there anyway: compute_if_absent does not store the pool until the
+    # block returns, so there is no manager entry to remove.
+    #
+    # PRIVATE ON PURPOSE. This is a half-operation, and a reachable half-operation is
+    # the bug this whole seam exists to eliminate: called on its own, it leaves AR
+    # without the pool while PoolManager keeps handing it out, wedging the tenant for
+    # the life of the process. The one legitimate caller reaches it with +send+.
+    def deregister_ar_shard(pool_key)
+      return unless @config && defined?(ActiveRecord::Base)
 
-      pool.disconnect!
+      _, separator, role_str = pool_key.to_s.rpartition(':')
+      role = separator.empty? || role_str.empty? ? ActiveRecord.writing_role : role_str.to_sym
+
+      shard_key = :"#{@config.shard_key_prefix}_#{pool_key}"
+      ActiveRecord::Base.connection_handler.remove_connection_pool(
+        'ActiveRecord::Base',
+        role: role,
+        shard: shard_key
+      )
     rescue StandardError => e
-      warn "[Apartment] Failed to disconnect pool for #{pool_key}: #{e.class}: #{e.message}"
+      warn "[Apartment] Failed to deregister AR pool for #{pool_key}: #{e.class}: #{e.message}"
     end
 
     # Double-checked locking: the common path (already built) skips the mutex;
