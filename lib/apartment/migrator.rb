@@ -222,7 +222,11 @@ module Apartment
       role = Apartment.config.migration_role
       return unless role && Apartment.pool_manager
 
-      Apartment.pool_manager.evict_by_role(role).each do |pool_key, _pool| # rubocop:disable Style/HashEachMethods
+      Apartment.pool_manager.evict_by_role(role).each do |pool_key, pool|
+        # evict_by_role already removed it from the manager, so deregister_shard has
+        # nothing left to disconnect; close it here or a pool AR no longer registers
+        # leaks its backend. See docs/designs/out-of-band-tenant-ddl.md.
+        Apartment.disconnect_removed_pool(pool, pool_key)
         Apartment.deregister_shard(pool_key)
       end
     rescue StandardError => e

@@ -177,3 +177,30 @@ database. Returns the count of pools cleared.
 
 Backward-compatible (additive) migrations rarely need this at all: old code does
 not reference the new column, so a stale cache is inert until the next restart.
+
+### Restoring a tenant with an external tool (pg_restore, mysqldump)
+
+If something outside ActiveRecord drops and recreates a tenant's schema or
+database, **do nothing to the pools**. The warm pool survives it: `search_path`
+is a name PostgreSQL re-resolves per query, so a same-named schema recreated
+under a live connection resolves exactly as before, and a connection whose
+backend was killed reconnects on its next checkout. This is verified against
+live PostgreSQL and MySQL in `spec/integration/v4/out_of_band_tenant_ddl_spec.rb`.
+
+Two caveats, and one warning:
+
+- **If the restore changed the table shape**, the pool's cached column list is
+  stale. Call `reload_schema_cache!(tenant)` (plus
+  `YourModel.reset_column_information` if the model's own memo is stale too).
+- **While the container is missing** — the window during which the schema does
+  not exist — requests for that tenant 404 via the elevator's missing-tenant
+  fail-safe, and recover on their own once the restore completes.
+- **Do not evict pools to "be safe."** With `schema_cache_per_tenant` enabled it
+  makes things *worse*: a fresh pool re-binds the stale dump file on creation,
+  reintroducing exactly the drift `reload_schema_cache!` would have fixed by
+  re-reading the database.
+
+Discarding a tenant's pools is the right move only when its **connection config**
+changes — a remap to a different database/host/shard, or a credential rotation —
+because a pool's config is immutable once built. `Apartment.reset_tenant_pools!`
+covers that. See [`designs/out-of-band-tenant-ddl.md`](designs/out-of-band-tenant-ddl.md).
