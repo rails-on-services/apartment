@@ -132,6 +132,8 @@ Some specs self-require a heavy dep in a `begin/rescue LoadError` so they skip g
 - `RSPEC_RAILS_REQUIRED=1` — `spec/unit/rspec_rails_lifecycle_spec.rb` (needs rspec-rails)
 - `RAILTIE_SPEC_REQUIRED=1` — `spec/unit/railtie_spec.rb` (needs rails + apartment/railtie)
 - `REQUEST_LIFECYCLE_REQUIRED=1` — `spec/integration/v4/request_lifecycle_spec.rb` (needs the dummy app)
+- `PGBOUNCER_REQUIRED=1` — `spec/integration/v4/pgbouncer_spec.rb` (needs the two PgBouncer instances the `pgbouncer` CI job starts, via `PGBOUNCER_SAFE_PORT` / `PGBOUNCER_UNSAFE_PORT`). The stakes here are the highest of the four: this spec asserts *tenant isolation* through a transaction-mode pooler, so a silent skip reporting green is precisely the outcome it exists to prevent.
+- `PG_UNIT_REQUIRED=1` — `spec/unit/transaction_taint_spec.rb` (needs the `pg` gem to name `PG::PQTRANS_*`). The taint is a PostgreSQL-only state, so these examples skip in the default driverless unit bundle and run under the PostgreSQL appraisals. Set the flag in a PG job so a bundle that quietly loses `pg` fails loudly instead of skipping green.
 
 Pattern: `begin require('<dep>'); rescue LoadError => e; raise if ENV['<FLAG>']; warn '...'; ... end`. CI's relevant job sets the flag; everywhere else the skip remains graceful. When adding a new self-required spec, mirror this idiom and add the flag here so the convention stays discoverable.
 

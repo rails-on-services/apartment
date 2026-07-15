@@ -68,15 +68,13 @@ module Apartment
       end
 
       # Drop a tenant.
-      def drop(tenant) # rubocop:disable Metrics/CyclomaticComplexity
+      def drop(tenant)
         drop_tenant(tenant)
         removed_pools = Apartment.pool_manager&.remove_tenant(tenant) || []
         removed_pools.each do |pool_key, pool|
-          begin
-            pool&.disconnect! if pool.respond_to?(:disconnect!)
-          rescue StandardError => e
-            warn "[Apartment] Pool disconnect failed for '#{pool_key}': #{e.class}: #{e.message}"
-          end
+          # remove_tenant already took these out of the manager, so deregister_shard's
+          # own removal returns nil and cannot disconnect them — we close them here.
+          Apartment.disconnect_removed_pool(pool, pool_key)
           begin
             deregister_shard_from_ar_handler(pool_key)
           rescue StandardError => e
@@ -115,6 +113,16 @@ module Apartment
       # return true when the engine supports cross-schema/database queries,
       # gated by config.force_separate_pinned_pool.
       def shared_pinned_connection?
+        false
+      end
+
+      # Whether +conn+ sits in an aborted-transaction state that every subsequent
+      # statement will fail against until the transaction ends. PostgreSQL is the
+      # only supported engine with such a state (PQTRANS_INERROR); MySQL fails the
+      # statement and leaves the transaction usable, and its raw connection has no
+      # transaction_status at all. Base is conservative: never reclassify.
+      # See docs/designs/transaction-taint-detection.md (Evidence E).
+      def aborted_transaction?(_conn)
         false
       end
 

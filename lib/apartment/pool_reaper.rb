@@ -142,6 +142,11 @@ module Apartment
       # on_evict with a nil pool.
       return nil unless (pool = @pool_manager.remove(tenant))
 
+      # We removed the pool ourselves, so deregister_shard's own removal returns nil
+      # and it has nothing left to disconnect. AR disconnects only a pool it still
+      # finds registered, so a pool that has drifted out of AR's handler would leak
+      # its backend unless we close it here. See docs/designs/out-of-band-tenant-ddl.md.
+      Apartment.disconnect_removed_pool(pool, tenant)
       deregister_from_ar_handler(tenant)
       Instrumentation.instrument(:evict, tenant: tenant, reason: reason)
       @on_evict&.call(tenant, pool)

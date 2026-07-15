@@ -86,14 +86,33 @@ module Apartment
           # to the reaper and to max_total accounting (a connection leak that also
           # undercounts the cap). Deregister it before re-raising so AR and the
           # manager stay consistent. The next request re-establishes cleanly.
+          #
+          # deregister_ar_shard, NOT deregister_shard: we are running inside
+          # PoolManager's create block, and the full form removes from PoolManager's
+          # Concurrent::Map — whose MRI backend guards compute_if_absent and delete
+          # with the same non-reentrant mutex, so that would raise ThreadError
+          # ("deadlock; recursive locking") and skip this deregistration entirely,
+          # orphaning the very pool this rescue exists to reclaim. There is nothing
+          # to remove from the manager here regardless: the pool is not stored until
+          # this block returns.
+          #
+          # Reached with +send+ because the AR-only half is private: it is a
+          # half-operation, and leaving one publicly reachable is the exact footgun
+          # this seam exists to close. This is the one place it is correct.
           begin
             raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
 
             load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
           rescue StandardError
-            Apartment.deregister_shard(pool_key)
+            Apartment.send(:deregister_ar_shard, pool_key)
             raise
           end
+
+          # After the post-establish checks (a pool that fails them is discarded, so
+          # extending it would be wasted), and before the pool is handed out (so the
+          # very first checkin is already covered).
+          # See docs/designs/transaction-taint-detection.md.
+          Apartment::TransactionTaint.install(pool, tenant: tenant, pool_key: pool_key)
 
           pool
         end

@@ -23,8 +23,40 @@ All events are namespaced `<name>.apartment` and published through
 | `cap_unmet.apartment` | When the pool cap cannot be met by eviction (soft-cap breach) | `max_total:`, `current:`, `unevicted:` |
 | `skip_evict.apartment` | When a candidate pool is skipped during eviction | `tenant:`, `reason:` (`:pinned`, `:in_use`), `eviction_reason:` (`:idle`, `:lru`, `:admission`); plus `busy_connections:` and `open_transactions:` when `reason: :in_use` |
 | `reaper_stopped.apartment` | When the background reaper is deactivated in the test environment | `reason:` (`:test_env`) |
+| `transaction_taint.apartment` | When a tenant connection is checked in while in an aborted transaction (PostgreSQL `PQTRANS_INERROR`) and is reset | `tenant:`, `pool_key:`, `open_transactions:`, `healed:` |
 | `migrate_tenant.apartment` | After migrations run for one tenant (or the primary) | `tenant:`, `versions:` (array of migration version integers) |
 | `migrate_tenant_failed.apartment` | When a tenant (or the primary) migration raises | `tenant:`, `error:` (the raised exception), `duration:` (seconds) |
+
+### `transaction_taint.apartment` — what to do when it fires
+
+**This event means the gem repaired something your application broke.** A statement failed
+inside a transaction that ActiveRecord did not unwind, leaving the connection in
+PostgreSQL's aborted-transaction state, where every subsequent statement raises
+`PG::InFailedSqlTransaction`. Apartment reset the connection as it returned to the pool, so
+the tenant keeps working. The event is the part that matters: the code that caused it is
+still there.
+
+**Why the gem bothers.** ActiveRecord's own health check cannot see this state (`active?`
+probes with an empty query, which does not error in an aborted transaction), so without the
+reset the poisoned connection is handed to the next caller. Under pool-per-tenant it is that
+tenant's *only* connection — so the tenant would be dead on that worker until the process
+restarts, while every other tenant looks fine.
+
+**Find the call site and contain it** with `ActiveRecord::Base.transaction(requires_new: true)`,
+which bounds the failure to a savepoint. Usual causes: a statement issued outside any
+transaction block while one is open (raw `execute`, DDL), an error rescued *inside* a
+transaction block and swallowed, or a thread killed mid-rollback.
+
+**Alert on a rising count, not on presence.** A steady trickle is an application bug worth
+fixing; a spike means a code path is poisoning connections on every request. `healed: false`
+does not occur today — the key exists so a future detect-only mode needs no new event.
+
+**Never respond by writing a raw `ROLLBACK` loop of your own.** It destroys the *enclosing*
+transaction while ActiveRecord still believes its stack is intact, raises nothing, and lets
+subsequent writes autocommit. See [testing.md](testing.md) for the reproduction.
+
+**To disable the reset** (the event goes with it): `config.heal_tainted_connections = false`.
+PostgreSQL-only in effect; MySQL and SQLite have no equivalent state.
 
 > **`PoolObserver` does not forward the migrate events.** The observer below covers
 > pool-lifecycle events only; `migrate_tenant` / `migrate_tenant_failed` are not in

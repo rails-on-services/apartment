@@ -12,6 +12,8 @@ module Apartment
     # Apartment.config.postgres_config. Lifecycle operations (create/drop)
     # execute DDL against the default connection.
     class PostgresqlSchemaAdapter < AbstractAdapter
+      include PostgresqlTransactionState
+
       def shared_pinned_connection?
         !Apartment.config.force_separate_pinned_pool
       end
