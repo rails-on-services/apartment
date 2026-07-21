@@ -152,6 +152,7 @@ RSpec.describe(Apartment::Migrator) do
       allow(mock_connection).to(receive(:instance_variable_defined?)
         .with(:@advisory_locks_enabled).and_return(true))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:release_connection))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
       allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
@@ -275,6 +276,7 @@ RSpec.describe(Apartment::Migrator) do
       allow(mock_connection).to(receive(:instance_variable_defined?)
         .with(:@advisory_locks_enabled).and_return(true))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:release_connection))
       allow(mock_migration_context).to(receive(:needs_migration?).and_return(true))
       allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
     end
@@ -382,7 +384,9 @@ RSpec.describe(Apartment::Migrator) do
   end
 
   describe '#migrate_tenant Current.migrating lifecycle' do
-    let(:mock_pool) { double('pool', migration_context: double(needs_migration?: false)) }
+    let(:mock_pool) do
+      double('pool', migration_context: double(needs_migration?: false), release_connection: nil)
+    end
 
     it 'sets Current.migrating = true before Tenant.switch' do
       migrating_value_during_switch = nil
@@ -488,6 +492,7 @@ RSpec.describe(Apartment::Migrator) do
       allow(mock_connection).to(receive(:instance_variable_defined?)
         .with(:@advisory_locks_enabled).and_return(true))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:release_connection))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
       allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }
@@ -588,6 +593,7 @@ RSpec.describe(Apartment::Migrator) do
       allow(mock_connection).to(receive(:instance_variable_defined?)
         .with(:@advisory_locks_enabled).and_return(true))
       allow(mock_pool).to(receive(:migration_context).and_return(mock_migration_context))
+      allow(mock_pool).to(receive(:release_connection))
       allow(mock_migration_context).to(receive_messages(needs_migration?: true, migrate: []))
       allow(Apartment::Instrumentation).to(receive(:instrument))
       allow(Apartment::Tenant).to(receive(:switch)) { |_tenant, &block| block.call }

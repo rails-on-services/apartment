@@ -146,10 +146,12 @@ module Apartment
     def migrate_tenant(tenant) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       start = monotonic_now
       Apartment::Current.migrating = true
+      tenant_pool = nil
 
       with_migration_role do
         Apartment::Tenant.switch(tenant) do
-          context = ActiveRecord::Base.connection_pool.migration_context
+          tenant_pool = ActiveRecord::Base.connection_pool
+          context = tenant_pool.migration_context
 
           unless @version || context.needs_migration?
             return Result.new(
@@ -186,6 +188,19 @@ module Apartment
       )
     ensure
       Apartment::Current.migrating = false
+      # Release THIS worker's lease on the tenant pool so the finished pool is no
+      # longer in_use? and becomes admission-evictable. Targeted (not handler-wide
+      # clear_active_connections!) so the shared sequential / migrate_one paths,
+      # which run on a caller-owned execution context, do not release a caller's
+      # other leases. Best-effort: a release failure must never mask a migration
+      # error or the returned Result.
+      # See docs/designs/v4-migrator-per-tenant-connection-release.md.
+      begin
+        tenant_pool&.release_connection
+      rescue StandardError => e
+        warn '[Apartment::Migrator] connection release failed: ' \
+             "#{e.class}: #{e.message}"
+      end
     end
 
     def run_sequential(tenants)
