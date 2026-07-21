@@ -146,10 +146,19 @@ module Apartment
     def migrate_tenant(tenant) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
       start = monotonic_now
       Apartment::Current.migrating = true
+      tenant_pool = nil
 
       with_migration_role do
         Apartment::Tenant.switch(tenant) do
-          context = ActiveRecord::Base.connection_pool.migration_context
+          tenant_pool = ActiveRecord::Base.connection_pool
+          # Lease eagerly so the pool stays in_use? for the whole migration. This
+          # closes a capture->lease window: a parallel admission pass could
+          # otherwise evict the not-yet-leased pool, and the later lease_connection
+          # (in with_advisory_locks_disabled) would resolve a DIFFERENT replacement
+          # pool that this method's ensure would not release. It also guarantees the
+          # release below targets the pool that actually holds the lease.
+          tenant_pool.lease_connection
+          context = tenant_pool.migration_context
 
           unless @version || context.needs_migration?
             return Result.new(
@@ -186,6 +195,7 @@ module Apartment
       )
     ensure
       Apartment::Current.migrating = false
+      release_tenant_pool_connection(tenant, tenant_pool)
     end
 
     def run_sequential(tenants)
@@ -276,6 +286,25 @@ module Apartment
     # cannot re-escape the handler. Success-path instrumentation is left
     # un-isolated by design — only the failure path carries the hard no-raise
     # guarantee, and swallowing there would mask real subscriber bugs.
+    # Best-effort release of THIS worker's lease on the tenant pool, so the
+    # finished pool is no longer in_use? and becomes admission-evictable.
+    # Targeted (not handler-wide clear_active_connections!) so the shared
+    # sequential / migrate_one paths, which run on a caller-owned execution
+    # context, do not release a caller's other leases. A release failure must
+    # never mask the migration error or the returned Result, so it is swallowed
+    # and warned; the warn is nested-rescued because a broken $stderr raises
+    # IOError (a StandardError) — the same guard instrument_failure applies to
+    # its own warn. See docs/designs/v4-migrator-per-tenant-connection-release.md.
+    def release_tenant_pool_connection(tenant, pool)
+      pool&.release_connection
+    rescue StandardError => e
+      begin
+        warn "[Apartment::Migrator] connection release failed for #{tenant}: #{e.class}: #{e.message}"
+      rescue StandardError
+        nil
+      end
+    end
+
     def instrument_failure(tenant, error, duration)
       Instrumentation.instrument(:migrate_tenant_failed, tenant: tenant, error: error, duration: duration)
     rescue StandardError => e
