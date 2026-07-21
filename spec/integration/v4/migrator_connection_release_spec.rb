@@ -94,25 +94,35 @@ RSpec.describe('v4 Migrator connection release', :integration) do
   end
 
   it 'releases the connection even when a tenant migration raises' do
-    # Add a second migration that always raises, so migrate_tenant hits its rescue.
+    # A second migration that raises ONLY for tenants, not the default (primary)
+    # tenant. If it raised unconditionally, migrate_primary — which runs first —
+    # would fail and Migrator#run would abort before touching any tenant, so the
+    # per-tenant failure path (the thing under test) would never execute. Scoping
+    # the raise lets the primary succeed and every tenant hit migrate_tenant's
+    # rescue for real.
     File.write(File.join(migrations_dir, '20240101000002_boom.rb'), <<~RUBY)
       # frozen_string_literal: true
       class Boom < ActiveRecord::Migration[7.0]
         def change
+          return if Apartment::Tenant.current.to_s == Apartment.config.default_tenant.to_s
+
           raise 'boom'
         end
       end
     RUBY
 
     run = Apartment::Migrator.new(threads: 0).run
-    expect(run.failed).not_to(be_empty)
+
+    # Every tenant must have failed (proving the rescue path ran); the primary
+    # must not be among the failures.
+    expect(run.failed.map(&:tenant)).to(match_array(test_tenants))
 
     test_tenants.each do |tenant|
       pool = tenant_pool(tenant)
-      next if pool.nil?
-
-      expect(busy_connections(pool)).to(eq(0))
-      expect(open_transactions(pool)).to(eq(0))
+      # The pool exists because migrate_tenant captured it before Boom raised.
+      expect(pool).not_to(be_nil, "expected a pool for #{tenant} after its failed migration")
+      expect(busy_connections(pool)).to(eq(0), "expected #{tenant} pool released after a failed migration")
+      expect(open_transactions(pool)).to(eq(0), "expected #{tenant} migration transaction rolled back")
     end
   end
 
@@ -172,7 +182,10 @@ RSpec.describe('v4 Migrator connection release', :integration) do
         cap_unmet << args.last
       end
 
-      Apartment::Migrator.new(threads: 0).run
+      run = Apartment::Migrator.new(threads: 0).run
+      # Guard against a vacuous pass: if the run failed before creating pools,
+      # cap_unmet and the pool count would both be empty for the wrong reason.
+      expect(run).to(be_success)
 
       # Count only the test-tenant pools (keys "<tenant>:<role>"), excluding the
       # protected default pool and any reading-role pool, so the bound is robust.
@@ -181,6 +194,34 @@ RSpec.describe('v4 Migrator connection release', :integration) do
       end
       expect(cap_unmet).to(be_empty)
       expect(tenant_pool_count).to(be <= 2)
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
+    # The production incident was a PARALLEL migrate under a cap. This is that
+    # shape: concurrent workers each releasing their own tenant's lease, so
+    # admission can evict released pools instead of hitting the skip_evict/
+    # cap_unmet wall. It also exercises the capture->lease eviction window — if a
+    # worker's captured pool could be evicted before its sticky lease, a leased
+    # replacement pool would survive and cap_unmet would fire.
+    it 'stays within the cap under parallel workers without a cap_unmet storm',
+       skip: (V4IntegrationHelper.sqlite? ? 'SQLite does not support concurrent connections' : false) do
+      cap_unmet = []
+      sub = ActiveSupport::Notifications.subscribe('cap_unmet.apartment') do |*args|
+        cap_unmet << args.last
+      end
+
+      run = Apartment::Migrator.new(threads: 2).run
+      expect(run).to(be_success)
+      expect(cap_unmet).to(be_empty)
+
+      # No finished tenant pool still holds a lease after all workers joined.
+      Apartment.pool_manager.stats[:tenants].each do |key|
+        next unless test_tenants.any? { |t| key.to_s.start_with?("#{t}:") }
+
+        pool = Apartment.pool_manager.peek(key)
+        expect(busy_connections(pool)).to(eq(0), "expected #{key} released after parallel migrate") if pool
+      end
     ensure
       ActiveSupport::Notifications.unsubscribe(sub)
     end

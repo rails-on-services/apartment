@@ -72,22 +72,42 @@ end
 Single change, in `lib/apartment/migrator.rb`, `migrate_tenant` only:
 
 1. Capture the tenant pool as the **first statement inside the `switch` block**
-   (before the `needs_migration?` check, so the skip path is covered too):
-   `tenant_pool = ActiveRecord::Base.connection_pool`.
-2. In the existing `ensure`, after `Apartment::Current.migrating = false`, add
-   best-effort release:
+   (before the `needs_migration?` check, so the skip path is covered too), then
+   **lease it eagerly**:
 
    ```ruby
-   begin
-     tenant_pool&.release_connection
-   rescue StandardError => e
-     warn "[Apartment::Migrator] connection release failed: #{e.class}: #{e.message}"
-   end
+   tenant_pool = ActiveRecord::Base.connection_pool
+   tenant_pool.lease_connection
+   context = tenant_pool.migration_context
    ```
 
-`release_connection` is public `ActiveRecord::ConnectionAdapters::ConnectionPool`
-API across the supported Rails 7.2–8.1 matrix. It releases the current execution
-context's lease on that specific pool and no-ops when nothing is leased.
+   The eager lease closes a capture→lease window (see [the race](#the-capture-lease-race)):
+   it keeps the pool `in_use?` for the whole method, so a parallel admission pass
+   cannot evict it mid-flight, and it guarantees the release below targets the pool
+   that actually holds the lease.
+2. In the existing `ensure`, after `Apartment::Current.migrating = false`, call a
+   best-effort private helper `release_tenant_pool_connection(tenant, tenant_pool)`.
+   It `release_connection`s the captured pool, rescues any error, and `warn`s with
+   the tenant name inside a nested rescue (a broken `$stderr` raises `IOError`, a
+   `StandardError`) — the same guard `instrument_failure` applies to its own warn,
+   so a release failure can never mask the migration error or the returned `Result`.
+
+`release_connection` / `lease_connection` are public
+`ActiveRecord::ConnectionAdapters::ConnectionPool` API across the supported Rails
+7.2–8.1 matrix. `release_connection` releases the current execution context's lease
+on that specific pool and no-ops when nothing is leased.
+
+### The capture→lease race
+
+Without the eager lease, there is a window between capturing the pool and the
+sticky lease taken in `with_advisory_locks_disabled` where the pool holds zero
+leased connections. Under a parallel migrate with a cap, another worker's admission
+pass could evict that idle pool; the subsequent `lease_connection` would then
+resolve a **different** replacement pool, and the `ensure` would release the stale
+captured one — leaking the replacement's lease and recreating the incident for that
+pool. The window is narrow and pre-dates this fix, but the eager lease removes it
+entirely and makes "everything `migrate_tenant` leases goes through the captured
+pool" true rather than nearly-true. Surfaced by an adversarial review panel.
 
 **Untouched by design:**
 
@@ -154,18 +174,29 @@ evictable but does not deregister it, so that gauge stays bounded by the cap
 
 ## Testing
 
-- **Parallel migrate under a cap** (integration): after each tenant completes, its
-  migration pool reports **0 busy connections and 0 open transactions**; assert
-  `skip_evict`/`cap_unmet` do not grow; assert `total_pools` stays bounded by the
-  cap.
-- **Failure path**: a raising migration still releases the connection — assert
-  `in_use? == false` **and** `open_transactions == 0` afterward (Rails rolls the
-  migration transaction back; prove release doesn't leave a dirty, still-protected
-  connection).
-- **Skip path**: an up-to-date tenant (`needs_migration?` false) releases cleanly
-  (no-op or real, never an error).
-- **Sequential + `migrate_one`**: release fires and does not disturb a caller-held
-  connection.
+`spec/integration/v4/migrator_connection_release_spec.rb`:
+
+- **Success path**: after a run, every tenant pool reports **0 busy connections**
+  and **0 open transactions**.
+- **Failure path**: `Boom` raises **only for tenants** (not the default), so
+  `migrate_primary` succeeds and every tenant genuinely reaches `migrate_tenant`'s
+  rescue — asserting `run.failed` covers all tenants, then each pool is released
+  with **0 open transactions**. (Raising unconditionally makes `migrate_primary`
+  fail first and `run` abort before any tenant migrates, which silently reduces the
+  test to a no-op — caught in review.)
+- **Skip path**: an up-to-date tenant (`needs_migration?` false) releases cleanly.
+- **Caller-connection safety**: leasing pool A then migrating a different tenant B
+  leaves A's lease intact and releases B's — fails if the release were `:all`.
+- **Sequential cap (admission)**: `max_tenant_pools = 2`, 3 tenants, asserts
+  `run.success?` (no vacuous pass), no `cap_unmet`, tenant pools ≤ cap.
+- **Parallel cap (admission)**: the production shape — `threads: 2` under the cap;
+  asserts `run.success?`, no `cap_unmet`, and no finished pool left leased after
+  join. Skipped on SQLite (no concurrent connections); runs on PG/MySQL. This is
+  the example that exercises the capture→lease race.
+
+Acceptance-level signal: during a parallel migrate, `skip_evict(:in_use)` and
+`cap_unmet` stay ~0; busy pools ~thread-count; `TenantPoolsLive` (registered)
+bounded by the cap.
 
 ## Scope boundary
 
