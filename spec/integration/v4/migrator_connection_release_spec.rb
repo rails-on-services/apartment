@@ -54,7 +54,7 @@ RSpec.describe('v4 Migrator connection release', :integration) do
     ActiveRecord::Migrator.migrations_paths = [migrations_dir]
 
     V4IntegrationHelper.ensure_test_database! unless V4IntegrationHelper.sqlite?
-    config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
+    @connection_config = V4IntegrationHelper.establish_default_connection!(tmp_dir: tmp_dir)
 
     Apartment.configure do |c|
       c.tenant_strategy = V4IntegrationHelper.tenant_strategy
@@ -63,7 +63,7 @@ RSpec.describe('v4 Migrator connection release', :integration) do
       c.check_pending_migrations = false
     end
 
-    Apartment.adapter = V4IntegrationHelper.build_adapter(config)
+    Apartment.adapter = V4IntegrationHelper.build_adapter(@connection_config)
     Apartment.activate!
     test_tenants.each { |t| Apartment.adapter.create(t) }
   end
@@ -126,6 +126,63 @@ RSpec.describe('v4 Migrator connection release', :integration) do
     test_tenants.each do |tenant|
       pool = tenant_pool(tenant)
       expect(busy_connections(pool)).to(eq(0)) if pool
+    end
+  end
+
+  it 'targeted release does not disturb a connection the caller holds on another pool' do
+    # Caller leases tenant A's pool on this thread; switch does not check it in,
+    # so the lease persists after the block (that is the bug this fix addresses).
+    Apartment::Tenant.switch(test_tenants[0]) do
+      ActiveRecord::Base.connection.execute('SELECT 1')
+    end
+    pool_a = tenant_pool(test_tenants[0])
+    expect(busy_connections(pool_a)).to(eq(1)) # caller's lease established
+
+    # Migrate a DIFFERENT tenant; its targeted release touches only tenant B's pool.
+    Apartment::Migrator.new(threads: 0).send(:migrate_tenant, test_tenants[1])
+
+    expect(busy_connections(pool_a)).to(eq(1)) # caller's lease on A untouched
+    expect(busy_connections(tenant_pool(test_tenants[1]))).to(eq(0)) # B released
+  end
+
+  describe 'under a pool cap (admission)' do
+    # default pool (protected) + cap of 2 tenant pools, migrating 3 tenants,
+    # forces at least one admission eviction. With the connection released after
+    # each tenant, the LRU tenant pool is not in_use? and evicts cleanly, so no
+    # :cap_unmet fires. Without release it would (the production incident).
+    before do
+      Apartment.configure do |c|
+        c.tenant_strategy = V4IntegrationHelper.tenant_strategy
+        c.tenants_provider = -> { test_tenants }
+        c.default_tenant = V4IntegrationHelper.default_tenant
+        c.check_pending_migrations = false
+        c.max_tenant_pools = 2
+      end
+      # configure tears down @adapter (see lib/apartment.rb#teardown_old_state);
+      # re-set it before activate!, same as the outer before, so the lazy
+      # Apartment.adapter accessor doesn't recurse through
+      # ConnectionHandling#connection_pool -> build_adapter -> Apartment.adapter.
+      Apartment.adapter = V4IntegrationHelper.build_adapter(@connection_config)
+      Apartment.activate!
+    end
+
+    it 'does not emit :cap_unmet and keeps registered pools within the cap' do
+      cap_unmet = []
+      sub = ActiveSupport::Notifications.subscribe('cap_unmet.apartment') do |*args|
+        cap_unmet << args.last
+      end
+
+      Apartment::Migrator.new(threads: 0).run
+
+      # Count only the test-tenant pools (keys "<tenant>:<role>"), excluding the
+      # protected default pool and any reading-role pool, so the bound is robust.
+      tenant_pool_count = Apartment.pool_manager.stats[:tenants].count do |key|
+        test_tenants.any? { |t| key.to_s.start_with?("#{t}:") }
+      end
+      expect(cap_unmet).to(be_empty)
+      expect(tenant_pool_count).to(be <= 2)
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
     end
   end
 end
