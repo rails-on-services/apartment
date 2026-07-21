@@ -262,16 +262,38 @@ Claude-Session: https://claude.ai/code/session_014NsWCDm8xAb6EwHfCaniDp"
 
 ---
 
-### Task 2: Incident-level guard — released pools admit under a cap
+### Task 2: Guards — caller-connection safety + admission under a cap
 
 **Files:**
-- Modify: `spec/integration/v4/migrator_connection_release_spec.rb` (add a `describe 'under a pool cap'` context)
+- Modify: `spec/integration/v4/migrator_connection_release_spec.rb` (add the caller-held-connection safety example to the existing `describe`, then a `describe 'under a pool cap'` context)
 
 **Interfaces:**
-- Consumes: `Apartment.configure { |c| c.max_tenant_pools = N }` (wires `PoolReaper` as the admission controller); `Apartment.pool_manager.stats[:total_pools]`; `ActiveSupport::Notifications` events `:cap_unmet` and `:skip_evict`.
-- Produces: proof that after release, sequential migration over more tenants than the cap does not emit `:cap_unmet` and keeps registered pools bounded by the cap. This is the deterministic stand-in for the production `skip_evict`/`cap_unmet` flood.
+- Consumes: `Apartment::Migrator#migrate_tenant` (private — invoked via `.send(:migrate_tenant, name)` for the isolated safety test); `Apartment.configure { |c| c.max_tenant_pools = N }` (wires `PoolReaper` as the admission controller); `Apartment.pool_manager.stats[:tenants]`; `ActiveSupport::Notifications` event `cap_unmet.apartment`; the `tenant_pool` / `busy_connections` helpers from Task 1's spec file.
+- Produces: (a) proof that the targeted release does NOT disturb a connection the caller holds on a *different* pool (the guard that fails if anyone swaps in `clear_active_connections!(:all)`); (b) proof that after release, sequential migration over more tenants than the cap does not emit `:cap_unmet` and keeps registered pools bounded by the cap — the deterministic stand-in for the production `skip_evict`/`cap_unmet` flood.
 
-- [ ] **Step 1: Write the cap test**
+- [ ] **Step 1: Add the caller-connection safety test**
+
+This is the design doc's fourth Testing scenario ("release does not disturb a caller-held connection"). Add it as an example in the **existing top-level `describe`** in `spec/integration/v4/migrator_connection_release_spec.rb` (it reuses the `tenant_pool` and `busy_connections` helpers already defined there). It leases tenant A's pool on the test thread, migrates a *different* tenant B via `migrate_tenant`, and asserts A's lease survived while B's was released. A handler-wide `clear_active_connections!(:all)` would release A too — so this example is the regression guard for the targeted-vs-`:all` decision.
+
+```ruby
+  it 'targeted release does not disturb a connection the caller holds on another pool' do
+    # Caller leases tenant A's pool on this thread; switch does not check it in,
+    # so the lease persists after the block (that is the bug this fix addresses).
+    Apartment::Tenant.switch(test_tenants[0]) do
+      ActiveRecord::Base.connection.execute('SELECT 1')
+    end
+    pool_a = tenant_pool(test_tenants[0])
+    expect(busy_connections(pool_a)).to(eq(1)) # caller's lease established
+
+    # Migrate a DIFFERENT tenant; its targeted release touches only tenant B's pool.
+    Apartment::Migrator.new(threads: 0).send(:migrate_tenant, test_tenants[1])
+
+    expect(busy_connections(pool_a)).to(eq(1)) # caller's lease on A untouched
+    expect(busy_connections(tenant_pool(test_tenants[1]))).to(eq(0)) # B released
+  end
+```
+
+- [ ] **Step 2: Write the cap test**
 
 Add this context to `spec/integration/v4/migrator_connection_release_spec.rb`. It re-runs `Apartment.configure` with a cap (config is frozen after configure, so a fresh `configure` + `activate!` is required — see CLAUDE.md "Frozen config"). Uses sequential migration to avoid thread-timing flakiness; the background reaper's 300s idle timeout guarantees it does not interfere, so any eviction is admission-driven.
 
@@ -315,27 +337,30 @@ Add this context to `spec/integration/v4/migrator_connection_release_spec.rb`. I
 
 > Event name confirmed: `Apartment::Instrumentation.instrument(:cap_unmet, ...)` publishes `cap_unmet.apartment` (all Apartment events are `*.apartment`, per `lib/apartment/instrumentation.rb`). The `subscribe('cap_unmet.apartment')` string above is correct.
 
-- [ ] **Step 2: Run the test**
+- [ ] **Step 3: Run both new tests**
 
-Run: `bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/migrator_connection_release_spec.rb -e "under a pool cap"`
-Expected: PASS (no `:cap_unmet`, tenant pools ≤ 2).
+Run: `bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/migrator_connection_release_spec.rb -e "caller holds" -e "under a pool cap"`
+Expected: PASS — caller's lease on A survives; no `:cap_unmet`; tenant pools ≤ 2.
 
-Sanity check (optional, proves the test has teeth): temporarily comment out the `tenant_pool&.release_connection` line and re-run — this example should FAIL with a non-empty `cap_unmet`. Restore the line before committing.
+Sanity check (proves both tests have teeth): temporarily change `tenant_pool&.release_connection` in `migrate_tenant` to `ActiveRecord::Base.connection_handler.clear_active_connections!(:all)` and re-run — the caller-connection test should FAIL (A's lease dropped to 0). Then comment the release out entirely and re-run — the cap test should FAIL with a non-empty `cap_unmet`. Restore the correct line before committing.
 
-- [ ] **Step 3: Rubocop**
+- [ ] **Step 4: Rubocop**
 
 Run: `bundle exec rubocop spec/integration/v4/migrator_connection_release_spec.rb`
 Expected: no offenses.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add spec/integration/v4/migrator_connection_release_spec.rb
-git commit -m "Test(v4): guard that released migration pools admit under a cap
+git commit -m "Test(v4): guard caller-connection safety and cap admission on release
 
-Deterministic stand-in for the production skip_evict/cap_unmet flood: with a
-2-pool cap and 3 tenants migrated sequentially, admission evicts the released
-LRU tenant pool cleanly and no :cap_unmet fires.
+Two guards for the release fix: (1) targeted release does not disturb a
+connection the caller holds on another pool — the regression guard against
+swapping in clear_active_connections!(:all); (2) deterministic stand-in for the
+production skip_evict/cap_unmet flood — with a 2-pool cap and 3 tenants migrated
+sequentially, admission evicts the released LRU tenant pool cleanly and no
+:cap_unmet fires.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_014NsWCDm8xAb6EwHfCaniDp"
