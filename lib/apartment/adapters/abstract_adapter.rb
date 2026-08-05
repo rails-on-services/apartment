@@ -177,6 +177,13 @@ module Apartment
       # name — honouring any prefix, suffix, or nesting the app declared —
       # before we qualify the result.
       def qualify_pinned_table_name(klass)
+        # An abstract class has no table of its own (table_name is nil), so
+        # there is nothing to qualify. Pinning one is a supported pattern — an
+        # abstract `connects_to` base is pinned so Apartment does not build
+        # tenant pools for it — and its concrete descendants are qualified on
+        # their own. Mark it processed, with a nil path so teardown skips it.
+        return klass.apartment_mark_processed! if klass.abstract_class?
+
         # Captured before the assignment below, which would otherwise make
         # every model look explicitly named.
         path = klass.apartment_explicit_table_name? ? :explicit : :computed

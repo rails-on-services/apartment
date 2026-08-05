@@ -92,6 +92,28 @@ RSpec.describe('pinned table name qualification') do
 
       expect(klass.apartment_pinned_processed?).to(be(true))
     end
+
+    # An abstract class has no table of its own (table_name is nil), so there
+    # is nothing to qualify. Pinning one is a documented pattern — an abstract
+    # `connects_to` base is pinned to stop Apartment building tenant pools for
+    # it — so this must stay a no-op rather than raising at boot.
+    it 'skips an abstract class instead of raising' do
+      klass = model('QualAbstractBase') { self.abstract_class = true }
+
+      expect { adapter.qualify_pinned_table_name(klass) }.not_to(raise_error)
+      expect(klass.table_name).to(be_nil)
+      expect(klass.apartment_pinned_processed?).to(be(true))
+    end
+
+    it 'leaves a concrete child of a pinned abstract base qualifiable' do
+      parent = model('QualAbstractParent') { self.abstract_class = true }
+      adapter.qualify_pinned_table_name(parent)
+      child = model('QualConcreteChild', parent)
+
+      adapter.qualify_pinned_table_name(child)
+
+      expect(child.table_name).to(eq("#{qualifier}.qual_concrete_children"))
+    end
   end
 
   shared_examples 'a restoring adapter' do
@@ -131,6 +153,16 @@ RSpec.describe('pinned table name qualification') do
       klass.apartment_restore!
 
       expect(klass.table_name).to(eq('versions'))
+    end
+
+    it 'restores an abstract class as a no-op' do
+      klass = model('RestoreAbstractBase') { self.abstract_class = true }
+
+      adapter.qualify_pinned_table_name(klass)
+      expect { klass.apartment_restore! }.not_to(raise_error)
+
+      expect(klass.table_name).to(be_nil)
+      expect(klass.apartment_pinned_processed?).to(be(false))
     end
 
     it 'leaves the model requalifiable after a restore' do

@@ -49,6 +49,8 @@ Reading `klass.table_name` first lets Rails compute the conventional name — ho
 
 **Prefix stripping:** Uses `sub(/\A[^.]+\./, '')` instead of `split('.').last`, stripping at most one leading `schema.` or `database.` segment. This preserves names that contain dots for other reasons (unlikely in practice, but defensive) and makes re-qualification idempotent.
 
+**Abstract classes are skipped.** An abstract class has no table of its own — `table_name` is `nil` — so there is nothing to qualify, and interpolating it would raise. Pinning one is a supported pattern (an abstract `connects_to` base is pinned so Apartment does not build tenant pools for it; see the `connects_to` gotcha in the root `CLAUDE.md`), so `qualify_pinned_table_name` returns early and marks it processed with a `nil` path, leaving teardown a no-op. Concrete descendants are qualified on their own when they are themselves registered.
+
 **Why not `table_name_prefix` (superseded hybrid):** The original design set `table_name_prefix = "#{qualifier}."` and called `reset_table_name` for convention-named models, falling back to direct assignment only for explicit `self.table_name`. That was unsound. `compute_table_name` consults `full_table_name_prefix` **only on its `base_class?` branch**; every other route ignores the prefix, and Rails raises nothing when it does. Three shipped failure modes, all silent — the model kept resolving through `search_path` to the *tenant's* table:
 
 | Model shape | Produced | Should have been |
