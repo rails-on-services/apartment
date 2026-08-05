@@ -213,6 +213,56 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
+  # Regression: `pin_tenant` early-returns once any superclass is pinned, so a
+  # concrete descendant of a pinned abstract base is never registered and never
+  # qualified on its own. The abstract base's qualifier has to reach it through
+  # table_name_prefix, or the "pinned" model silently reads tenant rows.
+  context 'concrete descendant of a pinned abstract base' do
+    before do
+      skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
+
+      ActiveRecord::Base.connection.create_table(:global_flags, force: true) do |t|
+        t.string(:key)
+      end
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.connection.create_table(:global_flags, force: true) do |t|
+          t.string(:key)
+        end
+      end
+
+      stub_const('GlobalRecord', Class.new(ApplicationRecord) do
+        self.abstract_class = true
+        include Apartment::Model
+      end)
+      GlobalRecord.pin_tenant
+      Apartment.process_pinned_model(GlobalRecord)
+
+      # Declared AFTER the base is qualified, and never pinned itself —
+      # it inherits the pin, which is exactly why it is never registered.
+      stub_const('GlobalFlag', Class.new(GlobalRecord))
+    end
+
+    it 'inherits the pin without being registered' do
+      expect(GlobalFlag.apartment_pinned?).to(be(true))
+      expect(Apartment.pinned_models).not_to(include(GlobalFlag))
+    end
+
+    it 'still resolves to a qualified table name' do
+      expect(GlobalFlag.table_name).to(eq("#{Apartment.adapter.pinned_table_qualifier}.global_flags"))
+    end
+
+    it 'reads default-tenant rows from inside a tenant switch' do
+      GlobalFlag.create!(key: 'default_row')
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.connection.execute("INSERT INTO global_flags (key) VALUES ('tenant_row')")
+      end
+
+      Apartment::Tenant.switch('tenant_a') do
+        expect(GlobalFlag.pluck(:key)).to(eq(['default_row']))
+      end
+    end
+  end
+
   context 'transactional integrity (shared connection path)' do
     it 'rolls back both pinned and tenant model writes on transaction rollback' do
       skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?

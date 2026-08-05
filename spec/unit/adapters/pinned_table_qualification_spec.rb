@@ -105,7 +105,35 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.apartment_pinned_processed?).to(be(true))
     end
 
-    it 'leaves a concrete child of a pinned abstract base qualifiable' do
+    # `pin_tenant` early-returns once any superclass is pinned, so concrete
+    # descendants of a pinned abstract base are never registered and never
+    # reach qualification on their own. The abstract base's qualifier has to
+    # reach them, which is what table_name_prefix (a class_attribute) is for.
+    # Without this the descendants silently read the *tenant's* table.
+    it 'qualifies concrete descendants of a pinned abstract base' do
+      parent = model('QualGlobalRecord') { self.abstract_class = true }
+      child = Class.new(parent)
+      stub_const('QualGlobalSetting', child)
+
+      adapter.qualify_pinned_table_name(parent)
+
+      expect(child.table_name).to(eq("#{qualifier}.qual_global_settings"))
+    end
+
+    it "preserves an abstract base's own table_name_prefix for its descendants" do
+      parent = model('QualPrefixedBase') do
+        self.abstract_class = true
+        self.table_name_prefix = 'myapp_'
+      end
+      child = Class.new(parent)
+      stub_const('QualPrefixedChild', child)
+
+      adapter.qualify_pinned_table_name(parent)
+
+      expect(child.table_name).to(eq("#{qualifier}.myapp_qual_prefixed_children"))
+    end
+
+    it 'leaves a separately registered concrete child idempotent' do
       parent = model('QualAbstractParent') { self.abstract_class = true }
       adapter.qualify_pinned_table_name(parent)
       child = model('QualConcreteChild', parent)
@@ -155,14 +183,21 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq('versions'))
     end
 
-    it 'restores an abstract class as a no-op' do
-      klass = model('RestoreAbstractBase') { self.abstract_class = true }
+    it "restores an abstract base's prefix, unqualifying its descendants" do
+      parent = model('RestoreGlobalRecord') do
+        self.abstract_class = true
+        self.table_name_prefix = 'myapp_'
+      end
+      child = Class.new(parent)
+      stub_const('RestoreGlobalSetting', child)
 
-      adapter.qualify_pinned_table_name(klass)
-      expect { klass.apartment_restore! }.not_to(raise_error)
+      adapter.qualify_pinned_table_name(parent)
+      parent.apartment_restore!
+      child.reset_table_name
 
-      expect(klass.table_name).to(be_nil)
-      expect(klass.apartment_pinned_processed?).to(be(false))
+      expect(parent.table_name_prefix).to(eq('myapp_'))
+      expect(child.table_name).to(eq('myapp_restore_global_settings'))
+      expect(parent.apartment_pinned_processed?).to(be(false))
     end
 
     it 'leaves the model requalifiable after a restore' do

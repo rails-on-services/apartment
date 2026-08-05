@@ -177,12 +177,7 @@ module Apartment
       # name — honouring any prefix, suffix, or nesting the app declared —
       # before we qualify the result.
       def qualify_pinned_table_name(klass)
-        # An abstract class has no table of its own (table_name is nil), so
-        # there is nothing to qualify. Pinning one is a supported pattern — an
-        # abstract `connects_to` base is pinned so Apartment does not build
-        # tenant pools for it — and its concrete descendants are qualified on
-        # their own. Mark it processed, with a nil path so teardown skips it.
-        return klass.apartment_mark_processed! if klass.abstract_class?
+        return qualify_pinned_table_name_prefix(klass) if klass.abstract_class?
 
         # Captured before the assignment below, which would otherwise make
         # every model look explicitly named.
@@ -190,6 +185,29 @@ module Apartment
         original = klass.table_name
         klass.table_name = "#{pinned_table_qualifier}.#{original.sub(/\A[^.]+\./, '')}"
         klass.apartment_mark_processed!(path, (original if path == :explicit))
+      end
+
+      # An abstract class has no table of its own — table_name is nil — so
+      # there is nothing to assign. Pinning one is a supported pattern (an
+      # abstract `connects_to` base is pinned so Apartment does not build
+      # tenant pools for it), and its qualifier still has to reach the concrete
+      # descendants that inherit the pin.
+      #
+      # Those descendants are never qualified directly: pin_tenant early-returns
+      # once any superclass is pinned (apartment_pinned? walks the chain), so
+      # they are never registered and process_pinned_models never sees them.
+      # table_name_prefix is a class_attribute, so setting it here broadcasts
+      # down the inheritance chain and each descendant composes it in its own
+      # compute_table_name. Any prefix the app set is preserved rather than
+      # overwritten, so `myapp_` becomes `<qualifier>.myapp_`.
+      #
+      # This is the one place the prefix mechanism is still correct, because
+      # here it is a broadcast to other classes rather than an attempt to
+      # qualify this class's own name.
+      def qualify_pinned_table_name_prefix(klass)
+        original_prefix = klass.table_name_prefix
+        klass.table_name_prefix = "#{pinned_table_qualifier}.#{original_prefix}"
+        klass.apartment_mark_processed!(:prefix, original_prefix)
       end
 
       # Process all pinned models. When shared_pinned_connection? is true, qualifies

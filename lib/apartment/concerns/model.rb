@@ -90,37 +90,57 @@ module Apartment
       #   restore by discarding the override and recomputing.
       # :explicit — the name was assigned in a way convention cannot rebuild;
       #   +original_value+ is that name, restored verbatim.
+      # :prefix — an abstract base, qualified by broadcasting through
+      #   table_name_prefix to the descendants that inherit its pin;
+      #   +original_value+ is the prefix the app had set.
       # nil — separate-pool models; nothing to undo.
       def apartment_mark_processed!(path = nil, original_value = nil)
         @apartment_pinned_processed = true
         @apartment_qualification_path = path
-        @apartment_original_table_name = original_value if path == :explicit
+        case path
+        when :explicit then @apartment_original_table_name = original_value
+        when :prefix then @apartment_original_table_name_prefix = original_value
+        end
       end
 
       # Undo table name qualification and clear tracking state.
       def apartment_restore!
         return unless @apartment_pinned_processed
 
-        case @apartment_qualification_path
-        when :computed
-          # Drop the qualified override rather than assigning the old value
-          # back, so the model stays responsive to table_name_prefix and
-          # base-class changes exactly as it was before pinning.
-          remove_instance_variable(:@table_name) if instance_variable_defined?(:@table_name)
-          reset_table_name
-        when :explicit
-          self.table_name = @apartment_original_table_name if @apartment_original_table_name
-        when nil then nil
-        else
-          warn "[Apartment] #{name}: unexpected qualification_path #{@apartment_qualification_path.inspect}"
-        end
+        apartment_undo_qualification!
 
         @apartment_pinned_processed = nil
         @apartment_qualification_path = nil
         @apartment_original_table_name = nil
+        @apartment_original_table_name_prefix = nil
       end
 
       private
+
+      # Reverse whichever mutation qualify_pinned_table_name applied.
+      def apartment_undo_qualification!
+        case @apartment_qualification_path
+        when :computed then apartment_recompute_table_name!
+        when :explicit then apartment_restore_table_name!
+        when :prefix then self.table_name_prefix = @apartment_original_table_name_prefix || ''
+        when nil then nil
+        else
+          warn "[Apartment] #{name}: unexpected qualification_path #{@apartment_qualification_path.inspect}"
+        end
+      end
+
+      # Drop the qualified override and recompute from convention. The ivar is
+      # removed first so nothing can keep the qualified value; the recompute
+      # then runs through Rails' table_name= setter, which also clears the
+      # derived @quoted_table_name and @arel_table caches.
+      def apartment_recompute_table_name!
+        remove_instance_variable(:@table_name) if instance_variable_defined?(:@table_name)
+        reset_table_name
+      end
+
+      def apartment_restore_table_name!
+        self.table_name = @apartment_original_table_name if @apartment_original_table_name
+      end
 
       # Register a one-shot TracePoint(:end) that fires after the class body
       # closes. Only :end is used — :b_return fires for ALL block returns in
