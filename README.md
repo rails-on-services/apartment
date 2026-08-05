@@ -487,4 +487,4 @@ application code with the standard `Exclude:` keys if needed. See
 
 ## License
 
-[MIT License](http://www.opensource.org/licenses/MIT)
+MIT — see [LICENSE](LICENSE). SPDX identifier: `MIT`.
