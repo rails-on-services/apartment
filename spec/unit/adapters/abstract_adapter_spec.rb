@@ -360,11 +360,21 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
-  describe '#qualify_pinned_table_name' do
+  describe '#pinned_table_qualifier' do
     it 'raises NotImplementedError on the abstract class' do
-      klass = Class.new(ActiveRecord::Base)
+      expect { adapter.pinned_table_qualifier }.to(
+        raise_error(NotImplementedError, /pinned_table_qualifier must be implemented/)
+      )
+    end
+  end
+
+  describe '#qualify_pinned_table_name' do
+    it 'raises NotImplementedError when the subclass supplies no qualifier' do
+      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
+      stub_const('AbstractQualified', klass)
+
       expect { adapter.qualify_pinned_table_name(klass) }.to(
-        raise_error(NotImplementedError, /qualify_pinned_table_name must be implemented/)
+        raise_error(NotImplementedError, /pinned_table_qualifier must be implemented/)
       )
     end
   end

@@ -14,20 +14,10 @@ module Apartment
         !Apartment.config.force_separate_pinned_pool
       end
 
-      def qualify_pinned_table_name(klass)
-        db_name = base_config['database']
-
-        if klass.apartment_explicit_table_name?
-          original = klass.table_name
-          table = original.sub(/\A[^.]+\./, '')
-          klass.table_name = "#{db_name}.#{table}"
-          klass.apartment_mark_processed!(:explicit, original)
-        else
-          original_prefix = klass.table_name_prefix
-          klass.table_name_prefix = "#{db_name}."
-          klass.reset_table_name
-          klass.apartment_mark_processed!(:convention, original_prefix)
-        end
+      # Pinned tables live in the default tenant's database; every tenant
+      # connection can reach them by database-qualifying the name.
+      def pinned_table_qualifier
+        base_config['database']
       end
 
       def resolve_connection_config(tenant, base_config: nil)
