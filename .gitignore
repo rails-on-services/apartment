@@ -23,3 +23,7 @@ coverage/
 .code-graph/
 # Repomix packed output (generated, can be 10MB+)
 repomix-output.*
+# Serena auto-generates project.yml and rewrites its schema/comment block on every
+# version bump, so a tracked copy churns in unrelated PRs. Let each checkout self-configure.
+# Canonical language set is documented in docs/ai-tools-setup.md.
+.serena/
