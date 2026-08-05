@@ -191,11 +191,20 @@ module Apartment # rubocop:disable Metrics/ModuleLength
       @activated = false
     end
 
-    # Activate the ConnectionHandling patch on ActiveRecord::Base.
+    # Activate the ActiveRecord patches pool-per-tenant depends on.
     # Idempotent — prepend on an already-prepended module is a no-op.
+    #
+    # ConnectionHandling routes AR::Base.connection_pool to the current tenant's
+    # pool; ConnectionRegistry makes AR's own pool registry safe for the
+    # concurrent shard registration that routing produces. The second is not
+    # optional given the first: without it, a cold tenant switch can fail
+    # whenever any thread happens to be iterating AR's pools (which Rails does at
+    # the end of every request and on its own reaper timer).
     def activate!
       require_relative('apartment/patches/connection_handling')
+      require_relative('apartment/patches/connection_registry')
       ActiveRecord::Base.singleton_class.prepend(Patches::ConnectionHandling)
+      Patches::ConnectionRegistry.apply!
       @activated = true
     end
 
