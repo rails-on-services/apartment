@@ -222,11 +222,11 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
       skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
 
       ActiveRecord::Base.connection.create_table(:global_flags, force: true) do |t|
-        t.string(:key)
+        t.string(:label)
       end
       Apartment::Tenant.switch('tenant_a') do
         ActiveRecord::Base.connection.create_table(:global_flags, force: true) do |t|
-          t.string(:key)
+          t.string(:label)
         end
       end
 
@@ -240,6 +240,11 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
       # Declared AFTER the base is qualified, and never pinned itself —
       # it inherits the pin, which is exactly why it is never registered.
       stub_const('GlobalFlag', Class.new(GlobalRecord))
+
+      # Unpinned view of the same table, used to write the tenant-side row.
+      stub_const('TenantFlag', Class.new(ApplicationRecord) do
+        self.table_name = 'global_flags'
+      end)
     end
 
     it 'inherits the pin without being registered' do
@@ -252,13 +257,13 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
 
     it 'reads default-tenant rows from inside a tenant switch' do
-      GlobalFlag.create!(key: 'default_row')
+      GlobalFlag.create!(label: 'default_row')
       Apartment::Tenant.switch('tenant_a') do
-        ActiveRecord::Base.connection.execute("INSERT INTO global_flags (key) VALUES ('tenant_row')")
+        TenantFlag.create!(label: 'tenant_row')
       end
 
       Apartment::Tenant.switch('tenant_a') do
-        expect(GlobalFlag.pluck(:key)).to(eq(['default_row']))
+        expect(GlobalFlag.pluck(:label)).to(eq(['default_row']))
       end
     end
   end
