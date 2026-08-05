@@ -215,12 +215,45 @@ Irrelevant at two passes per request.
 across that would hold it across pool IO while cold creates queue behind it.
 Snapshotting mirrors what `Concurrent::Map#each_pair` already does one level up
 (it iterates a dup), so the two levels of the registry now have matching semantics.
-Two visible consequences, both deliberate: a shard registered mid-iteration is not
-yielded, and the return value is the snapshot rather than the inner Hash upstream
-returns (no caller uses it). A third is avoided: the block-less form returns
-`enum_for(__method__, role)`, so the snapshot is taken when enumeration *begins*
-rather than when the Enumerator is built — upstream's block-less form is lazy too.
-Nothing in Rails 7.2–8.1 uses it.
+One visible consequence, deliberate: a shard registered mid-iteration is not
+yielded.
+
+**The return value stays upstream's.** A lock is no reason to narrow the contract of
+the method it wraps — and this is a `:nodoc:` internal that other gems wrap too, so a
+gratuitous difference costs more than it saves. Measured identical on 7.2 / 8.0 /
+8.1:
+
+| Call | Upstream returns |
+|---|---|
+| block, no role | the outer role map (the same object it walked) |
+| block, role | the inner shard map |
+| block-less, no role | the outer role map — having enumerated nothing |
+| block-less, role | an `Enumerator` |
+
+The block form returns whatever `super` returned. The two block-less forms need
+**opposite** treatment, which is the subtle part:
+
+- **With a role**, upstream's `Enumerator` is a live view of the inner Hash, so
+  iterating it later is a *second* traversal — one that bypasses the wrapper
+  entirely. Delegating left this path racing exactly as if unpatched: probed, a
+  concurrent `set_pool_config` raises `can't add a new key into hash during
+  iteration` **identically with and without the patch**. So the wrapper substitutes
+  an `Enumerator` over its own method, whose deferred traversal re-enters with a
+  block and lands on the snapshot path. The contract holds — upstream's is an
+  `Enumerator` too, and `size` is supplied explicitly because upstream's reports the
+  shard count where a bare `enum_for` would report `nil`. Repeated iteration
+  re-snapshots, so it stays a live view like upstream's rather than a frozen one.
+- **Without a role**, upstream returns the outer role map and enumerates nothing at
+  all. There is no traversal to protect and no `Enumerator` to match, so
+  substituting one would invent behavior. Delegate untouched.
+
+Two earlier versions of this method were wrong in opposite directions, and both are
+now pinned by regression examples: the first returned its snapshot `Array` for every
+block form and a bare `Enumerator` for every block-less one (diverging from upstream
+in three of four cases, and reporting a `nil` size); the second delegated both
+block-less forms and so left the role Enumerator unsynchronized. Naming that second
+one as a documented residual was the mistake — a race that is cheap to close should
+be closed, not annotated.
 
 One asymmetry worth recording: a `pool_config` removed after the snapshot is still
 yielded, where a live Hash walk might have skipped it. Removal means `disconnect!`,

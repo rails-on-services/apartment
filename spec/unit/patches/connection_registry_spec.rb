@@ -53,6 +53,47 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
     end
   end
 
+  describe '#each_pool_config return contract' do
+    # Pinned to upstream's MEASURED behavior on 7.2 / 8.0 / 8.1 (identical on all
+    # three), because a lock is no reason to narrow the contract of the method it
+    # wraps. Upstream returns the very Hash it walked; the block-less form returns
+    # an Enumerator for a role but the outer Hash — having enumerated nothing —
+    # without one. Regression guard: an earlier version of this patch returned its
+    # snapshot Array for every block form, and an Enumerator for every block-less
+    # one, differing from upstream in three of the four cases.
+    let(:registry) { pool_manager.instance_variable_get(:@role_to_shard_mapping) }
+
+    before { pool_manager.set_pool_config(:writing, :seed, seed_config) }
+
+    it 'returns the outer role map for a block with no role' do
+      expect(pool_manager.each_pool_config { |_pool_config| nil }).to(be(registry))
+    end
+
+    it 'returns the inner shard map for a block with a role' do
+      expect(pool_manager.each_pool_config(:writing) { |_pool_config| nil })
+        .to(be(registry[:writing]))
+    end
+
+    it 'returns the outer role map, block-less, with no role' do
+      expect(pool_manager.each_pool_config).to(be(registry))
+    end
+
+    it 'returns an Enumerator, block-less, with a role' do
+      result = pool_manager.each_pool_config(:writing)
+
+      expect(result).to(be_a(Enumerator))
+      expect(result.to_a).to(eq([seed_config]))
+    end
+
+    it 'reports the shard count as the block-less Enumerator size, as upstream does' do
+      # Upstream's Enumerator comes from Hash#each_value, so it knows its size.
+      # A substitute built with a bare enum_for would report nil.
+      pool_manager.set_pool_config(:writing, :second, added_config)
+
+      expect(pool_manager.each_pool_config(:writing).size).to(eq(2))
+    end
+  end
+
   describe 'shard registration during iteration' do
     before { pool_manager.set_pool_config(:writing, :seed, seed_config) }
 
@@ -91,6 +132,21 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
       pool_manager.set_pool_config(:writing, :seed, seed_config)
 
       outcome = with_iteration_parked { pool_manager.set_pool_config(:writing, :added, added_config) }
+
+      expect(outcome[:finished]).to(be(true))
+      expect(outcome[:error]).to(be_nil)
+      expect(pool_manager.pool_configs(:writing)).to(contain_exactly(seed_config, added_config))
+    end
+
+    it 'lets another thread register a shard while a block-less Enumerator is mid-iteration' do
+      # The block-less, role-given form returns an Enumerator, and iterating THAT
+      # is a second traversal that has to be serialized too. Delegating to
+      # upstream's Enumerator left this path racing exactly as if unpatched —
+      # probed, the writer raised identically with and without the patch.
+      pool_manager.set_pool_config(:writing, :seed, seed_config)
+      walk = ->(&per_item) { pool_manager.each_pool_config(:writing).each(&per_item) }
+
+      outcome = with_iteration_parked(walk) { pool_manager.set_pool_config(:writing, :added, added_config) }
 
       expect(outcome[:finished]).to(be(true))
       expect(outcome[:error]).to(be_nil)
@@ -229,13 +285,16 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
   # the reader afterwards would then let it finish cleanly, and an example that
   # only checked for the absence of an error would pass on the strength of a
   # five-second stall.
-  def with_iteration_parked(&block)
+  def with_iteration_parked(walk = nil, &block)
+    # Defaults to the block form; the block-less Enumerator path passes its own
+    # walker, since that traversal re-enters the wrapper rather than calling it.
+    walk ||= ->(&per_item) { pool_manager.each_pool_config(&per_item) }
     iterating = Queue.new
     release = Queue.new
 
     reader = Thread.new do
       parked = false
-      pool_manager.each_pool_config do |_pool_config|
+      walk.call do |_pool_config|
         next if parked
 
         parked = true

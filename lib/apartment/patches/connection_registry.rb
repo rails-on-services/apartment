@@ -210,23 +210,50 @@ module Apartment
         #
         # Collected by delegating to +super+ rather than by reading the Hash, so
         # the snapshot is exactly what upstream would have yielded on this Rails
-        # version. Two visible consequences, both deliberate: a shard registered
+        # version. One visible consequence, deliberate: a shard registered
         # mid-iteration is not yielded (a snapshot, like Concurrent::Map's
-        # iterators elsewhere in Apartment), and the return value is the snapshot
-        # rather than the inner Hash upstream returns — no caller uses it.
+        # iterators elsewhere in Apartment).
         #
-        # The block-less form returns an Enumerator over +__method__+ rather than
-        # over an eagerly-built Array, so the snapshot is taken when enumeration
-        # begins rather than when the Enumerator is created. Upstream's block-less
-        # form is lazy too; nothing in Rails 7.2-8.1 uses it, and deferring is the
-        # less surprising of the two if something ever does.
+        # THE RETURN VALUE IS UPSTREAM'S, NOT THE SNAPSHOT. Measured identical on
+        # 7.2 / 8.0 / 8.1: with a block, upstream returns the very Hash it walked
+        # — the inner shard map when a role is given, the outer role map when not
+        # — and the block-less form returns an Enumerator for a role but the outer
+        # Hash (having enumerated nothing) without one. A lock is no reason to
+        # narrow the contract of the method it wraps, and this is a `:nodoc:`
+        # internal that other gems wrap too, so returning our Array would be a
+        # gratuitous difference for anything that ever reads it. AR's own single
+        # caller (ConnectionHandler#each_connection_pool) discards it.
+        #
+        # The two block-less forms need opposite treatment, which is why they are
+        # not one branch:
+        #
+        # WITH a role, upstream's Enumerator is a live view of the inner Hash, and
+        # iterating it later bypasses this wrapper completely — a concurrent
+        # +set_pool_config+ takes SYNC and still mutates the Hash being walked, so
+        # MRI raises in the writer. Probed: the failure is IDENTICAL patched and
+        # unpatched, i.e. delegating here left the original race fully intact on
+        # this path. So we substitute an Enumerator over this method; its deferred
+        # traversal re-enters with a block and goes through the snapshot path
+        # above. Contract preserved — upstream's is an Enumerator too, and +size+
+        # is supplied because upstream's reports the shard count rather than nil.
+        # (Repeated iteration re-snapshots, so it stays a live view like
+        # upstream's, not a frozen one.)
+        #
+        # WITHOUT a role, upstream returns the outer role map and enumerates
+        # nothing whatsoever. There is no traversal to protect and no Enumerator to
+        # match, so substituting one would invent behavior; delegate untouched.
         def each_pool_config(role = nil, &block)
-          return enum_for(__method__, role) unless block
+          unless block
+            return enum_for(__method__, role) { pool_configs(role).size } if role
+
+            return super
+          end
 
           snapshot = []
-          SYNC.synchronize { super(role) { |pool_config| snapshot << pool_config } }
-
+          upstream_result = SYNC.synchronize { super(role) { |pool_config| snapshot << pool_config } }
           snapshot.each(&block)
+
+          upstream_result
         end
       end
 
