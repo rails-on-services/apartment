@@ -260,18 +260,45 @@ module Apartment
       # (production boot, CI) and partial under Zeitwerk lazy loading. That is
       # tolerable for a warning and would not be for a raise — which is why this
       # warns rather than raising.
+      # descendants is transitive, so every pinned class in one inheritance
+      # chain sees the same unregistered descendant. Deduplicate, and attribute
+      # each warning to the *nearest* pinned ancestor — the one whose pin the
+      # subclass actually inherits — so the message is deterministic rather than
+      # dependent on registry iteration order.
       def warn_unregistered_pinned_subclasses
-        Apartment.pinned_models.each do |klass|
+        # Snapshot the registry and walk it outside its own lock. Concurrent::Set
+        # synchronizes every method on CRuby, #each included, so iterating in
+        # place would hold a process-wide monitor across descendant walking and
+        # stderr I/O. Same leaf-lock discipline as Patches::ConnectionRegistry.
+        pinned = Apartment.pinned_models.to_a
+        registered = Set.new(pinned)
+        seen = Set.new
+
+        pinned.each do |klass|
           next unless klass.respond_to?(:descendants)
 
           klass.descendants.each do |sub|
-            warn_unqualified_subclass(klass, sub) if unregistered_pinned_subclass?(sub)
+            next unless seen.add?(sub)
+            next unless unregistered_pinned_subclass?(sub, registered)
+
+            warn_unqualified_subclass(nearest_pinned_ancestor(sub, registered) || klass, sub)
           end
         end
       end
 
-      def unregistered_pinned_subclass?(sub)
-        return false if Apartment.pinned_models.include?(sub)
+      # The closest registered ancestor above +klass+, i.e. the pin it inherits.
+      def nearest_pinned_ancestor(klass, registered)
+        ancestor = klass.superclass
+        while ancestor.is_a?(Class) && ancestor < ActiveRecord::Base
+          return ancestor if registered.include?(ancestor)
+
+          ancestor = ancestor.superclass
+        end
+        nil
+      end
+
+      def unregistered_pinned_subclass?(sub, registered)
+        return false if registered.include?(sub)
         return false unless sub.respond_to?(:apartment_explicit_table_name?)
         return false if sub.abstract_class?
 

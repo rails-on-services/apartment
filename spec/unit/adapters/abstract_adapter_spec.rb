@@ -413,6 +413,51 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(output.to_stderr)
     end
 
+    # descendants is transitive, so two pinned classes in one chain both see the
+    # same unregistered descendant. Reporting it once per pinned ancestor buries
+    # the single corrective action under duplicates naming different ancestors.
+    it 'warns once when several pinned ancestors share a descendant' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'dup_parents'
+        include Apartment::Model
+      end
+      stub_const('DupParent', parent)
+      parent.pin_tenant
+      mid = Class.new(parent) do
+        self.table_name = 'dup_mids'
+        include Apartment::Model
+      end
+      stub_const('DupMid', mid)
+      mid.pin_tenant
+      stub_const('DupChild', Class.new(mid) { self.table_name = 'dup_children' })
+
+      warnings = []
+      allow(adapter).to(receive(:warn) { |msg| warnings << msg })
+
+      adapter.send(:warn_unregistered_pinned_subclasses)
+
+      expect(warnings.grep(/DupChild/).size).to(eq(1))
+    end
+
+    it 'names the nearest pinned ancestor' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'near_parents'
+        include Apartment::Model
+      end
+      stub_const('NearParent', parent)
+      parent.pin_tenant
+      mid = Class.new(parent) do
+        self.table_name = 'near_mids'
+        include Apartment::Model
+      end
+      stub_const('NearMid', mid)
+      mid.pin_tenant
+      stub_const('NearChild', Class.new(mid) { self.table_name = 'near_children' })
+
+      expect { adapter.send(:warn_unregistered_pinned_subclasses) }
+        .to(output(/NearChild inherits a pin from NearMid/).to_stderr)
+    end
+
     it 'stays quiet once the subclass is registered itself' do
       parent = Class.new(ActiveRecord::Base) do
         self.table_name = 'reg_parents'
