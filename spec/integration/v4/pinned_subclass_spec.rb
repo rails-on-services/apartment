@@ -26,6 +26,16 @@ RSpec.describe('v4 pinned model subclasses', :integration,
   # routed to the default pool instead of being qualified onto the tenant pool.
   let(:separate_pinned_pool) { false }
 
+  # Whether the engine under test shares the tenant connection for pinned
+  # models (qualifying their table names) or gives them a separate pool.
+  # PostgreSQL schema-per-tenant and MySQL share; SQLite file-per-tenant does
+  # not. Derived from the engine the suite was launched with so it stays an
+  # independent oracle — update alongside the scenario list, not by consulting
+  # the adapter. See spec/integration/v4/scenarios/.
+  def shared_pinned_engine?
+    !V4IntegrationHelper.sqlite?
+  end
+
   def build_tables!
     ActiveRecord::Base.connection.create_table(:settings, force: true) do |t|
       t.string(:label)
@@ -97,7 +107,9 @@ RSpec.describe('v4 pinned model subclasses', :integration,
         include Apartment::Model
       end)
       OwnSetting.pin_tenant
-      Apartment.process_pinned_model(OwnSetting) if Apartment.pinned_models.include?(OwnSetting)
+      # pin_tenant defers via TracePoint(:end), which never fires for
+      # Class.new, so process explicitly — as the docs instruct.
+      Apartment.process_pinned_model(OwnSetting)
 
       stub_const('TenantOwnSetting', Class.new(ApplicationRecord) { self.table_name = 'own_settings' })
     end
@@ -122,26 +134,32 @@ RSpec.describe('v4 pinned model subclasses', :integration,
     before do
       stub_const('ScopedSetting', Class.new(Setting) { self.table_name = 'own_settings' })
       stub_const('DefaultOwnSetting', Class.new(ApplicationRecord) { self.table_name = 'own_settings' })
+      stub_const('TenantOwnRow', Class.new(ApplicationRecord) { self.table_name = 'own_settings' })
     end
 
     it 'inherits the pin flag through the superclass walk' do
       expect(ScopedSetting.apartment_pinned?).to(be(true))
     end
 
-    # Documents which way the ambiguity currently resolves on this adapter.
-    # The two paths disagree, which is the core problem: neither configuration
-    # is correct for both B and C.
-    it 'resolves to whichever data the adapter path implies' do
+    # CHARACTERIZATION, not a correctness guarantee: on shared-connection
+    # engines C happens to get what it wants, and the separate-pool context
+    # below records the opposite, which is wrong for C.
+    #
+    # The oracle is the ENGINE, deliberately not
+    # `Apartment.adapter.shared_pinned_connection?`. Deriving it from the
+    # production switch under test would let the example pass straight through
+    # a regression in that switch, by flipping its own definition of correct
+    # in lockstep with the behaviour.
+    it 'reads tenant data on shared-connection engines (correct for C, by luck)' do
+      skip 'engine routes pinned models to a separate pool' unless shared_pinned_engine?
+
       DefaultOwnSetting.create!(label: 'default_row')
       Apartment::Tenant.switch('tenant_a') do
-        ActiveRecord::Base.connection.execute(
-          "INSERT INTO own_settings (label) VALUES ('tenant_row')"
-        )
+        TenantOwnRow.create!(label: 'tenant_row')
       end
 
       Apartment::Tenant.switch('tenant_a') do
-        expected = Apartment.adapter.shared_pinned_connection? ? 'tenant_row' : 'default_row'
-        expect(ScopedSetting.pluck(:label)).to(eq([expected]))
+        expect(ScopedSetting.pluck(:label)).to(eq(['tenant_row']))
       end
     end
   end
@@ -162,6 +180,13 @@ RSpec.describe('v4 pinned model subclasses', :integration,
         include Apartment::Model
       end)
       SepOwnSetting.pin_tenant
+      # Without this the example would still pass — but for the wrong reason:
+      # the inherited pin alone routes it to the default pool, so it would not
+      # be exercising registration at all. TracePoint(:end) never fires for
+      # Class.new, so nothing else would process it.
+      Apartment.process_pinned_model(SepOwnSetting)
+      expect(SepOwnSetting.apartment_pinned_processed?).to(be(true))
+
       stub_const('SepDefaultOwn', Class.new(ApplicationRecord) { self.table_name = 'own_settings' })
 
       SepDefaultOwn.create!(label: 'default_row')

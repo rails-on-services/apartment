@@ -458,6 +458,36 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
         .to(output(/NearChild inherits a pin from NearMid/).to_stderr)
     end
 
+    # The walk is advisory. It must never be able to fail a boot: it runs from
+    # process_pinned_models, which Tenant.init calls in after_initialize.
+    # An anonymous descendant has no model_name, so compute_table_name raises
+    # ArgumentError — and Class.new(SomeBase) is a ubiquitous spec idiom.
+    it 'does not raise on an anonymous descendant' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.abstract_class = true
+        include Apartment::Model
+      end
+      stub_const('AnonBase', parent)
+      parent.pin_tenant
+      Class.new(parent) { self.table_name = 'anon_things' }
+
+      expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(raise_error)
+    end
+
+    it 'survives a descendant whose naming machinery raises' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'boom_parents'
+        include Apartment::Model
+      end
+      stub_const('BoomParent', parent)
+      parent.pin_tenant
+      child = Class.new(parent) { self.table_name = 'boom_children' }
+      stub_const('BoomChild', child)
+      allow(child).to(receive(:apartment_explicit_table_name?).and_raise(StandardError, 'boom'))
+
+      expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(raise_error)
+    end
+
     it 'stays quiet once the subclass is registered itself' do
       parent = Class.new(ActiveRecord::Base) do
         self.table_name = 'reg_parents'
@@ -473,6 +503,46 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       child.pin_tenant
 
       expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(output.to_stderr)
+    end
+  end
+
+  # A subclass sharing a pinned base's table needs nothing on EITHER path.
+  # On the separate-pool path, establish_connection would hand it a different
+  # pool from its parent — splitting two classes that share a physical table
+  # across connections and breaking transactional integrity between them.
+  describe '#process_pinned_model with a subclass sharing the base table' do
+    it 'does not establish a separate connection for it' do
+      allow(adapter).to(receive(:shared_pinned_connection?).and_return(false))
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'sep_parents'
+        include Apartment::Model
+      end
+      stub_const('SepParent', parent)
+      parent.pin_tenant
+      child = Class.new(parent) { include Apartment::Model }
+      stub_const('SepChild', child)
+      child.pin_tenant
+
+      expect(child).not_to(receive(:establish_connection))
+
+      adapter.process_pinned_model(child)
+    end
+
+    it 'still marks it processed so the batch does not retry' do
+      allow(adapter).to(receive(:shared_pinned_connection?).and_return(false))
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'sep2_parents'
+        include Apartment::Model
+      end
+      stub_const('Sep2Parent', parent)
+      parent.pin_tenant
+      child = Class.new(parent) { include Apartment::Model }
+      stub_const('Sep2Child', child)
+      allow(child).to(receive(:establish_connection))
+
+      adapter.process_pinned_model(child)
+
+      expect(child.apartment_pinned_processed?).to(be(true))
     end
   end
 

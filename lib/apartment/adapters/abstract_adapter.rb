@@ -278,12 +278,22 @@ module Apartment
           next unless klass.respond_to?(:descendants)
 
           klass.descendants.each do |sub|
-            next unless seen.add?(sub)
-            next unless unregistered_pinned_subclass?(sub, registered)
-
-            warn_unqualified_subclass(nearest_pinned_ancestor(sub, registered) || klass, sub)
+            check_pinned_subclass(klass, sub, registered) if seen.add?(sub)
           end
         end
+      end
+
+      # Advisory only: this runs from process_pinned_models, which Tenant.init
+      # calls in after_initialize, so it must never be able to fail a boot.
+      # Rails' naming machinery raises on shapes we do not control — an
+      # anonymous descendant has no model_name, and Class.new(SomeBase) is
+      # everywhere in test suites.
+      def check_pinned_subclass(klass, sub, registered)
+        return unless unregistered_pinned_subclass?(sub, registered)
+
+        warn_unqualified_subclass(nearest_pinned_ancestor(sub, registered) || klass, sub)
+      rescue StandardError => e
+        warn "[Apartment] could not check pinned subclass #{sub.inspect}: #{e.class}: #{e.message}"
       end
 
       # The closest registered ancestor above +klass+, i.e. the pin it inherits.
@@ -299,6 +309,9 @@ module Apartment
 
       def unregistered_pinned_subclass?(sub, registered)
         return false if registered.include?(sub)
+        # Anonymous classes have no model_name for Rails to compute a table
+        # from, and nothing actionable to name in a warning.
+        return false if sub.name.nil?
         return false unless sub.respond_to?(:apartment_explicit_table_name?)
         return false if sub.abstract_class?
 
@@ -329,6 +342,14 @@ module Apartment
         end
 
         return if klass.apartment_pinned_processed?
+
+        # A subclass that reaches its table through an already-pinned base needs
+        # nothing on either path. Qualifying would freeze a copy of the base's
+        # name onto it; establishing a connection would hand it a *different*
+        # pool from its parent, splitting two classes that share one physical
+        # table across connections and breaking transactional integrity between
+        # them. Mark processed with a nil path so teardown skips it too.
+        return klass.apartment_mark_processed! if inherits_pinned_table?(klass)
 
         if shared_pinned_connection?
           qualify_pinned_table_name(klass)
