@@ -106,14 +106,43 @@ module Apartment
       def apartment_descendants_inheriting_table_name
         return [] unless respond_to?(:descendants)
 
-        descendants.select do |sub|
+        stale = descendants.select do |sub|
           sub.instance_variable_defined?(:@table_name) &&
-            sub.respond_to?(:apartment_explicit_table_name?) &&
-            !sub.apartment_explicit_table_name?
+            sub.respond_to?(:apartment_inherited_table_name) &&
+            sub.instance_variable_get(:@table_name) == sub.apartment_inherited_table_name
         rescue StandardError
           # Rails' naming machinery raises on shapes we do not control (an
           # anonymous class has no model_name). Skip rather than guess.
           false
+        end
+
+        # Reset an intermediate before anything beneath it: reset_table_name on
+        # a class under an abstract parent reads superclass.table_name — the
+        # memo, not base_class — so a grandchild reset first would re-freeze its
+        # parent's stale value. ActiveSupport's descendants happens to be
+        # ancestor-first today, but that ordering is undocumented.
+        stale.sort_by { |sub| sub.ancestors.size }
+      end
+
+      # What Rails' own reset_table_name would recompute for this class right
+      # now. Mirrors ActiveRecord::ModelSchema#reset_table_name deliberately.
+      #
+      # NOT compute_table_name: the two disagree for a class whose superclass
+      # is abstract. reset_table_name prefers `superclass.table_name`, while
+      # compute_table_name treats such a class as its own base_class and builds
+      # from its own model_name. So a concrete class under an abstract
+      # intermediate that carries a table (an abstract class sandwiched under a
+      # concrete pinned parent) inherits `foos` but computes `gkids` — and
+      # keying on compute_table_name misreads that inherited name as an
+      # explicit declaration, skipping the resync and leaving the model on the
+      # tenant's table.
+      def apartment_inherited_table_name
+        if abstract_class?
+          superclass.table_name
+        elsif superclass.abstract_class?
+          superclass.table_name || send(:compute_table_name)
+        else
+          send(:compute_table_name)
         end
       end
 

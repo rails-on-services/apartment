@@ -113,6 +113,26 @@ RSpec.describe('pinned table name qualification') do
       expect(child.table_name).to(eq("#{qualifier}.sti_memo_parents"))
     end
 
+    # Three levels, with an abstract intermediate that carries a table. Rails'
+    # reset_table_name prefers superclass.table_name here, while
+    # compute_table_name treats the grandchild as its own base_class and builds
+    # from its own model_name — so the two disagree, and keying the resync on
+    # compute_table_name misread the grandchild's INHERITED name as an explicit
+    # declaration and skipped it, leaving it on the tenant's table.
+    it 'requalifies a grandchild under an abstract intermediate' do
+      base = model('ChainBase') { self.table_name = 'chain_foos' }
+      mid = Class.new(base) { self.abstract_class = true }
+      stub_const('ChainMid', mid)
+      grandchild = Class.new(mid)
+      stub_const('ChainKid', grandchild)
+      mid.table_name
+      grandchild.table_name # both memoize the unqualified inherited name
+
+      adapter.qualify_pinned_table_name(base)
+
+      expect(grandchild.table_name).to(eq("#{qualifier}.chain_foos"))
+    end
+
     it 'leaves a descendant that declares its own table alone' do
       parent = model('OwnTableBase') { self.abstract_class = true }
       child = Class.new(parent) { self.table_name = 'declared_table' }
