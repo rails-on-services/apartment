@@ -258,6 +258,17 @@ Query `information_schema.schemata` (PostgreSQL) or `SHOW DATABASES` (MySQL) to 
 
 **Solutions**: Use transactional fixtures, cache test tenant creation in `before(:suite)`, share tenants for read-only tests. See `spec_helper.rb` for patterns.
 
+### Issue: A Concurrency Spec Passes Even With The Fix Removed
+
+**Symptom**: A spec written to prove a thread-safety fix passes against the unpatched code.
+
+**Two causes, both found while adding `spec/integration/v4/connection_registry_spec.rb`:**
+
+1. **Timing-based overlap never happens.** A writer loop of 500 fast operations finishes inside one scheduler slice, so the reader thread never runs concurrently. Fix: a deterministic handshake — the reader parks inside its critical section on a `Queue`, the writer runs while it sits there, then the reader is released. No `sleep`, no stress loop.
+2. **The `:integration` ConnectionHandler swap does not reach spawned threads.** The `around` hook assigns `ActiveRecord::Base.connection_handler`, which lives in thread-isolated state, so a thread the example creates (or a `Migrator` worker) falls back to the *process default* handler. Any spec whose threads must share the example's handler has to tag `:stress` to opt out of the swap — which is what production looks like, one handler for all threads. Cost of opting out: AR's registry then outlives the example, so the spec must clear its own registrations in `before`/`after` and **assert** they are gone.
+
+**Always probe non-vacuity**: run the spec with the fix neutered (e.g. `rspec -I lib -r probe.rb`, where `probe.rb` no-ops the patch's `apply!`) and confirm it fails. A concurrency spec that has never been seen to fail is decoration.
+
 ### Issue: Pinned-Model Assertions Leak Across Examples
 
 **Symptom**: A spec asserting on what `process_pinned_models` handles (the count, or which classes) passes in isolation but fails in the full suite.
