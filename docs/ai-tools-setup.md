@@ -56,7 +56,17 @@ serena setup claude-code  # registers Serena as an MCP server with Claude Code
 
 `--context=ide` is the right context for Cursor; `--context=claude-code` is for Claude Code.
 
-**Project files (`.serena/`)** — when populated, commit `.serena/.gitignore`, `.serena/project.yml`, and `.serena/memories/` (verify `project.yml` has no absolute paths). Serena's bundled `.serena/.gitignore` keeps `cache/` and `project.local.yml` out of git.
+**Project files (`.serena/`) are gitignored.** Serena regenerates the directory on first activation and rewrites `project.yml`'s schema and comment block on every version bump, so a tracked copy churns in PRs no one authored. Serena's own bundled `.gitignore` ignores only `cache/` and `project.local.yml` — i.e. it expects `project.yml` to be tracked; we deviate deliberately to kill the churn.
+
+On first activation, confirm the language set reads:
+
+```yaml
+languages:
+  - ruby
+  - yaml
+  - bash
+  - markdown
+```
 
 #### Cross-project queries
 
