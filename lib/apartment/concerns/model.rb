@@ -16,12 +16,23 @@ module Apartment
       # their connection always targets the default tenant's database/schema.
       #
       # Safe to call before or after Apartment.activate!.
-      # Idempotent: no-op if this class (or a parent) is already pinned.
+      # Idempotent per class: a second call on the same class is a no-op.
+      #
+      # Deliberately keyed on this class's own flag, NOT on apartment_pinned?
+      # (which walks the superclass chain). A subclass of a pinned model that
+      # declares its own table has to be registered and qualified on its own
+      # merits — the parent's qualification cannot reach a different table.
+      # Keying on the chain made that call accept-and-do-nothing, which is the
+      # wrong answer even for a shape apps should avoid: an API call must
+      # either work or be absent, never silently no-op. Subclasses that share
+      # the parent's table still need nothing, and are skipped at
+      # qualification time rather than here (see
+      # AbstractAdapter#inherits_pinned_table?).
       def pin_tenant
         unless is_a?(Class) && self < ActiveRecord::Base
           raise(ArgumentError, "pin_tenant can only be called on ActiveRecord model classes, got #{inspect}")
         end
-        return if apartment_pinned?
+        return if @apartment_pinned
 
         @apartment_pinned = true
         Apartment.register_pinned_model(self)

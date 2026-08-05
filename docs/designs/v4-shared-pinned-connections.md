@@ -55,7 +55,30 @@ Its qualifier still has to reach the concrete descendants that inherit the pin, 
 
 This is the one place the prefix mechanism remains correct, and the distinction is the whole point: here it is a **broadcast to other classes**, not an attempt to qualify the class's own name. Removing it wholesale regressed exactly the silent-tenant-read this design exists to prevent — a pinned `GlobalRecord` abstract base left `GlobalSetting` resolving to `global_settings` instead of `public.global_settings`.
 
-**Known limitation (pre-existing, unchanged):** a subclass of a *concrete* pinned model that declares its own table is not qualified. It is not registered (same early return), and the prefix broadcast cannot help it, because a subclass of a concrete class is not its own `base_class` and `compute_table_name` returns `base_class.table_name` verbatim — while its explicit `self.table_name` wins over that anyway. Such a model must call `pin_tenant` on a class whose superclass is not already pinned, or be restructured. The old design doc's "only STI subclasses of pinned bases are supported" is the standing contract here.
+#### Subclasses of a concrete pinned model
+
+A subclass can mean two opposite things, and the gem originally could not tell them apart — both inherit `apartment_pinned? == true` through the superclass walk, and neither was registered, because `pin_tenant` early-returned once *any* superclass was pinned:
+
+| Shape | Intent | Behaviour before |
+|---|---|---|
+| **A** STI child sharing the parent's table | global | correct — resolves through `base_class.table_name` |
+| **B** own table, calls `pin_tenant` | global | **`pin_tenant` silently no-opped**; unqualified |
+| **C** own table, never pinned | tenant-scoped | unqualified |
+
+Measured, the defect **inverts by adapter path**, so no configuration was correct for both:
+
+| | B (wants global) | C (wants tenant) |
+|---|---|---|
+| Shared connection (PG schema, MySQL) | reads tenant ❌ | reads tenant ✅ |
+| Separate pool (`force_separate_pinned_pool`, PG database-per-tenant, SQLite) | reads default ✅ | reads default ❌ |
+
+**Resolution.** `pin_tenant` is now idempotent *per class* rather than per hierarchy, so B registers and qualifies when declared. A is skipped at qualification time by `inherits_pinned_table?` — a subclass with no table of its own reaches its table through `base_class.table_name`, which the base's qualification already covers; assigning would freeze a copy onto the child and desynchronise the two on teardown. C is untouched.
+
+The justification does **not** rest on B being a good idea. B is an anti-pattern whose one real appearance is transitional — migrating an STI child off a pinned parent's table — and the correct steady-state shapes are a pinned abstract base or a shared concern. But an API call that is accepted and silently does nothing is wrong regardless: it must either work or be absent.
+
+`inherits_pinned_table?` is a discriminator, and discriminators in this method have a poor record (see above). It differs in kind: it asks whether the base class is **in the pin registry**, a fact the gem owns, rather than inferring intent from Rails' naming internals.
+
+**Residual gap, warned not raised.** A subclass in shape C — or in shape B without the `pin_tenant` call — is still unqualified. `warn_unregistered_pinned_subclasses` walks `descendants` after processing and warns. Detection is complete under eager loading (production boot, CI) and partial under Zeitwerk lazy loading, which is tolerable for a warning and would not be for a raise. The transitional window is exactly when this bites, and a silent failure there reads as a botched backfill.
 
 **Why not `table_name_prefix` (superseded hybrid):** The original design set `table_name_prefix = "#{qualifier}."` and called `reset_table_name` for convention-named models, falling back to direct assignment only for explicit `self.table_name`. That was unsound. `compute_table_name` consults `full_table_name_prefix` **only on its `base_class?` branch**; every other route ignores the prefix, and Rails raises nothing when it does. Three shipped failure modes, all silent — the model kept resolving through `search_path` to the *tenant's* table:
 

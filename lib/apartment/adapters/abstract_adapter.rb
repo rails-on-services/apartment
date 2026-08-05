@@ -178,6 +178,7 @@ module Apartment
       # before we qualify the result.
       def qualify_pinned_table_name(klass)
         return qualify_pinned_table_name_prefix(klass) if klass.abstract_class?
+        return klass.apartment_mark_processed! if inherits_pinned_table?(klass)
 
         # Captured before the assignment below, which would otherwise make
         # every model look explicitly named.
@@ -210,6 +211,27 @@ module Apartment
         klass.apartment_mark_processed!(:prefix, original_prefix)
       end
 
+      # Whether +klass+ reaches its table through an already-pinned base class
+      # and so needs no qualification of its own. Rails resolves a subclass's
+      # table through base_class.table_name, which the base's qualification
+      # already covers; assigning here would freeze a copy of the base's
+      # qualified name onto the child and desynchronise the two on teardown.
+      #
+      # Scoped narrowly on purpose. A subclass that declares its own table —
+      # the transitional shape when migrating an STI child off a pinned
+      # parent's table — is NOT covered and qualifies normally, because the
+      # parent's qualification cannot reach a different table. And a subclass
+      # whose base class is not pinned (e.g. an app model extending a gem's
+      # model) is not covered either, which is the case that motivated
+      # qualifying by assignment in the first place.
+      def inherits_pinned_table?(klass)
+        return false if klass.base_class?
+        return false if klass.apartment_explicit_table_name?
+
+        base = klass.base_class
+        base.respond_to?(:apartment_pinned?) && base.apartment_pinned?
+      end
+
       # Process all pinned models. When shared_pinned_connection? is true, qualifies
       # table names for shared pool routing. Otherwise, establishes separate connections.
       def process_pinned_models
@@ -221,6 +243,86 @@ module Apartment
           raise(Apartment::ConfigurationError,
                 "Failed to process pinned model #{klass.name}: #{e.class}: #{e.message}")
         end
+
+        warn_unregistered_pinned_subclasses
+      end
+
+      # Warn about subclasses of a pinned model that declare their own table and
+      # were never registered. Such a class inherits apartment_pinned? through
+      # the superclass walk but gets no qualification, so on a shared-connection
+      # adapter it silently reads the *tenant's* table — and on a separate-pool
+      # adapter a genuinely tenant-scoped one silently reads the default's. The
+      # shape is transitional (migrating an STI child off a pinned parent's
+      # table), which is exactly when a silent read is most costly: the symptom
+      # looks like a botched backfill.
+      #
+      # Detection walks descendants, so it is complete under eager loading
+      # (production boot, CI) and partial under Zeitwerk lazy loading. That is
+      # tolerable for a warning and would not be for a raise — which is why this
+      # warns rather than raising.
+      # descendants is transitive, so every pinned class in one inheritance
+      # chain sees the same unregistered descendant. Deduplicate, and attribute
+      # each warning to the *nearest* pinned ancestor — the one whose pin the
+      # subclass actually inherits — so the message is deterministic rather than
+      # dependent on registry iteration order.
+      def warn_unregistered_pinned_subclasses
+        # Snapshot the registry and walk it outside its own lock. Concurrent::Set
+        # synchronizes every method on CRuby, #each included, so iterating in
+        # place would hold a process-wide monitor across descendant walking and
+        # stderr I/O. Same leaf-lock discipline as Patches::ConnectionRegistry.
+        pinned = Apartment.pinned_models.to_a
+        registered = Set.new(pinned)
+        seen = Set.new
+
+        pinned.each do |klass|
+          next unless klass.respond_to?(:descendants)
+
+          klass.descendants.each do |sub|
+            check_pinned_subclass(klass, sub, registered) if seen.add?(sub)
+          end
+        end
+      end
+
+      # Advisory only: this runs from process_pinned_models, which Tenant.init
+      # calls in after_initialize, so it must never be able to fail a boot.
+      # Rails' naming machinery raises on shapes we do not control — an
+      # anonymous descendant has no model_name, and Class.new(SomeBase) is
+      # everywhere in test suites.
+      def check_pinned_subclass(klass, sub, registered)
+        return unless unregistered_pinned_subclass?(sub, registered)
+
+        warn_unqualified_subclass(nearest_pinned_ancestor(sub, registered) || klass, sub)
+      rescue StandardError => e
+        warn "[Apartment] could not check pinned subclass #{sub.inspect}: #{e.class}: #{e.message}"
+      end
+
+      # The closest registered ancestor above +klass+, i.e. the pin it inherits.
+      def nearest_pinned_ancestor(klass, registered)
+        ancestor = klass.superclass
+        while ancestor.is_a?(Class) && ancestor < ActiveRecord::Base
+          return ancestor if registered.include?(ancestor)
+
+          ancestor = ancestor.superclass
+        end
+        nil
+      end
+
+      def unregistered_pinned_subclass?(sub, registered)
+        return false if registered.include?(sub)
+        # Anonymous classes have no model_name for Rails to compute a table
+        # from, and nothing actionable to name in a warning.
+        return false if sub.name.nil?
+        return false unless sub.respond_to?(:apartment_explicit_table_name?)
+        return false if sub.abstract_class?
+
+        sub.apartment_explicit_table_name?
+      end
+
+      def warn_unqualified_subclass(klass, sub)
+        warn "[Apartment] #{sub.name || sub.inspect} inherits a pin from " \
+             "#{klass.name || klass.inspect} but declares its own table " \
+             "(#{sub.table_name}) and was never registered, so it is not qualified. " \
+             "Call pin_tenant on it if it should read the default tenant's data."
       end
 
       # Process a single pinned model. Called by process_pinned_models (batch)
@@ -240,6 +342,14 @@ module Apartment
         end
 
         return if klass.apartment_pinned_processed?
+
+        # A subclass that reaches its table through an already-pinned base needs
+        # nothing on either path. Qualifying would freeze a copy of the base's
+        # name onto it; establishing a connection would hand it a *different*
+        # pool from its parent, splitting two classes that share one physical
+        # table across connections and breaking transactional integrity between
+        # them. Mark processed with a nil path so teardown skips it too.
+        return klass.apartment_mark_processed! if inherits_pinned_table?(klass)
 
         if shared_pinned_connection?
           qualify_pinned_table_name(klass)
