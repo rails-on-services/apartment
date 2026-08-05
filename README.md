@@ -3,6 +3,7 @@
 [![Gem Version](https://badge.fury.io/rb/ros-apartment.svg)](https://badge.fury.io/rb/ros-apartment)
 [![CI](https://github.com/rails-on-services/apartment/actions/workflows/ci.yml/badge.svg)](https://github.com/rails-on-services/apartment/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/rails-on-services/apartment/graph/badge.svg?token=Q4I5QL78SA)](https://codecov.io/gh/rails-on-services/apartment)
+[![Greptile: The War on Bugs](https://www.greptile.com/badge.svg)](https://www.greptile.com/?utm_source=oss_badge&utm_medium=readme&utm_campaign=greptile_for_open_source)
 
 *Database-level multitenancy for Rails and ActiveRecord*
 
@@ -487,4 +488,4 @@ application code with the standard `Exclude:` keys if needed. See
 
 ## License
 
-[MIT License](http://www.opensource.org/licenses/MIT)
+MIT — see [LICENSE](LICENSE). SPDX identifier: `MIT`.

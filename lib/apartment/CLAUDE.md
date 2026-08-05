@@ -21,6 +21,7 @@ lib/apartment/
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md); v4 uses constructor keyword args, no class-level state; Generic, Subdomain, FirstSubdomain, Domain, Host, HostHash, Header
 ├── patches/               # ActiveRecord patches for tenant-aware connections
 │   ├── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
+│   ├── connection_registry.rb # Prepends on AR's PoolManager + ConnectionHandler — serializes the pool registry
 │   └── postgresql_sequence_name.rb # Prepends on the PG adapter — schema-agnostic Model.sequence_name memoization
 ├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
 ├── config.rb              # Configuration with validate!/freeze!
@@ -61,6 +62,16 @@ lib/apartment/
 ### pool_manager.rb — Pool Cache
 
 `Concurrent::Map` storing connection pools by tenant key. Monotonic clock timestamps for idle/LRU tracking. `stats_for` returns `{ seconds_idle: N }`. `clear` disconnects all pools before clearing. When a pool budget is configured (`max_tenant_pools` and/or `max_tenant_connections`, resolved by `Config#effective_pool_budget`; `max_total_connections` is the deprecated alias of `max_tenant_pools`), `Apartment.configure` wires an `admission_controller` (the reaper) so cold creates route through a serialized, capacity-bounded path; otherwise the lock-free `compute_if_absent` fast path is used. See `docs/designs/pool-connection-budget.md` and `docs/designs/pool-admission-control.md`.
+
+### patches/connection_registry.rb — AR Registry Serialization
+
+Rails' `ActiveRecord::ConnectionAdapters::PoolManager` (**not** Apartment's same-named class — always fully qualify inside `Apartment::Patches`) stores every pool in a plain nested Hash, unsynchronized, because upstream only writes it at boot. Pool-per-tenant writes it forever, so a cold tenant switch could add a shard key while another thread was iterating, and MRI's iteration guard (per-Hash, not per-thread) failed the *switch* with `RuntimeError: can't add a new key into hash during iteration`.
+
+The readers are Rails' own, all reaching the registry through `ConnectionHandler#each_connection_pool`: `ActiveRecord::QueryCache.run` (every executor run — the start of every request and job), `ConnectionPool::ExecutorHooks.complete` (every executor completion), `Base.clear_query_caches_for_current_thread` (after writes), `ActiveRecord.all_open_transactions`, and `clear_active_connections!` / `clear_all_connections!` / `flush_idle_connections!`. **Not** AR's `ConnectionPool::Reaper` — verified across 7.2/8.0/8.1, it keeps a private mutex-protected `WeakRef` list per reaping frequency and never touches this registry. Target the readers above when reasoning about synchronization or writing regression tests.
+
+`ConnectionRegistry.apply!` (called by `activate!`) prepends two wrappers sharing one process-wide `Monitor`: `PoolManagerSync` over all eight `PoolManager` accessors — reads included, because the outer Hash's default proc mutates on a miss — and `HandlerSync` over `ConnectionHandler#set_pool_manager` (kept `private`), whose `||=` is a non-atomic upsert. `each_pool_config` snapshots under the lock and yields outside it; never hold this lock across a caller's block, since Rails disconnects pools inside those blocks. `SYNC` is a **leaf lock** — nothing acquired under it, no IO under it — which is the whole deadlock-freedom argument.
+
+`serialize!` **fails closed**: it resolves each guarded method with `method_defined?` / `private_method_defined?` (matching what `super` actually needs, so an upstream method merely *moved* to a superclass or module still counts) and raises `Apartment::ConfigurationError` at `activate!` when one is genuinely gone. It only *warns* when upstream has grown a public accessor we do not guard — a hole beats a boot failure. See `docs/designs/ar-connection-registry-thread-safety.md`.
 
 ### pool_reaper.rb — Pool Eviction + Admission
 
