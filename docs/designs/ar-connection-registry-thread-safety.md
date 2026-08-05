@@ -1,6 +1,7 @@
 # AR connection registry thread safety — pool-per-tenant writes what Rails only reads
 
-**Status**: designed and shipped 2026-08-05, from a reproduced failure. Scoped to
+**Status**: designed and shipped 2026-08-05, from a reproduced failure. Ships in
+`4.0.0.alpha11`. Scoped to
 `Apartment::Patches::ConnectionRegistry`; complements
 [`v4-connection-model-rationale.md`](v4-connection-model-rationale.md) (why pools
 are per-tenant) and [`phase-2.3-connection-handling.md`](phase-2.3-connection-handling.md)
