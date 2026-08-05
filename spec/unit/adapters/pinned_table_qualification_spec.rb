@@ -133,6 +133,36 @@ RSpec.describe('pinned table name qualification') do
       expect(child.table_name).to(eq("#{qualifier}.myapp_qual_prefixed_children"))
     end
 
+    # A subclass that shares an already-pinned base's table resolves through
+    # base_class.table_name, which the base's own qualification already covers.
+    # Assigning here would freeze a copy of the base's name onto the child and
+    # desynchronise the two on teardown.
+    it 'leaves an STI child of a pinned base alone' do
+      parent = model('QualStiParent') { self.table_name = 'sti_parents' }
+      parent.pin_tenant
+      adapter.qualify_pinned_table_name(parent)
+      child = Class.new(parent) { include(Apartment::Model) }
+      stub_const('QualStiChild', child)
+
+      adapter.qualify_pinned_table_name(child)
+
+      expect(child.instance_variable_defined?(:@table_name)).to(be(false))
+      expect(child.table_name).to(eq("#{qualifier}.sti_parents"))
+    end
+
+    # The transitional shape: a subclass moving off the pinned parent's table.
+    # It has a table of its own, so it must be qualified on its own merits.
+    it 'qualifies a subclass of a pinned base that declares its own table' do
+      parent = model('QualMigParent') { self.table_name = 'mig_parents' }
+      parent.pin_tenant
+      adapter.qualify_pinned_table_name(parent)
+      child = model('QualMigChild', parent) { self.table_name = 'mig_children' }
+
+      adapter.qualify_pinned_table_name(child)
+
+      expect(child.table_name).to(eq("#{qualifier}.mig_children"))
+    end
+
     it 'leaves a separately registered concrete child idempotent' do
       parent = model('QualAbstractParent') { self.abstract_class = true }
       adapter.qualify_pinned_table_name(parent)

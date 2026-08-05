@@ -379,6 +379,55 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
+  describe '#warn_unregistered_pinned_subclasses' do
+    # The transitional STI-migration shape: a subclass declaring its own table
+    # inherits the pin flag but no qualification, so it silently reads the
+    # wrong tenant's table. Detection is descendants-based (complete under
+    # eager loading), so this warns rather than raising.
+    it 'warns about a subclass that declares its own table and is unregistered' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'warn_parents'
+        include Apartment::Model
+      end
+      stub_const('WarnParent', parent)
+      parent.pin_tenant
+      child = Class.new(parent) { self.table_name = 'warn_children' }
+      stub_const('WarnChild', child)
+
+      expect { adapter.send(:warn_unregistered_pinned_subclasses) }
+        .to(output(/WarnChild inherits a pin from WarnParent/).to_stderr)
+    end
+
+    it 'stays quiet for an STI child sharing the parent table' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'quiet_parents'
+        include Apartment::Model
+      end
+      stub_const('QuietParent', parent)
+      parent.pin_tenant
+      stub_const('QuietChild', Class.new(parent))
+
+      expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(output.to_stderr)
+    end
+
+    it 'stays quiet once the subclass is registered itself' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'reg_parents'
+        include Apartment::Model
+      end
+      stub_const('RegParent', parent)
+      parent.pin_tenant
+      child = Class.new(parent) do
+        self.table_name = 'reg_children'
+        include Apartment::Model
+      end
+      stub_const('RegChild', child)
+      child.pin_tenant
+
+      expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(output.to_stderr)
+    end
+  end
+
   describe '#process_pinned_models' do
     context 'when shared_pinned_connection? is false (separate pool)' do
       it 'calls establish_connection with pinned_model_config' do
