@@ -44,9 +44,9 @@ module Apartment
     # a write lock across +compute_if_absent+, and the capacity-bounded path holds
     # PoolManager's own create mutex. Neither excludes AR's readers, which is the
     # side of the race that matters, and neither covers the discard half
-    # (+remove_connection_pool+ from the reaper thread, from AbstractAdapter#drop,
-    # from Migrator eviction). The registry itself is the only place that sees all
-    # of it.
+    # (+remove_connection_pool+ from Apartment::PoolReaper's timer thread — ours,
+    # not AR's — from AbstractAdapter#drop, from Migrator eviction). The registry
+    # itself is the only place that sees all of it.
     #
     # SCOPE. Applied from +Apartment.activate!+, not at gem load: an app that
     # merely has the gem in its Gemfile should not pay for a lock it does not
