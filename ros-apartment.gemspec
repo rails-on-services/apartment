@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# SPDX-License-Identifier: MIT
+
 $LOAD_PATH << File.expand_path('lib', __dir__)
 require 'apartment/version'
 
@@ -13,7 +15,9 @@ Gem::Specification.new do |s|
                     'through schema-based or database-based isolation strategies.'
   s.email         = ['ryan@influitive.com', 'brad@influitive.com', 'rui.p.baltazar@gmail.com', 'mauricio@campusesp.com']
 
-  s.files = %w[ros-apartment.gemspec README.md] + `git ls-files -- lib config`.split("\n")
+  # LICENSE ships in the gem deliberately: MIT requires the notice to travel with
+  # every distribution, and RubyGems has no other copy of it.
+  s.files = %w[ros-apartment.gemspec README.md LICENSE] + `git ls-files -- lib config`.split("\n")
   s.require_paths = ['lib']
 
   s.homepage = 'https://github.com/rails-on-services/apartment'
