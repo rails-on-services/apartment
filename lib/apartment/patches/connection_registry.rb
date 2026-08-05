@@ -224,15 +224,30 @@ module Apartment
         # gratuitous difference for anything that ever reads it. AR's own single
         # caller (ConnectionHandler#each_connection_pool) discards it.
         #
-        # The block-less form therefore delegates untouched. It is also the one
-        # form with nothing to serialize: upstream traverses nothing at call time,
-        # so there is no iteration for a concurrent write to collide with. The
-        # residual, named rather than papered over: the Enumerator it hands back
-        # for a role reads the live Hash if someone iterates it later, exactly as
-        # upstream would. Nothing in ActiveRecord or in this project's bundle
-        # calls it that way (verified by grep across the installed gems).
+        # The two block-less forms need opposite treatment, which is why they are
+        # not one branch:
+        #
+        # WITH a role, upstream's Enumerator is a live view of the inner Hash, and
+        # iterating it later bypasses this wrapper completely — a concurrent
+        # +set_pool_config+ takes SYNC and still mutates the Hash being walked, so
+        # MRI raises in the writer. Probed: the failure is IDENTICAL patched and
+        # unpatched, i.e. delegating here left the original race fully intact on
+        # this path. So we substitute an Enumerator over this method; its deferred
+        # traversal re-enters with a block and goes through the snapshot path
+        # above. Contract preserved — upstream's is an Enumerator too, and +size+
+        # is supplied because upstream's reports the shard count rather than nil.
+        # (Repeated iteration re-snapshots, so it stays a live view like
+        # upstream's, not a frozen one.)
+        #
+        # WITHOUT a role, upstream returns the outer role map and enumerates
+        # nothing whatsoever. There is no traversal to protect and no Enumerator to
+        # match, so substituting one would invent behavior; delegate untouched.
         def each_pool_config(role = nil, &block)
-          return super unless block
+          unless block
+            return enum_for(__method__, role) { pool_configs(role).size } if role
+
+            return super
+          end
 
           snapshot = []
           upstream_result = SYNC.synchronize { super(role) { |pool_config| snapshot << pool_config } }
