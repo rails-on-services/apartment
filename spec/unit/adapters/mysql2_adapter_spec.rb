@@ -105,37 +105,12 @@ RSpec.shared_examples('a MySQL adapter') do
     end
   end
 
-  describe '#qualify_pinned_table_name' do
-    it 'qualifies convention-named model with database name from base_config' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('MysqlPinned', klass)
-
-      expect(klass).to(receive(:table_name_prefix=).with('myapp.'))
-      expect(klass).to(receive(:reset_table_name))
-
-      adapter.qualify_pinned_table_name(klass)
-    end
-
-    it 'qualifies explicit table_name with database name from base_config' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('MysqlExplicit', klass)
-      klass.instance_variable_set(:@table_name, 'custom_jobs')
-      allow(klass).to(receive_messages(compute_table_name: 'mysql_explicits', table_name: 'custom_jobs'))
-
-      expect(klass).to(receive(:table_name=).with('myapp.custom_jobs'))
-
-      adapter.qualify_pinned_table_name(klass)
-    end
-
-    it 'strips existing database prefix before re-qualifying' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('MysqlRequalify', klass)
-      klass.instance_variable_set(:@table_name, 'old_db.jobs')
-      allow(klass).to(receive_messages(compute_table_name: 'mysql_requalifies', table_name: 'old_db.jobs'))
-
-      expect(klass).to(receive(:table_name=).with('myapp.jobs'))
-
-      adapter.qualify_pinned_table_name(klass)
+  # Qualification itself lives in AbstractAdapter; this adapter only supplies
+  # the qualifier. End-to-end table_name behaviour is covered for real (no
+  # mutator mocks) in spec/unit/adapters/pinned_table_qualification_spec.rb.
+  describe '#pinned_table_qualifier' do
+    it 'is the default database name from base_config' do
+      expect(adapter.pinned_table_qualifier).to(eq('myapp'))
     end
   end
 

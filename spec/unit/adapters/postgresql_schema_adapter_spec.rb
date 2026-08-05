@@ -57,62 +57,18 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     end
   end
 
-  describe '#qualify_pinned_table_name' do
-    it 'qualifies convention-named model via table_name_prefix + reset_table_name' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('DelayedJob', klass)
-
-      expect(klass).to(receive(:table_name_prefix=).with('public.'))
-      expect(klass).to(receive(:reset_table_name))
-
-      adapter.qualify_pinned_table_name(klass)
+  # Qualification itself lives in AbstractAdapter; this adapter only supplies
+  # the qualifier. End-to-end table_name behaviour is covered for real (no
+  # mutator mocks) in spec/unit/adapters/pinned_table_qualification_spec.rb.
+  describe '#pinned_table_qualifier' do
+    it 'is the default tenant schema' do
+      expect(adapter.pinned_table_qualifier).to(eq('public'))
     end
 
-    it 'qualifies explicit table_name via direct assignment' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('ExplicitPinned', klass)
-      klass.instance_variable_set(:@table_name, 'custom_jobs')
-      allow(klass).to(receive_messages(compute_table_name: 'explicit_pinneds', table_name: 'custom_jobs'))
+    it 'follows a reconfigured default_tenant' do
+      reconfigure(default_tenant: 'shared')
 
-      expect(klass).to(receive(:table_name=).with('public.custom_jobs'))
-      expect(klass).not_to(receive(:table_name_prefix=))
-
-      adapter.qualify_pinned_table_name(klass)
-    end
-
-    it 'strips existing schema prefix before re-qualifying' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('RequalifyPinned', klass)
-      klass.instance_variable_set(:@table_name, 'old_schema.jobs')
-      allow(klass).to(receive_messages(compute_table_name: 'requalify_pinneds', table_name: 'old_schema.jobs'))
-
-      expect(klass).to(receive(:table_name=).with('public.jobs'))
-
-      adapter.qualify_pinned_table_name(klass)
-    end
-
-    it 'marks model as processed with original prefix on convention path' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('PrefixPinned', klass)
-      allow(klass).to(receive(:table_name_prefix).and_return('myapp_'))
-      allow(klass).to(receive(:table_name_prefix=))
-      allow(klass).to(receive(:reset_table_name))
-
-      adapter.qualify_pinned_table_name(klass)
-
-      expect(klass.apartment_pinned_processed?).to(be(true))
-    end
-
-    it 'marks model as processed after mutation on explicit path' do
-      klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('IvarOrderPinned', klass)
-      klass.instance_variable_set(:@table_name, 'custom_jobs')
-      allow(klass).to(receive_messages(compute_table_name: 'ivar_order_pinneds', table_name: 'custom_jobs'))
-      allow(klass).to(receive(:table_name=))
-
-      adapter.qualify_pinned_table_name(klass)
-
-      expect(klass.apartment_pinned_processed?).to(be(true))
+      expect(adapter.pinned_table_qualifier).to(eq('shared'))
     end
   end
 

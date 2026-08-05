@@ -163,22 +163,19 @@ RSpec.describe(Apartment) do
       expect { described_class.adapter }.to(raise_error(Apartment::ConfigurationError))
     end
 
-    it 'restores convention-path table_name_prefix on pinned models' do
+    it 'restores computed-path table_name on pinned models' do
       klass = Class.new(ActiveRecord::Base) do
         include Apartment::Model
       end
-      stub_const('ConventionTeardown', klass)
-      allow(klass).to(receive(:table_name_prefix).and_return(''))
-      allow(klass).to(receive(:table_name_prefix=))
-      allow(klass).to(receive(:reset_table_name))
+      stub_const('ComputedTeardown', klass)
 
-      ConventionTeardown.pin_tenant
-      klass.apartment_mark_processed!(:convention, 'myapp_')
+      ComputedTeardown.pin_tenant
+      klass.table_name = 'public.computed_teardowns'
+      klass.apartment_mark_processed!(:computed)
 
       described_class.clear_config
 
-      expect(klass).to(have_received(:table_name_prefix=).with('myapp_'))
-      expect(klass).to(have_received(:reset_table_name))
+      expect(klass.table_name).to(eq('computed_teardowns'))
       expect(klass.apartment_pinned_processed?).to(be(false))
     end
 

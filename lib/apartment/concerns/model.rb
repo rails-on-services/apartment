@@ -54,10 +54,21 @@ module Apartment
         superclass.apartment_pinned?
       end
 
-      # Whether this model has an explicit self.table_name = assignment
-      # (as opposed to Rails' lazy convention computation). Returns false
-      # if the explicit value matches what convention would produce, since
-      # the convention path handles that case correctly.
+      # Whether this model's current table_name would survive a recomputation
+      # — i.e. whether Rails' convention machinery reproduces the value now
+      # cached in @table_name. False means convention rebuilds it exactly, so
+      # qualification can be undone by discarding the override; true means the
+      # name must be saved verbatim and restored verbatim.
+      #
+      # This answers a *restore* question. It is deliberately NOT a
+      # qualification discriminator: a table_name that matches convention is no
+      # evidence that setting table_name_prefix would qualify the model. Rails
+      # ignores the prefix outright for any class that is not its own
+      # base_class (compute_table_name returns base_class.table_name verbatim),
+      # and full_table_name_prefix prefers a module parent's prefix over the
+      # class's own. Qualification therefore always assigns table_name
+      # directly — see AbstractAdapter#qualify_pinned_table_name.
+      #
       # NOTE: compute_table_name is a private Rails API; tested against
       # Rails main as a canary in CI.
       def apartment_explicit_table_name?
@@ -71,28 +82,31 @@ module Apartment
         @apartment_pinned_processed == true
       end
 
-      # Record that qualification has been applied, and what path was used.
+      # Record that qualification has been applied, and how it must be undone.
       # Called by qualify_pinned_table_name (adapters) after mutations succeed,
       # or by process_pinned_model after establish_connection on separate-pool path.
+      #
+      # :computed — the pre-qualification name was reproducible by convention;
+      #   restore by discarding the override and recomputing.
+      # :explicit — the name was assigned in a way convention cannot rebuild;
+      #   +original_value+ is that name, restored verbatim.
+      # nil — separate-pool models; nothing to undo.
       def apartment_mark_processed!(path = nil, original_value = nil)
         @apartment_pinned_processed = true
         @apartment_qualification_path = path
-        case path
-        when :explicit then @apartment_original_table_name = original_value
-        when :convention then @apartment_original_table_name_prefix = original_value
-        end
+        @apartment_original_table_name = original_value if path == :explicit
       end
 
       # Undo table name qualification and clear tracking state.
-      # Convention path: restore original prefix so reset_table_name recomputes.
-      # Explicit path: restore the original table_name that was overwritten.
-      # nil path: separate-pool models — no table name changes to undo.
       def apartment_restore!
         return unless @apartment_pinned_processed
 
         case @apartment_qualification_path
-        when :convention
-          self.table_name_prefix = @apartment_original_table_name_prefix || ''
+        when :computed
+          # Drop the qualified override rather than assigning the old value
+          # back, so the model stays responsive to table_name_prefix and
+          # base-class changes exactly as it was before pinning.
+          remove_instance_variable(:@table_name) if instance_variable_defined?(:@table_name)
           reset_table_name
         when :explicit
           self.table_name = @apartment_original_table_name if @apartment_original_table_name
@@ -104,7 +118,6 @@ module Apartment
         @apartment_pinned_processed = nil
         @apartment_qualification_path = nil
         @apartment_original_table_name = nil
-        @apartment_original_table_name_prefix = nil
       end
 
       private

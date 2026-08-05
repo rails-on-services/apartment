@@ -148,12 +148,41 @@ module Apartment
         !tenant_container_exists?(tenant)
       end
 
-      # Qualify a pinned model's table_name so it targets the default
-      # tenant's tables from any tenant connection. Subclasses must
-      # implement when shared_pinned_connection? returns true.
-      def qualify_pinned_table_name(_klass)
+      # The namespace that makes the default tenant's tables reachable from any
+      # tenant connection — a schema (PostgreSQL) or a database (MySQL).
+      # Subclasses must implement when shared_pinned_connection? returns true.
+      def pinned_table_qualifier
         raise(NotImplementedError,
-              "#{self.class}#qualify_pinned_table_name must be implemented when shared_pinned_connection? is true")
+              "#{self.class}#pinned_table_qualifier must be implemented when shared_pinned_connection? is true")
+      end
+
+      # Qualify a pinned model's table_name so it targets the default tenant's
+      # tables from any tenant connection.
+      #
+      # Always assigns table_name directly. The tempting alternative — set
+      # table_name_prefix and let Rails recompose — is unsound, because
+      # compute_table_name only consults full_table_name_prefix on its
+      # base_class? branch:
+      #
+      #   * a class that is not its own base_class gets base_class.table_name
+      #     verbatim, so the prefix is discarded outright;
+      #   * full_table_name_prefix prefers the first module parent that responds
+      #     to table_name_prefix, so an engine-namespaced model ignores the
+      #     prefix set on the class itself;
+      #   * overwriting the prefix drops one the app set, silently retargeting
+      #     the model at a different table.
+      #
+      # Each case left the model resolving to the *tenant's* table with no
+      # error. Reading table_name first lets Rails compute the conventional
+      # name — honouring any prefix, suffix, or nesting the app declared —
+      # before we qualify the result.
+      def qualify_pinned_table_name(klass)
+        # Captured before the assignment below, which would otherwise make
+        # every model look explicitly named.
+        path = klass.apartment_explicit_table_name? ? :explicit : :computed
+        original = klass.table_name
+        klass.table_name = "#{pinned_table_qualifier}.#{original.sub(/\A[^.]+\./, '')}"
+        klass.apartment_mark_processed!(path, (original if path == :explicit))
       end
 
       # Process all pinned models. When shared_pinned_connection? is true, qualifies

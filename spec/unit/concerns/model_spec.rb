@@ -241,17 +241,15 @@ RSpec.describe(Apartment::Model) do
   end
 
   describe '.apartment_restore!' do
-    it 'restores convention-path prefix and resets table name' do
+    it 'restores a computed-path name by discarding the override and recomputing' do
       klass = Class.new(ActiveRecord::Base) { include Apartment::Model }
-      stub_const('ConventionRestore', klass)
-      allow(klass).to(receive(:table_name_prefix=))
-      allow(klass).to(receive(:reset_table_name))
+      stub_const('ComputedRestore', klass)
+      klass.table_name = 'public.computed_restores'
 
-      klass.apartment_mark_processed!(:convention, 'myapp_')
+      klass.apartment_mark_processed!(:computed)
       klass.apartment_restore!
 
-      expect(klass).to(have_received(:table_name_prefix=).with('myapp_'))
-      expect(klass).to(have_received(:reset_table_name))
+      expect(klass.table_name).to(eq('computed_restores'))
       expect(klass.apartment_pinned_processed?).to(be(false))
     end
 

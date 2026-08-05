@@ -142,6 +142,77 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
+  # Regression: a pinned model that is not its own base_class. Rails'
+  # compute_table_name returns base_class.table_name verbatim for a subclass,
+  # so the old prefix-based qualification was discarded and the model resolved
+  # to the *tenant's* table with no error. The unit specs pin the table_name;
+  # this one proves the emitted SQL reaches the default tenant's rows.
+  context 'pinned subclass whose table_name matches its base class' do
+    before do
+      skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
+
+      ActiveRecord::Base.connection.create_table(:versions, force: true) do |t|
+        t.string(:event)
+      end
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.connection.create_table(:versions, force: true) do |t|
+          t.string(:event)
+        end
+      end
+
+      # Unpinned base, mirroring a gem-owned model (e.g. PaperTrail::Version).
+      stub_const('BaseVersion', Class.new(ApplicationRecord) do
+        self.table_name = 'versions'
+      end)
+
+      # The app's pinned subclass. Its explicit table_name is identical to what
+      # convention computes for a subclass — base_class.table_name — which is
+      # exactly the shape that used to route into the unqualifiable path.
+      stub_const('PublicVersion', Class.new(BaseVersion) do
+        self.table_name = 'versions'
+        include Apartment::Model
+      end)
+
+      # pin_tenant defers via TracePoint(:end), which never fires for
+      # Class.new; process explicitly, as the docs instruct.
+      PublicVersion.pin_tenant
+      Apartment.process_pinned_model(PublicVersion)
+    end
+
+    it 'is not its own base_class' do
+      expect(PublicVersion.base_class?).to(be(false))
+      expect(PublicVersion.base_class).to(eq(BaseVersion))
+    end
+
+    it 'qualifies the table name against the default tenant' do
+      # PG qualifies with the default schema, MySQL with the default database;
+      # the bug produced a bare 'versions' under both.
+      expect(PublicVersion.table_name).to(eq("#{Apartment.adapter.pinned_table_qualifier}.versions"))
+    end
+
+    it 'reads default-tenant rows from inside a tenant switch' do
+      PublicVersion.create!(event: 'default_row')
+      Apartment::Tenant.switch('tenant_a') do
+        BaseVersion.create!(event: 'tenant_row')
+      end
+
+      Apartment::Tenant.switch('tenant_a') do
+        expect(PublicVersion.pluck(:event)).to(eq(['default_row']))
+      end
+    end
+
+    it 'writes to the default tenant from inside a tenant switch' do
+      Apartment::Tenant.switch('tenant_a') do
+        PublicVersion.create!(event: 'written_inside_tenant')
+      end
+
+      expect(PublicVersion.pluck(:event)).to(eq(['written_inside_tenant']))
+      Apartment::Tenant.switch('tenant_a') do
+        expect(BaseVersion.count).to(eq(0))
+      end
+    end
+  end
+
   context 'transactional integrity (shared connection path)' do
     it 'rolls back both pinned and tenant model writes on transaction rollback' do
       skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
