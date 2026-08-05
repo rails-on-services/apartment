@@ -53,6 +53,39 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
     end
   end
 
+  describe '#each_pool_config return contract' do
+    # Pinned to upstream's MEASURED behavior on 7.2 / 8.0 / 8.1 (identical on all
+    # three), because a lock is no reason to narrow the contract of the method it
+    # wraps. Upstream returns the very Hash it walked; the block-less form returns
+    # an Enumerator for a role but the outer Hash — having enumerated nothing —
+    # without one. Regression guard: an earlier version of this patch returned its
+    # snapshot Array for every block form, and an Enumerator for every block-less
+    # one, differing from upstream in three of the four cases.
+    let(:registry) { pool_manager.instance_variable_get(:@role_to_shard_mapping) }
+
+    before { pool_manager.set_pool_config(:writing, :seed, seed_config) }
+
+    it 'returns the outer role map for a block with no role' do
+      expect(pool_manager.each_pool_config { |_pool_config| nil }).to(be(registry))
+    end
+
+    it 'returns the inner shard map for a block with a role' do
+      expect(pool_manager.each_pool_config(:writing) { |_pool_config| nil })
+        .to(be(registry[:writing]))
+    end
+
+    it 'returns the outer role map, block-less, with no role' do
+      expect(pool_manager.each_pool_config).to(be(registry))
+    end
+
+    it 'returns an Enumerator, block-less, with a role' do
+      result = pool_manager.each_pool_config(:writing)
+
+      expect(result).to(be_a(Enumerator))
+      expect(result.to_a).to(eq([seed_config]))
+    end
+  end
+
   describe 'shard registration during iteration' do
     before { pool_manager.set_pool_config(:writing, :seed, seed_config) }
 

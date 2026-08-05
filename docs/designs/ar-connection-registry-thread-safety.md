@@ -215,12 +215,34 @@ Irrelevant at two passes per request.
 across that would hold it across pool IO while cold creates queue behind it.
 Snapshotting mirrors what `Concurrent::Map#each_pair` already does one level up
 (it iterates a dup), so the two levels of the registry now have matching semantics.
-Two visible consequences, both deliberate: a shard registered mid-iteration is not
-yielded, and the return value is the snapshot rather than the inner Hash upstream
-returns (no caller uses it). A third is avoided: the block-less form returns
-`enum_for(__method__, role)`, so the snapshot is taken when enumeration *begins*
-rather than when the Enumerator is built — upstream's block-less form is lazy too.
-Nothing in Rails 7.2–8.1 uses it.
+One visible consequence, deliberate: a shard registered mid-iteration is not
+yielded.
+
+**The return value stays upstream's.** A lock is no reason to narrow the contract of
+the method it wraps — and this is a `:nodoc:` internal that other gems wrap too, so a
+gratuitous difference costs more than it saves. Measured identical on 7.2 / 8.0 /
+8.1:
+
+| Call | Upstream returns |
+|---|---|
+| block, no role | the outer role map (the same object it walked) |
+| block, role | the inner shard map |
+| block-less, no role | the outer role map — having enumerated nothing |
+| block-less, role | an `Enumerator` |
+
+The block form now returns whatever `super` returned; the block-less form delegates
+untouched. That form is also the one with nothing to serialize: upstream traverses
+nothing at call time, so no concurrent write has an iteration to collide with. The
+residual, named rather than papered over: the `Enumerator` handed back for a role
+reads the live Hash if iterated later, exactly as upstream's would. Nothing in
+ActiveRecord or in this project's bundle calls it that way (verified by grep over the
+installed gems); AR's only caller,
+`ConnectionHandler#each_connection_pool`, always passes a block and discards the
+result.
+
+An earlier version of this patch returned its snapshot `Array` for every block form
+and an `Enumerator` for every block-less one — diverging from upstream in three of
+the four cases. Four regression examples pin the table above.
 
 One asymmetry worth recording: a `pool_config` removed after the snapshot is still
 yielded, where a live Hash walk might have skipped it. Removal means `disconnect!`,
