@@ -379,7 +379,10 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
-  describe '#warn_unregistered_pinned_subclasses' do
+  # The warning walks the whole pinned registry, which is process-lifetime and
+  # leaks across examples — a model pinned by an earlier example could emit a
+  # warning here and break the "stays quiet" assertions depending on order.
+  describe '#warn_unregistered_pinned_subclasses', :isolate_pinned_models do
     # The transitional STI-migration shape: a subclass declaring its own table
     # inherits the pin flag but no qualification, so it silently reads the
     # wrong tenant's table. Detection is descendants-based (complete under
