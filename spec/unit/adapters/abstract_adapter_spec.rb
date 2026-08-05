@@ -488,6 +488,29 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(raise_error)
     end
 
+    # Before descendants were resynced, a descendant that memoized its name
+    # early kept a stale value that no longer matched compute_table_name, so
+    # apartment_explicit_table_name? read true and this warned that the model
+    # "declares its own table" — which it does not. A false diagnosis sends the
+    # reader after the wrong fix.
+    it 'does not warn about a descendant that merely memoized its name early' do
+      parent = Class.new(ActiveRecord::Base) do
+        self.abstract_class = true
+        include Apartment::Model
+      end
+      stub_const('MemoWarnBase', parent)
+      parent.pin_tenant
+      child = Class.new(parent)
+      stub_const('MemoWarnChild', child)
+      child.table_name # early read
+      # TestAdapter is abstract on purpose (another example asserts it raises);
+      # supply the qualifier this one needs.
+      allow(adapter).to(receive(:pinned_table_qualifier).and_return('public'))
+      adapter.qualify_pinned_table_name(parent)
+
+      expect { adapter.send(:warn_unregistered_pinned_subclasses) }.not_to(output.to_stderr)
+    end
+
     it 'stays quiet once the subclass is registered itself' do
       parent = Class.new(ActiveRecord::Base) do
         self.table_name = 'reg_parents'

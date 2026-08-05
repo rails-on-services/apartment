@@ -177,6 +177,14 @@ module Apartment
       # name — honouring any prefix, suffix, or nesting the app declared —
       # before we qualify the result.
       def qualify_pinned_table_name(klass)
+        # Captured before the mutation below: afterwards there is no way to
+        # tell a descendant's stale memo from a table it declared itself.
+        inheriting = klass.apartment_descendants_inheriting_table_name
+        apply_pinned_qualification(klass)
+        klass.apartment_resync_descendant_table_names!(inheriting)
+      end
+
+      def apply_pinned_qualification(klass)
         return qualify_pinned_table_name_prefix(klass) if klass.abstract_class?
         return klass.apartment_mark_processed! if inherits_pinned_table?(klass)
 

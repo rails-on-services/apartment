@@ -85,6 +85,44 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq("#{qualifier}.myapp_qual_ledgers"))
     end
 
+    # Rails memoizes @table_name per class on first read and never invalidates
+    # a descendant's copy when an ancestor's name or prefix changes. Anything
+    # that touches a descendant's table_name before Tenant.init — an
+    # initializer, a gem, a route constraint, a descendants sweep — freezes the
+    # UNqualified name, and the "pinned" model then reads the tenant's table
+    # forever. Qualification has to resync them.
+    it 'requalifies a descendant that memoized its name before the base was qualified' do
+      parent = model('MemoBase') { self.abstract_class = true }
+      child = Class.new(parent)
+      stub_const('MemoChild', child)
+      child.table_name # early read freezes the unqualified name
+
+      adapter.qualify_pinned_table_name(parent)
+
+      expect(child.table_name).to(eq("#{qualifier}.memo_children"))
+    end
+
+    it 'requalifies an STI child that memoized the parent table early' do
+      parent = model('StiMemoParent') { self.table_name = 'sti_memo_parents' }
+      child = Class.new(parent)
+      stub_const('StiMemoChild', child)
+      child.table_name
+
+      adapter.qualify_pinned_table_name(parent)
+
+      expect(child.table_name).to(eq("#{qualifier}.sti_memo_parents"))
+    end
+
+    it 'leaves a descendant that declares its own table alone' do
+      parent = model('OwnTableBase') { self.abstract_class = true }
+      child = Class.new(parent) { self.table_name = 'declared_table' }
+      stub_const('OwnTableChild', child)
+
+      adapter.qualify_pinned_table_name(parent)
+
+      expect(child.table_name).to(eq('declared_table'))
+    end
+
     it 'marks the model processed' do
       klass = model('QualProcessed')
 
@@ -228,6 +266,18 @@ RSpec.describe('pinned table name qualification') do
       expect(parent.table_name_prefix).to(eq('myapp_'))
       expect(child.table_name).to(eq('myapp_restore_global_settings'))
       expect(parent.apartment_pinned_processed?).to(be(false))
+    end
+
+    it 'unqualifies a descendant that memoized the qualified name' do
+      parent = model('MemoRestoreBase') { self.abstract_class = true }
+      child = Class.new(parent)
+      stub_const('MemoRestoreChild', child)
+
+      adapter.qualify_pinned_table_name(parent)
+      child.table_name # freeze the qualified name on the descendant
+      parent.apartment_restore!
+
+      expect(child.table_name).to(eq('memo_restore_children'))
     end
 
     it 'leaves the model requalifiable after a restore' do
