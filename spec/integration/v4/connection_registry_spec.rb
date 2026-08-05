@@ -153,15 +153,25 @@ RSpec.describe('v4 AR connection registry concurrency', :integration, :stress,
         release.pop
       end
     end
+    iterator.report_on_exception = false
 
     # Bounded so a future change that stops the iterator from ever yielding
     # fails the example instead of hanging the suite.
     raise('iterator thread never entered AR pool iteration') if iterating.pop(timeout: 10).nil?
 
-    yield
-  ensure
-    release << :go
-    iterator&.join(10)
+    result = begin
+      yield
+    ensure
+      release << :go
+    end
+
+    # The iterator's own outcome is asserted, not discarded: one that died
+    # mid-walk would leave the example proving nothing about concurrency, and
+    # #value re-raises whatever it hit.
+    raise('iterator thread did not finish after being released') unless iterator.join(10)
+
+    iterator.value
+    result
   end
 
   def write_test_migration(dir)

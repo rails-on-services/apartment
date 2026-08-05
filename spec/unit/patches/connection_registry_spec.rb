@@ -81,76 +81,32 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
 
   describe 'concurrent registration and iteration' do
     # Deterministic rather than a stress loop: the reader parks inside its
-    # iteration block and only then does the writer register. Unpatched, the
-    # reader is still inside AR's Hash walk at that moment and the writer's
-    # insert raises; patched, the reader took its snapshot and released the lock
-    # before yielding, so the writer proceeds. A timing-based version of this
-    # passed against pristine ActiveRecord — 500 inserts finish inside one
-    # scheduler slice, so the two threads never overlapped.
+    # iteration block and only then does the mutation run. Unpatched, the reader
+    # is still inside AR's Hash walk at that moment and an insert raises; patched,
+    # the reader took its snapshot and released the lock before yielding, so the
+    # mutation proceeds. A timing-based version of this passed against pristine
+    # ActiveRecord — 500 inserts finish inside one scheduler slice, so the two
+    # threads never overlapped.
     it 'lets another thread register a shard while an iteration is in progress' do
       pool_manager.set_pool_config(:writing, :seed, seed_config)
-      iterating = Queue.new
-      release = Queue.new
-      writer_error = nil
 
-      reader = Thread.new do
-        parked = false
-        pool_manager.each_pool_config do |_pool_config|
-          next if parked
+      outcome = with_iteration_parked { pool_manager.set_pool_config(:writing, :added, added_config) }
 
-          parked = true
-          iterating << :inside
-          release.pop
-        end
-      end
-      iterating.pop
-
-      writer = Thread.new do
-        pool_manager.set_pool_config(:writing, :added, added_config)
-      rescue StandardError => e
-        writer_error = e
-      end
-      writer.join(5)
-
-      release << :go
-      reader.join(5)
-
-      expect(writer_error).to(be_nil)
+      expect(outcome[:finished]).to(be(true))
+      expect(outcome[:error]).to(be_nil)
       expect(pool_manager.pool_configs(:writing)).to(contain_exactly(seed_config, added_config))
     end
 
     it 'lets another thread discard a shard while an iteration is in progress' do
-      # The reaper thread's half of the same race: eviction deregisters from AR's
-      # handler while request threads are iterating.
+      # The eviction half of the same race: Apartment's PoolReaper deregisters
+      # from AR's handler on its timer thread while request threads are iterating.
       pool_manager.set_pool_config(:writing, :seed, seed_config)
       pool_manager.set_pool_config(:writing, :doomed, added_config)
-      iterating = Queue.new
-      release = Queue.new
-      remover_error = nil
 
-      reader = Thread.new do
-        parked = false
-        pool_manager.each_pool_config do |_pool_config|
-          next if parked
+      outcome = with_iteration_parked { pool_manager.remove_pool_config(:writing, :doomed) }
 
-          parked = true
-          iterating << :inside
-          release.pop
-        end
-      end
-      iterating.pop
-
-      remover = Thread.new do
-        pool_manager.remove_pool_config(:writing, :doomed)
-      rescue StandardError => e
-        remover_error = e
-      end
-      remover.join(5)
-
-      release << :go
-      reader.join(5)
-
-      expect(remover_error).to(be_nil)
+      expect(outcome[:finished]).to(be(true))
+      expect(outcome[:error]).to(be_nil)
       expect(pool_manager.pool_configs(:writing)).to(contain_exactly(seed_config))
     end
   end
@@ -209,16 +165,103 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
         .to(match_array(ActiveRecord::ConnectionAdapters::PoolManager.instance_methods(false)))
     end
 
-    it 'skips (and warns) when the upstream shape is unrecognized' do
-      drifted = Class.new # no registry accessors at all
-      allow(described_class).to(receive(:warn))
+    it 'keeps the handler upsert private, as upstream declares it' do
+      # A prepended method is public by default, so without an explicit `private`
+      # this patch would widen a Rails internal into public API.
+      handler_class = ActiveRecord::ConnectionAdapters::ConnectionHandler
 
-      described_class.send(:serialize!, drifted, described_class::POOL_MANAGER_METHODS,
-                           described_class::PoolManagerSync)
-
-      expect(drifted.ancestors).not_to(include(described_class::PoolManagerSync))
-      expect(described_class).to(have_received(:warn).with(/unrecognized/))
+      expect(handler_class.private_method_defined?(:set_pool_manager)).to(be(true))
+      expect(handler_class.public_method_defined?(:set_pool_manager)).to(be(false))
     end
+
+    describe 'upstream shape drift' do
+      it 'raises rather than silently running unsynchronized when a method is gone' do
+        drifted = Class.new # no registry accessors at all
+
+        expect { serialize(drifted) }
+          .to(raise_error(Apartment::ConfigurationError, /cannot serialize/))
+        expect(drifted.ancestors).not_to(include(described_class::PoolManagerSync))
+      end
+
+      it 'accepts a method that merely moved to a superclass' do
+        # super dispatches through the whole ancestor chain, so an upstream
+        # refactor that relocates these methods is benign — and must not trip a
+        # check that now raises.
+        moved = Class.new(registry_shaped_class)
+
+        expect { serialize(moved) }.not_to(raise_error)
+        expect(moved.ancestors).to(include(described_class::PoolManagerSync))
+      end
+
+      it 'warns, but still patches, when upstream grows an accessor we do not guard' do
+        grown = Class.new(registry_shaped_class) { def brand_new_accessor; end }
+        allow(described_class).to(receive(:warn))
+
+        serialize(grown, exhaustive: true)
+
+        expect(described_class).to(have_received(:warn).with(/brand_new_accessor/))
+        expect(grown.ancestors).to(include(described_class::PoolManagerSync))
+      end
+    end
+  end
+
+  def serialize(klass, exhaustive: false)
+    described_class.send(:serialize!, klass, described_class::POOL_MANAGER_METHODS,
+                         described_class::PoolManagerSync, exhaustive: exhaustive)
+  end
+
+  # A stand-in with the same accessor names as AR's PoolManager. Bodies are never
+  # invoked — only their presence is under test.
+  def registry_shaped_class
+    Class.new do
+      Apartment::Patches::ConnectionRegistry::POOL_MANAGER_METHODS.each do |name|
+        define_method(name) { |*| nil }
+      end
+    end
+  end
+
+  # Runs +block+ in another thread while a reader thread is parked inside
+  # +pool_manager.each_pool_config+. Returns whether the worker finished WHILE the
+  # reader was still parked, plus anything it raised.
+  #
+  # That "while still parked" part is the whole assertion. An implementation that
+  # held the monitor across the yield would leave the worker blocked; releasing
+  # the reader afterwards would then let it finish cleanly, and an example that
+  # only checked for the absence of an error would pass on the strength of a
+  # five-second stall.
+  def with_iteration_parked(&block)
+    iterating = Queue.new
+    release = Queue.new
+
+    reader = Thread.new do
+      parked = false
+      pool_manager.each_pool_config do |_pool_config|
+        next if parked
+
+        parked = true
+        iterating << :inside
+        release.pop
+      end
+    end
+    reader.report_on_exception = false
+    raise('reader thread never entered the iteration') if iterating.pop(timeout: 5).nil?
+
+    worker = Thread.new(&block)
+    worker.report_on_exception = false
+    finished = !worker.join(5).nil?
+    error = worker_error(worker) if finished
+
+    { finished: finished, error: error }
+  ensure
+    release << :go
+    reader&.join(5)
+  end
+
+  def worker_error(worker)
+    worker.value
+    nil
+  rescue StandardError => e
+    e
   end
 
   # Blocked-on-a-lock threads report status 'sleep'; a thread that ran to
@@ -234,7 +277,12 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
       parked = parked?(worker)
     end
 
-    worker&.join(5)
+    # Parking alone is not enough: a wrapper that acquired the monitor and then
+    # hung or raised would satisfy the status check. The call has to complete,
+    # and complete cleanly, once the monitor is free.
+    raise('guarded call did not finish after the monitor was released') unless worker.join(5)
+
+    worker.value
     parked
   end
 

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'monitor'
+require_relative '../errors'
 
 module Apartment
   module Patches
@@ -20,12 +21,17 @@ module Apartment
     # it. MRI's per-Hash iteration guard turns the collision into a hard failure
     # in the WRITER: `RuntimeError: can't add a new key into hash during
     # iteration`, surfaced by Apartment as a failed tenant switch. The readers are
-    # routine and unavoidable — ConnectionPool::ExecutorHooks.complete iterates
-    # every pool at the end of each request or job, ActiveRecord::QueryCache
-    # iterates on every executor run, and AR's own Reaper thread iterates on a
-    # timer. Parallel migration is simply the densest producer of cold creates
-    # (one thread per tenant, all establishing at once) and therefore the easiest
-    # place to see it.
+    # routine and unavoidable, all via ConnectionHandler#each_connection_pool:
+    # ActiveRecord::QueryCache.run on every executor run (the start of every
+    # request and job), ConnectionPool::ExecutorHooks.complete on every executor
+    # completion, Base.clear_query_caches_for_current_thread after writes,
+    # ActiveRecord.all_open_transactions for transaction-callback bookkeeping, and
+    # clear_active_connections! / clear_all_connections! /
+    # flush_idle_connections!. (AR's own ConnectionPool::Reaper is NOT one of
+    # them — it keeps a private WeakRef list and never reads this registry.)
+    # Parallel migration is simply the densest producer of cold creates (one
+    # thread per tenant, all establishing at once) and therefore the easiest place
+    # to see it.
     #
     # A read can write, too: +get_pool_config+ / +pool_configs+ /
     # +each_pool_config+ reach the outer Hash through +[]+, whose default proc
@@ -48,6 +54,19 @@ module Apartment
     # manager is built during Rails' database initializer, before activate!),
     # which is why the lock is module-level rather than per-instance state.
     #
+    # NO DEADLOCK, BY CONSTRUCTION. SYNC is a LEAF lock: every guarded body is an
+    # in-memory Hash operation that acquires nothing else, performs no IO, and
+    # yields to no caller. Keep it that way — it is the entire deadlock-freedom
+    # argument, and Apartment's cold-create path already establishes the one lock
+    # ordering that exists (Concurrent::Map's write lock, or the capped path's
+    # create mutex, is taken FIRST and SYNC underneath it via
+    # establish_connection). Nothing acquires SYNC and then reaches for either.
+    # Upstream cooperates: +remove_pool_config+ returns the pool_config and
+    # +disconnect_pool_from_pool_manager+ calls +disconnect!+ on it only after the
+    # guarded call has returned, and +establish_connection+ builds the pool
+    # (PoolConfig#pool, under PoolConfig's own monitor) after +set_pool_config+
+    # returns — so no pool IO and no other monitor is ever nested under SYNC.
+    #
     # COST. One uncontended monitor acquire, measured at ~90ns, on registry
     # operations only. +get_pool_config+ is the hot one (AR resolves it per query
     # for default-tenant and pinned traffic), where it is noise against even a
@@ -61,13 +80,19 @@ module Apartment
       # would buy negligible parallelism in exchange for lazy-init state on
       # objects that already exist by the time the patch is applied.
       #
-      # Monitor, not Mutex: #each_pool_config re-enters through the guarded
-      # accessors, and a non-reentrant lock would self-deadlock there.
+      # Monitor, not Mutex, purely defensively: no guarded method re-enters
+      # another today (each accessor's +super+ reads the Hash directly, and
+      # #each_pool_config yields outside the lock), and establish_connection's
+      # several acquisitions are sequential rather than nested — a Mutex would
+      # work. Reentrance costs nothing measurable here (~90ns either way) and
+      # buys tolerance for an upstream implementation in which one accessor
+      # dispatches through another.
       SYNC = Monitor.new
 
-      # Every public accessor AR::ConnectionAdapters::PoolManager defines. Asserted
-      # against the real class by spec, so a method added or removed upstream
-      # fails the suite instead of silently leaving a hole.
+      # Every public accessor AR::ConnectionAdapters::PoolManager defines. Both
+      # halves of this claim are enforced at activate! time: a method that has
+      # gone missing raises, and an accessor upstream has ADDED that we therefore
+      # do not guard warns (the patch still works, but there is a hole in it).
       POOL_MANAGER_METHODS = %i[
         shard_names
         role_names
@@ -84,29 +109,65 @@ module Apartment
       class << self
         # Idempotent — prepend on an already-prepended module is a no-op.
         def apply!
-          serialize!(ActiveRecord::ConnectionAdapters::PoolManager, POOL_MANAGER_METHODS, PoolManagerSync)
+          serialize!(ActiveRecord::ConnectionAdapters::PoolManager, POOL_MANAGER_METHODS, PoolManagerSync,
+                     exhaustive: true)
           serialize!(ActiveRecord::ConnectionAdapters::ConnectionHandler, HANDLER_METHODS, HandlerSync)
           nil
         end
 
         private
 
-        # Refuses to patch a class whose shape we do not recognize. Both wrapper
-        # modules work by +super+, so a method that upstream renamed or removed
-        # would turn our wrapper into a NoMethodError at call time — worse than
-        # the race. Warn and skip instead: the Rails-main canary in CI surfaces
-        # the drift while released Rails versions keep working.
-        def serialize!(klass, method_names, wrapper)
-          missing = method_names - klass.instance_methods(false) - klass.private_instance_methods(false)
-
-          if missing.any?
-            warn "[Apartment] Skipping #{wrapper.name}: unrecognized #{klass} shape " \
-                 "(missing #{missing.join(', ')}). Concurrent tenant pool creation is " \
-                 'not serialized on this ActiveRecord version.'
-            return
+        # FAILS CLOSED on a shape we cannot serialize. Both wrapper modules work by
+        # +super+, so a guarded method that no longer exists anywhere in the MRO
+        # would be a NoMethodError at first call. Raising here instead is louder and
+        # earlier: activate! runs at boot, from an explicit call, so the operator
+        # learns on deploy that this gem version does not support this ActiveRecord
+        # version. The alternative — warn and continue unpatched — reinstates a race
+        # that fails a fraction of cold tenant switches under load, which is far
+        # harder to attribute. It would also be effectively silent: the Rails-main
+        # CI canary is continue-on-error, so a warning blocks nothing.
+        #
+        # Resolution deliberately uses +method_defined?+, not +instance_methods(false)+:
+        # +super+ dispatches through the whole ancestor chain, so a method upstream
+        # merely MOVED to a superclass or an included module still works through the
+        # wrapper. Testing for a direct definition would refuse a refactor that is
+        # entirely benign, and refusing is now fatal.
+        #
+        # +exhaustive+ additionally warns (never raises) when upstream has grown a
+        # public accessor we do not guard: the patch still does its job, but that
+        # method touches the registry unsynchronized. A warning, not a raise,
+        # because a hole is strictly better than a boot failure — and the unit spec
+        # pins the exact set so it fails in CI first.
+        def serialize!(klass, method_names, wrapper, exhaustive: false)
+          missing = method_names.reject do |name|
+            klass.method_defined?(name) || klass.private_method_defined?(name)
           end
 
+          unless missing.empty?
+            raise(Apartment::ConfigurationError,
+                  "Apartment cannot serialize #{klass} on ActiveRecord " \
+                  "#{ActiveRecord::VERSION::STRING}: expected method(s) #{missing.join(', ')} " \
+                  'are gone. Pool-per-tenant registers connection pools concurrently and ' \
+                  'this registry is not thread-safe without them. Upgrade ros-apartment to a ' \
+                  'version that supports this ActiveRecord release.')
+          end
+
+          warn_unguarded(klass, method_names, wrapper) if exhaustive
+
           klass.prepend(wrapper)
+        end
+
+        def warn_unguarded(klass, method_names, wrapper)
+          # instance_methods(false) is the right question HERE (unlike above): it asks
+          # what this class itself declares, and stays correct after prepending
+          # because a prepended module's methods are not the class's own.
+          unguarded = klass.instance_methods(false) - method_names
+          return if unguarded.empty?
+
+          warn "[Apartment] #{klass} on ActiveRecord #{ActiveRecord::VERSION::STRING} declares " \
+               "method(s) #{unguarded.join(', ')} that #{wrapper.name} does not serialize. " \
+               'Concurrent tenant pool creation is protected, but those methods reach the ' \
+               'registry unsynchronized.'
         end
       end
 
@@ -153,11 +214,19 @@ module Apartment
         # mid-iteration is not yielded (a snapshot, like Concurrent::Map's
         # iterators elsewhere in Apartment), and the return value is the snapshot
         # rather than the inner Hash upstream returns — no caller uses it.
+        #
+        # The block-less form returns an Enumerator over +__method__+ rather than
+        # over an eagerly-built Array, so the snapshot is taken when enumeration
+        # begins rather than when the Enumerator is created. Upstream's block-less
+        # form is lazy too; nothing in Rails 7.2-8.1 uses it, and deferring is the
+        # less surprising of the two if something ever does.
         def each_pool_config(role = nil, &block)
+          return enum_for(__method__, role) unless block
+
           snapshot = []
           SYNC.synchronize { super(role) { |pool_config| snapshot << pool_config } }
 
-          block ? snapshot.each(&block) : snapshot.each
+          snapshot.each(&block)
         end
       end
 
@@ -172,10 +241,16 @@ module Apartment
       # the signature is version-dependent (AR >= 8.0 passes a ConnectionDescriptor
       # where 7.2 passed the connection-name String) and the key derivation is
       # upstream's business, not ours.
+      #
+      # Declared private to match upstream. A prepended method is public by
+      # default, and leaving it so would widen a Rails internal into public API
+      # from a patch whose only job is a lock.
       module HandlerSync
         def set_pool_manager(...)
           SYNC.synchronize { super }
         end
+
+        private :set_pool_manager
       end
     end
   end

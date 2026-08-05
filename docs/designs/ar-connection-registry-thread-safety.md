@@ -16,9 +16,12 @@ are per-tenant) and [`phase-2.3-connection-handling.md`](phase-2.3-connection-ha
   it only at boot and reads it forever after; pool-per-tenant writes it for the
   life of the process, from whichever thread first routes to a tenant. See
   [Mechanism](#mechanism).
-- **The trigger is routine, not exotic.** Rails iterates every pool at the end of
-  each request or job, on every executor run, and on its own reaper timer. Parallel
-  migration is the densest producer of cold creates, not the only one.
+- **The trigger is routine, not exotic.** Rails iterates every pool at the start
+  and end of every request and job, and after writes. Parallel migration is the
+  densest producer of cold creates, not the only one.
+- **No deadlock, by construction**: the monitor is a leaf lock — nothing is
+  acquired under it, no IO happens under it, and no caller's block runs under it.
+  See [Design decisions](#design-decisions).
 - **Apartment's existing locks do not cover it.** They serialize cold creates
   against each other, which is the wrong side of the race. See
   [Why the existing locks miss it](#why-the-existing-locks-miss-it).
@@ -76,12 +79,20 @@ the Hash object, not on the thread, so a `[]=` that adds a key while any thread 
 inside `each_value` raises. The exception lands in the tenant switch: the request
 that happened to be first to touch a tenant is the one that breaks.
 
-**The readers are Rails' own, and they run constantly:**
+**The readers are Rails' own, and they run constantly** — all of them through
+`ConnectionHandler#each_connection_pool`:
 
-- `ConnectionPool::ExecutorHooks.complete` — every request and every job completion
-- `ActiveRecord::QueryCache` — every executor run
-- AR's `Reaper` — a background thread, on a timer
-- `clear_active_connections!` / `clear_all_connections!` / `flush_idle_connections!`
+| Caller | When |
+|---|---|
+| `ActiveRecord::QueryCache.run` | every executor run — start of every request and job |
+| `ConnectionPool::ExecutorHooks.complete` | every executor completion; calls `release_connection` in-block |
+| `Base.clear_query_caches_for_current_thread` | after writes |
+| `ActiveRecord.all_open_transactions` | transaction-callback bookkeeping |
+| `clear_active_connections!` / `clear_all_connections!` / `flush_idle_connections!` | boot and on demand |
+
+**Not** AR's `ConnectionPool::Reaper`: it keeps a private `WeakRef` list per reaping
+frequency and never touches this registry. (An earlier draft of this doc claimed it
+did.)
 
 **Reads can write, too.** `get_pool_config`, `pool_configs`, and
 `each_pool_config(role)` reach the outer Hash through `[]`, whose default proc
@@ -101,10 +112,10 @@ Cold creates are already serialized **against each other**, two different ways:
 Neither helps, for two independent reasons:
 
 1. **They exclude writers from writers; the race is writer-versus-reader.** No
-   Apartment lock is held by Rails' executor hook, query cache, or reaper thread.
+   Apartment lock is held by Rails' executor hooks or query cache.
 2. **They do not cover the discard half.** `Apartment.deregister_shard` →
-   `remove_connection_pool` runs from the reaper's timer thread, from
-   `AbstractAdapter#drop`, and from `Migrator` eviction, outside both locks.
+   `remove_connection_pool` runs from Apartment's own `PoolReaper` timer thread,
+   from `AbstractAdapter#drop`, and from `Migrator` eviction, outside both locks.
 
 The registry is the only place that sees all of it, which is why the fix belongs
 there rather than at Apartment's call sites.
@@ -121,12 +132,31 @@ additionally **collects its pool_configs under the lock and yields outside it**.
 wraps `set_pool_manager`, whose `||=` on a `Concurrent::Map` is atomic per
 operation but a read-then-write across two — so two threads establishing the first
 connection for one connection name can each build a `PoolManager`, and the
-discarded one takes any shard already registered in it with it.
+discarded one takes any shard already registered in it with it. Redeclared
+`private` to match upstream: a prepended method is public by default, and leaving it
+so would widen a Rails internal into public API from a patch whose only job is a
+lock.
 
-**Shape assertion before prepending.** Both wrappers work by `super`, so a method
-upstream renamed or removed would turn the wrapper into a `NoMethodError` at call
-time — worse than the race. `serialize!` checks the expected method set first and
-warns and skips on drift; CI's Rails-main canary surfaces it before a release.
+**Shape check before prepending — fails closed.** Both wrappers work by `super`, so
+a guarded method that exists nowhere in the MRO would be a `NoMethodError` at first
+call. `serialize!` therefore **raises `Apartment::ConfigurationError`** at
+`activate!` naming the missing methods and the Rails version. Warning and continuing
+unpatched was the first design and is wrong: it reinstates a race that fails a
+fraction of cold tenant switches under load — much harder to attribute than a boot
+failure — and it would be effectively silent, since the Rails-main CI canary is
+`continue-on-error`.
+
+Resolution uses `method_defined?` / `private_method_defined?`, **not**
+`instance_methods(false)`. `super` dispatches through the whole ancestor chain, so a
+method upstream merely *moved* to a superclass or an included module still works
+through the wrapper. Testing for a direct definition would refuse a benign refactor
+— and refusing is now fatal. (The original `instance_methods(false)` check had
+exactly that bug.)
+
+Separately, `serialize!` **warns** when upstream has *grown* a public accessor the
+patch does not guard: the patch still works, but that method reaches the registry
+unsynchronized. A warning rather than a raise, because a hole beats a boot failure —
+and the unit spec pins the exact method set, so CI fails first.
 
 ## Design decisions
 
@@ -137,9 +167,47 @@ pool's manager is built during Rails' database initializer, before `activate!`.
 Per-instance locking would buy negligible parallelism in exchange for lazy-init
 state on those objects, with a bootstrap race of its own.
 
-**`Monitor`, not `Mutex`.** `each_pool_config` re-enters guarded accessors; a
-non-reentrant lock would self-deadlock. Measured cost is the same (~90ns
-uncontended, both).
+**`Monitor`, not `Mutex` — defensive, not required.** No guarded method re-enters
+another today: each accessor's `super` reads the Hash directly, `each_pool_config`
+yields outside the lock, and `establish_connection`'s several acquisitions are
+sequential rather than nested. A `Mutex` would work. Reentrance costs nothing
+measurable (~90ns either way) and buys tolerance for an upstream implementation in
+which one accessor dispatches through another. (An earlier draft claimed the
+reentrancy already existed; it does not.)
+
+**A leaf lock — this is the whole deadlock argument.** Every guarded body is an
+in-memory Hash operation that acquires no other lock, performs no IO, and yields to
+no caller. One lock ordering exists and Apartment's cold-create path fixes it:
+`Concurrent::Map`'s write lock (or the capped path's create mutex) is taken first,
+and `SYNC` underneath it via `establish_connection`. Nothing acquires `SYNC` and
+then reaches for either. Upstream cooperates on both mutation paths:
+`remove_pool_config` *returns* the `pool_config` and
+`disconnect_pool_from_pool_manager` calls `disconnect!` on it only after the guarded
+call returned; `establish_connection` builds the pool (`PoolConfig#pool`, under
+`PoolConfig`'s own `MonitorMixin`) only after `set_pool_config` returned. If a future
+change nests anything under `SYNC`, that invariant is what breaks.
+
+Scope note: this says nothing about Apartment's *own* create lock, which **is** held
+across IO. `fetch_or_create`'s `Concurrent::Map` write lock (or the capped path's
+create mutex) spans the whole create block, and `establish_connection` inside it can
+`disconnect!` a stale registration. That predates this patch and does not involve
+`SYNC`; the claim here is only that the registry monitor never is.
+
+**Contended cost is measured, not assumed.** 500 tenant pools, 8 threads calling
+`get_pool_config` in a loop, plus one thread continuously snapshotting the whole
+registry — 7,290 full 500-entry passes during the run, against roughly two per
+request in reality:
+
+| | p50 | p99 | max |
+|---|---|---|---|
+| Unpatched | 70ns | 70ns | 120ns |
+| Patched | 150ns | 165ns | 260ns |
+
+So the tail stays bounded in nanoseconds under deliberately unrealistic snapshot
+pressure; no convoy effect appears, which is expected — the GVL already serializes
+these Hash operations, so a preempted lock holder is no worse than a preempted
+`Hash#[]`. The snapshotter itself pays: 18,597 passes unpatched vs 7,290 patched.
+Irrelevant at two passes per request.
 
 **Snapshot-then-yield, not lock-across-yield.** Rails' iterating callers
 `release_connection` and `disconnect!` inside the block. Holding the registry lock
@@ -148,7 +216,16 @@ Snapshotting mirrors what `Concurrent::Map#each_pair` already does one level up
 (it iterates a dup), so the two levels of the registry now have matching semantics.
 Two visible consequences, both deliberate: a shard registered mid-iteration is not
 yielded, and the return value is the snapshot rather than the inner Hash upstream
-returns (no caller uses it).
+returns (no caller uses it). A third is avoided: the block-less form returns
+`enum_for(__method__, role)`, so the snapshot is taken when enumeration *begins*
+rather than when the Enumerator is built — upstream's block-less form is lazy too.
+Nothing in Rails 7.2–8.1 uses it.
+
+One asymmetry worth recording: a `pool_config` removed after the snapshot is still
+yielded, where a live Hash walk might have skipped it. Removal means `disconnect!`,
+not destruction, and every iterating caller already has to tolerate acting on a pool
+another thread just disconnected, so this widens an existing window rather than
+opening a new one.
 
 **Collected via `super`, not by reading the ivar.** The snapshot is exactly what
 upstream would have yielded on this Rails version, so the patch carries no copy of
@@ -182,17 +259,67 @@ writes can corrupt rather than raise, and `Concurrent::Map`'s lock-free backend
 would not serialize Apartment's creates either — so the patch matters more there,
 not less. Untested: the CI matrix is MRI-only.
 
+**`PoolConfig::INSTANCES` is not the same bug.** Rails registers every `PoolConfig`
+in a process-wide `ObjectSpace::WeakMap` at `initialize`, unsynchronized, and
+`discard_pools!` / `disconnect_all!` iterate it — the same "Rails writes at boot,
+Apartment writes forever" shape. Probed: `WeakMap` does **not** raise when a key is
+added during `each_key`, so MRI's iteration guard does not apply. Nothing further to
+do. (`PoolConfig` itself is `MonitorMixin`-guarded on `pool` / `disconnect!` /
+`discard_pool!`.)
+
+**`ActiveRecord::Base.configurations` is untouched.** The routing patch builds a
+`HashConfig` and hands it to `establish_connection`; `DatabaseConfigurations#resolve`
+returns a `DatabaseConfig` as-is, so nothing is appended to the global collection at
+runtime. Verified, not assumed.
+
+**Per-model schema memoization is a real sibling, out of scope here.**
+`ModelSchema#load_schema!` memoizes `@columns_hash` / `@attribute_types` per model
+class, process-wide, from whichever tenant's connection touches the model first —
+the same failure *class* as the `Model.sequence_name` memoization that
+[`PostgresqlSequenceName`](../../lib/apartment/patches/postgresql_sequence_name.rb)
+exists for (and that v3 lost in #356). It is monitor-synchronized upstream, so it
+does not crash; the exposure is a drifted or un-migrated tenant poisoning the column
+set for every tenant. Not a registry race and not fixed here — tracked separately.
+
+**Per-pool schema cache is per-pool.** `SchemaReflection` / `SchemaCache` use plain
+Hashes with no lock, but each tenant pool has its own `PoolConfig` and therefore its
+own reflection, so the concurrency is *within* one tenant's pool — identical to
+Rails' own single-pool exposure, not something pool-per-tenant introduces.
+
+## Follow-ups
+
+**Upstream is the long-term home.** The bug is not Apartment-specific: any gem or
+app that calls `establish_connection` after boot from more than one thread —
+horizontal-sharding tooling included — hits the same unsynchronized Hash. Until a
+Rails fix lands (synchronize `PoolManager` internally, snapshot before yielding),
+this patch is a maintained fork of two Rails internals whose failure mode on drift
+is a hard boot error. Filing that issue/PR is not yet done.
+
 ## Testing
 
-Both spec files were **verified non-vacuous by probe**: with `apply!` neutered so
-the suite runs against pristine ActiveRecord, 13 of 19 unit examples and both
-integration examples fail. Two artifacts of the harness were found this way and are
-worth knowing about:
+Both spec files were **verified non-vacuous by two probes**, not one:
+
+1. **Against pristine ActiveRecord** (`apply!` neutered): 13 of 22 unit examples and
+   both integration examples fail.
+2. **Against the plausible wrong implementation** — `each_pool_config` holding the
+   monitor across the caller's block instead of snapshotting: 5 unit examples fail.
+   This probe is why the concurrency examples assert that the mutating thread
+   finished *while the reader was still parked* (`join` bounded, result checked)
+   rather than merely that it eventually succeeded without error. The weaker
+   assertion passed the lock-across-yield implementation on the strength of a
+   five-second stall.
+
+Three artifacts of the harness were found this way and are worth knowing about:
 
 - **A timing-based stress test passed against unpatched ActiveRecord.** 500 inserts
   finish inside one scheduler slice, so the writer and reader never overlapped. Both
   concurrency examples were rewritten as deterministic handshakes (the reader parks
   inside its iteration block; the writer runs while it sits there).
+- **Ignoring a `Thread#join` return value re-hides what the handshake exposed.** A
+  thread that was blocked for the full timeout, then released, then succeeded, is
+  indistinguishable from one that was never blocked — unless the join is asserted.
+  Every worker thread in both specs is now bounded-joined and its `#value` checked,
+  so an exception inside it fails the example instead of vanishing.
 - **The integration spec must opt out of the per-example `ConnectionHandler` swap**
   (`:stress`). That swap assigns `ActiveRecord::Base.connection_handler`, which
   lives in thread-isolated state, so threads the example spawns fall back to the
