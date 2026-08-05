@@ -6,11 +6,13 @@ require 'apartment/migrator'
 
 # The user-visible half of the ConnectionRegistry patch: cold tenant pool
 # creation while another thread is iterating ActiveRecord's pools. Rails does
-# that iteration at the end of every request or job
-# (ConnectionPool::ExecutorHooks.complete), on every executor run
-# (ActiveRecord::QueryCache), and on its own reaper timer — so in a threaded
-# server it overlaps cold creates routinely, and parallel migration is simply
-# the densest producer of them.
+# that iteration through ConnectionHandler#each_connection_pool at the start of
+# every request or job (ActiveRecord::QueryCache.run), at the end of every one
+# (ConnectionPool::ExecutorHooks.complete), and after writes
+# (Base.clear_query_caches_for_current_thread) — so in a threaded server it
+# overlaps cold creates routinely, and parallel migration is simply the densest
+# producer of them. AR's own ConnectionPool::Reaper is NOT one of those readers:
+# it reaps connections from a private WeakRef list and never sees this registry.
 #
 # Both examples pin the overlap deterministically: an iterator thread parks
 # inside the iteration block and the tenant work happens while it sits there.
