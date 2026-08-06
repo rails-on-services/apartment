@@ -49,6 +49,22 @@ Reading `klass.table_name` first lets Rails compute the conventional name — ho
 
 **Prefix stripping:** Uses `sub(/\A[^.]+\./, '')` instead of `split('.').last`, stripping at most one leading `schema.` or `database.` segment. This preserves names that contain dots for other reasons (unlikely in practice, but defensive) and makes re-qualification idempotent.
 
+#### Qualification proves its own outcome
+
+Every silent cross-tenant read this gem has shipped had one signature: qualification ran, produced an unqualified name, marked the model processed, and raised nothing. The model then served the tenant's rows indefinitely. `verify_pinned_qualification!` closes that class of bug by checking the post-condition — the table name actually carries the qualifier — and raising `ConfigurationError` when it does not. A boot failure instead of wrong data.
+
+It also guards the private-API risk: `compute_table_name` is not public Rails, and a future change to the naming internals that silently stopped composing the way this design expects would surface as a boot error on the first affected app rather than as cross-tenant reads.
+
+Three scoping decisions, each load-bearing:
+
+- **The no-op branch is not verified.** A subclass sharing an already-pinned base's table is correct by construction, and if its base has not been qualified yet — registry order puts children first when a child is pinned before its parent — asserting on it would fail a boot for a model about to become correct.
+- **Descendants that declare their own table are excluded.** An ancestor's qualification was never meant to reach them, and `warn_unregistered_pinned_subclasses` already reports that shape. Raising there would break the tenant-scoped subclass the gem deliberately tolerates.
+- **The descendant set is computed independently of the resync set.** The resync pass is deliberately limited to descendants holding a memo, because only those need resetting. Verification cannot inherit that limit: a descendant with no memo computes its name lazily and can be just as wrong. An early version reused the resync set and missed exactly that case — the engine-namespaced descendant, which is the shape most likely to hit it.
+
+An abstract base has no table of its own, so it is proven through the descendants its prefix was meant to reach.
+
+**Upgrade consequence.** The engine-namespaced descendant limitation below now raises at boot rather than silently reading the tenant's tables. That is the intended trade, and it means an app with that topology stops booting until it pins the descendant explicitly.
+
 #### Descendant table-name memos must be resynced
 
 Rails memoizes `@table_name` per class on first read and **never invalidates a descendant's copy** when an ancestor's name or prefix changes. Qualification mutates one class; every descendant that already read its own `table_name` keeps the pre-qualification value.

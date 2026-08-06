@@ -569,6 +569,29 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
+  # The verification must not fire on the branch that deliberately mutates
+  # nothing. A subclass sharing an already-pinned base's table is a no-op, and
+  # if its base has not been qualified yet (registry order), asserting on it
+  # would fail a boot for a model that is about to become correct.
+  describe '#qualify_pinned_table_name verification scope' do
+    it 'does not verify a subclass that shares the base table' do
+      allow(adapter).to(receive(:pinned_table_qualifier).and_return('public'))
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'order_parents'
+        include Apartment::Model
+      end
+      stub_const('OrderParent', parent)
+      parent.pin_tenant
+      child = Class.new(parent) { include Apartment::Model }
+      stub_const('OrderChild', child)
+      child.pin_tenant
+
+      # Parent deliberately NOT qualified yet — child is processed first.
+      expect { adapter.qualify_pinned_table_name(child) }.not_to(raise_error)
+      expect(child.table_name).to(eq('order_parents'))
+    end
+  end
+
   describe '#process_pinned_models' do
     context 'when shared_pinned_connection? is false (separate pool)' do
       it 'calls establish_connection with pinned_model_config' do

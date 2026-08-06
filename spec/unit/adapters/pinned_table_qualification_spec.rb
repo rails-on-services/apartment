@@ -143,6 +143,62 @@ RSpec.describe('pinned table name qualification') do
       expect(child.table_name).to(eq('declared_table'))
     end
 
+    # Fail closed. Every silent cross-tenant read this gem has shipped had the
+    # same signature: qualification ran, produced an unqualified name, and
+    # marked the model processed. Proving the outcome converts that whole class
+    # of bug into a boot error instead of wrong data.
+    #
+    # This shape is the live example — `full_table_name_prefix` prefers the
+    # module parent's prefix, so an abstract base's broadcast never reaches an
+    # engine-namespaced descendant.
+    it 'raises when a resynced descendant is left unqualified' do
+      parent = model('VerifyBase') { self.abstract_class = true }
+      mod = Module.new { def self.table_name_prefix = 'engine_' }
+      stub_const('VerifyEngine', mod)
+      child = Class.new(parent)
+      stub_const('VerifyEngine::Thing', child)
+      child.table_name
+
+      expect { adapter.qualify_pinned_table_name(parent) }.to(
+        raise_error(Apartment::ConfigurationError, /VerifyEngine::Thing.*engine_things/m)
+      )
+    end
+
+    # The natural shape: nothing read the descendant first, so it holds no memo
+    # and is not part of the resync set. Verifying only resynced descendants
+    # would miss it entirely — a descendant with no memo inherits its name
+    # lazily and can be just as wrong.
+    it 'raises for an unqualified descendant that was never read' do
+      parent = model('VerifyLazyBase') { self.abstract_class = true }
+      mod = Module.new { def self.table_name_prefix = 'lazy_engine_' }
+      stub_const('VerifyLazyEngine', mod)
+      stub_const('VerifyLazyEngine::Thing', Class.new(parent))
+
+      expect { adapter.qualify_pinned_table_name(parent) }.to(
+        raise_error(Apartment::ConfigurationError, /lazy_engine_things/)
+      )
+    end
+
+    it 'does not raise for a descendant that declares its own table' do
+      parent = model('VerifyDeclaredBase') { self.abstract_class = true }
+      child = Class.new(parent) { self.table_name = 'declared_elsewhere' }
+      stub_const('VerifyDeclaredChild', child)
+
+      expect { adapter.qualify_pinned_table_name(parent) }.not_to(raise_error)
+    end
+
+    it 'raises when the model itself is left unqualified' do
+      klass = model('VerifyStubborn')
+      # Simulate qualification failing to take effect — the shape every past
+      # bug had, and what a future Rails change to the naming internals would
+      # look like.
+      allow(klass).to(receive(:table_name).and_return('verify_stubborns'))
+
+      expect { adapter.qualify_pinned_table_name(klass) }.to(
+        raise_error(Apartment::ConfigurationError, /verify_stubborns/)
+      )
+    end
+
     it 'marks the model processed' do
       klass = model('QualProcessed')
 

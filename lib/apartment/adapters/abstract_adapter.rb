@@ -180,8 +180,21 @@ module Apartment
         # Captured before the mutation below: afterwards there is no way to
         # tell a descendant's stale memo from a table it declared itself.
         inheriting = klass.apartment_descendants_inheriting_table_name
+        # Evaluated before the mutation, which is what inherits_pinned_table?
+        # inspects.
+        mutates = pinned_qualification_mutates?(klass)
         apply_pinned_qualification(klass)
         klass.apartment_resync_descendant_table_names!(inheriting)
+        verify_pinned_qualification!(klass) if mutates
+      end
+
+      # Whether qualifying +klass+ will actually change its naming. False for
+      # the branch that deliberately mutates nothing, which must not be
+      # verified: a subclass sharing an already-pinned base's table is correct
+      # by construction, and if its base has not been qualified yet (registry
+      # order) it is about to become so.
+      def pinned_qualification_mutates?(klass)
+        klass.abstract_class? || !inherits_pinned_table?(klass)
       end
 
       def apply_pinned_qualification(klass)
@@ -194,6 +207,59 @@ module Apartment
         original = klass.table_name
         klass.table_name = "#{pinned_table_qualifier}.#{original.sub(/\A[^.]+\./, '')}"
         klass.apartment_mark_processed!(path, (original if path == :explicit))
+      end
+
+      # Prove the qualification took effect rather than assuming it did.
+      #
+      # Every silent cross-tenant read this gem has shipped had one signature:
+      # qualification ran, produced an unqualified name, and marked the model
+      # processed. Nothing raised, and the model quietly served the tenant's
+      # rows. A post-condition converts that entire class of bug — including
+      # ones a future Rails change to the naming internals would introduce —
+      # into a boot error.
+      #
+      # An abstract base has no table of its own, so it is proven through the
+      # descendants its prefix was meant to reach; a `nil` name is skipped.
+      #
+      # The descendant set is computed here rather than reused from the resync
+      # pass: that one is deliberately limited to descendants holding a memo,
+      # while a descendant with no memo inherits its name lazily and can be
+      # just as wrong. Descendants that declare their own table are excluded —
+      # an ancestor's qualification was never meant to reach them, and
+      # warn_unregistered_pinned_subclasses already reports that shape.
+      def verify_pinned_qualification!(klass)
+        prefix = "#{pinned_table_qualifier}."
+
+        [klass, *inheriting_descendants(klass)].each do |model|
+          name = begin
+            model.table_name
+          rescue StandardError
+            next
+          end
+          next if name.nil? || name.start_with?(prefix)
+
+          raise(Apartment::ConfigurationError, unqualified_pinned_message(model, name, prefix))
+        end
+      end
+
+      def inheriting_descendants(klass)
+        return [] unless klass.respond_to?(:descendants)
+
+        klass.descendants.select do |sub|
+          sub.respond_to?(:apartment_inherited_table_name) &&
+            sub.table_name == sub.apartment_inherited_table_name
+        rescue StandardError
+          false
+        end
+      end
+
+      def unqualified_pinned_message(model, name, prefix)
+        "[Apartment] #{model.name || model.inspect} is pinned but its table name " \
+          "(#{name.inspect}) is not qualified with #{prefix.inspect}, so it would read the " \
+          'current tenant instead of the default tenant. This usually means Rails composed ' \
+          "the name from something the qualifier cannot reach — a module parent's " \
+          'table_name_prefix, or a base class outside the pinned hierarchy. Call pin_tenant ' \
+          'on the model directly, or set self.table_name to an already-qualified name.'
       end
 
       # An abstract class has no table of its own — table_name is nil — so
