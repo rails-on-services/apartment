@@ -6,7 +6,7 @@ Draft
 
 ## Problem
 
-When `pin_tenant` is called during class body evaluation and `Apartment.activated?` is true, `process_pinned_model` runs immediately. If `self.table_name = 'custom'` appears later in the class body, it hasn't been evaluated yet. The gem sees no explicit table name, takes the convention path (`table_name_prefix` + `reset_table_name`), qualifies the name incorrectly (e.g., `public.engagement_reports`), and then line 23's `self.table_name = 'reports'` overwrites the qualification silently. The model queries the wrong schema.
+When `pin_tenant` is called during class body evaluation and `Apartment.activated?` is true, `process_pinned_model` runs immediately. If `self.table_name = 'custom'` appears later in the class body, it hasn't been evaluated yet. The gem qualifies the conventional name (e.g., `public.engagement_reports`), and then line 23's `self.table_name = 'reports'` overwrites the qualification silently. The model queries the wrong schema.
 
 ```ruby
 class EngagementReport < ApplicationRecord
@@ -145,7 +145,7 @@ Mirror the exact CampusESP failure:
 
 ### Negative Test
 
-- Model with `pin_tenant` and NO explicit `self.table_name` — convention path still works correctly (table_name_prefix + reset_table_name produces `public.model_names`)
+- Model with `pin_tenant` and NO explicit `self.table_name` — still qualified correctly (produces `public.model_names`)
 
 ## Documentation
 

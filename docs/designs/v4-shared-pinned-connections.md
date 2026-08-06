@@ -26,56 +26,98 @@ Two new methods on `AbstractAdapter`:
 
 **`shared_pinned_connection?`** — single decision point combining engine capability and config override. Returns `false` by default (safe fallback). PG schema adapter and MySQL adapters override to return `true` unless `Apartment.config.force_separate_pinned_pool` is set. Consumers (`process_pinned_model`, `ConnectionHandling`) call this one method; no scattered `&&` checks.
 
-**`qualify_pinned_table_name(klass)`** — abstract; required when `shared_pinned_connection?` returns `true`. Qualifies the model's table name so it targets the default tenant's tables from any tenant connection. Raises `NotImplementedError` on the base class as a guard. Subclasses provide the qualifier string (schema name for PG, database name for MySQL).
+**`pinned_table_qualifier`** — abstract; required when `shared_pinned_connection?` returns `true`. Returns the namespace that reaches the default tenant's tables from any tenant connection: `default_tenant` for PG schema (e.g. `"public"`), `base_config['database']` for MySQL (e.g. `"myapp_production"`). Raises `NotImplementedError` on the base class as a guard. Note: `base_config` already returns string keys (via `connection_config.transform_keys(&:to_s)`), so `base_config['database']` is safe regardless of whether the original config used symbol keys.
 
-#### Table Name Qualification Strategy (Hybrid)
+**`qualify_pinned_table_name(klass)`** — concrete on `AbstractAdapter`; qualifies the model's table name using that qualifier. Subclasses supply only the qualifier.
 
-Qualification uses a hybrid approach that respects Rails' `table_name_prefix` / `table_name_suffix` machinery where possible, falling back to direct assignment for models with explicit `self.table_name`:
+#### Table Name Qualification Strategy (Direct Assignment)
+
+Qualification always assigns `table_name` directly:
 
 ```ruby
 def qualify_pinned_table_name(klass)
-  if explicit_table_name?(klass)
-    # Model has explicit self.table_name = 'custom' — qualify directly.
-    # Strips at most one leading segment (schema or database prefix).
-    table = klass.table_name.sub(/\A[^.]+\./, '')
-    klass.table_name = "#{qualifier}.#{table}"
-  else
-    # Convention naming — set table_name_prefix, let Rails compose via
-    # compute_table_name. Preserves nested-class `contained` segments
-    # and table_name_suffix. reset_table_name recomputes @table_name.
-    klass.table_name_prefix = "#{qualifier}."
-    klass.reset_table_name
-  end
+  # Captured before the assignment, which would otherwise make every
+  # model look explicitly named.
+  path = klass.apartment_explicit_table_name? ? :explicit : :computed
+  original = klass.table_name
+  klass.table_name = "#{pinned_table_qualifier}.#{original.sub(/\A[^.]+\./, '')}"
+  klass.apartment_mark_processed!(path, (original if path == :explicit))
 end
 ```
 
-Each adapter subclass implements this with its own `qualifier`: `default_tenant` for PG schema (e.g. `"public"`), `base_config['database']` for MySQL (e.g. `"myapp_production"`). Note: `base_config` already returns string keys (via `connection_config.transform_keys(&:to_s)`), so `base_config['database']` is safe regardless of whether the original config used symbol keys.
+Reading `klass.table_name` first lets Rails compute the conventional name — honouring any `table_name_prefix`, `table_name_suffix`, or nested-class `contained` segment the app declared — and we qualify the finished string.
 
-**Detecting explicit table names:** `@table_name` is set both by `self.table_name = 'custom'` (explicit) and by the first call to `table_name` (lazy convention computation). To distinguish these, `process_pinned_model` must run before any `table_name` access on the class. This is guaranteed by the boot order: `Tenant.init` (called from `config.after_initialize` in the Railtie) processes all registered pinned models before the app serves requests. For models autoloaded after boot (Zeitwerk), `pin_tenant` calls `process_pinned_model` immediately — before any query triggers `table_name`. The `explicit_table_name?` helper checks `klass.instance_variable_defined?(:@table_name)` *and* compares the cached value against what `compute_table_name` would produce. If they differ, the model has an explicit assignment:
+**Prefix stripping:** Uses `sub(/\A[^.]+\./, '')` instead of `split('.').last`, stripping at most one leading `schema.` or `database.` segment. This preserves names that contain dots for other reasons (unlikely in practice, but defensive) and makes re-qualification idempotent.
 
-```ruby
-def explicit_table_name?(klass)
-  return false unless klass.instance_variable_defined?(:@table_name)
+#### Descendant table-name memos must be resynced
 
-  # Compare cached @table_name against what convention naming would produce.
-  # If they differ, the model has an explicit self.table_name = assignment.
-  cached = klass.instance_variable_get(:@table_name)
-  computed = klass.send(:compute_table_name)
-  cached != computed
-end
-```
+Rails memoizes `@table_name` per class on first read and **never invalidates a descendant's copy** when an ancestor's name or prefix changes. Qualification mutates one class; every descendant that already read its own `table_name` keeps the pre-qualification value.
 
-This is more robust than checking `@table_name` alone, which can be set by lazy convention computation. The `compute_table_name` call is cheap (string assembly, no IO).
+That is not hypothetical. Anything touching a descendant's `table_name` before `Tenant.init` — an initializer, an eager-loading gem, a route constraint, a `descendants` sweep — freezes the unqualified name, and the "pinned" model then resolves to the **tenant's** table for the life of the process. It also produced a *false* warning: the stale memo no longer matches `compute_table_name`, so `apartment_explicit_table_name?` read `true` and `warn_unregistered_pinned_subclasses` reported that the model "declares its own table", which it does not.
 
-**Edge case:** If a model sets `self.table_name` to the exact string convention would compute (e.g., `self.table_name = 'delayed_jobs'` on a class named `DelayedJob`), `cached == computed` and the convention path runs. The result is still a correctly qualified name; the only difference is mechanism (prefix + reset vs direct assignment). This is acceptable — the convention path is the superset.
+So `qualify_pinned_table_name` and `apartment_restore!` both bracket their mutation:
 
-**Why hybrid:** Rails' `table_name_prefix` is a `class_attribute` that feeds into `compute_table_name` (`full_table_name_prefix + contained + undecorated_table_name + full_table_name_suffix`). Using it means pinned models with `table_name_suffix`, nested-class naming, or module-level prefixes get composed correctly by Rails' own assembly. But `reset_table_name` overwrites `@table_name`, which destroys explicit `self.table_name = 'custom'` assignments. The `explicit_table_name?` check detects this case and falls back to direct assignment.
+1. `apartment_descendants_inheriting_table_name` — **before** mutating, collect descendants that have memoized a name they did not declare. The ordering is load-bearing: afterwards there is no way to distinguish a stale memo from a genuine declaration, because the ancestor's change has moved what convention computes.
+2. `apartment_resync_descendant_table_names!` — after mutating, `reset_table_name` each of them. That routes through Rails' own `table_name=` setter, so the derived `@quoted_table_name` and `@arel_table` caches are cleared with it.
 
-**Explicit-path prefix stripping:** Uses `sub(/\A[^.]+\./, '')` instead of `split('.').last`, stripping at most one leading `schema.` or `database.` segment. This preserves names that contain dots for other reasons (unlikely in practice, but defensive).
+Descendants with no memo are deliberately omitted — they compute lazily and pick the new value up unaided.
 
-**STI:** Subclasses use `base_class.table_name`. Once the base class is qualified, STI children inherit the qualified name automatically. `table_name_prefix` is a `class_attribute` that also inherits to subclasses, so the convention path works for STI without extra handling. `apartment_pinned?` already walks the superclass chain (model.rb:28-30), so STI children are recognized as pinned without their own `pin_tenant` call.
+**What counts as "inherited" is `apartment_inherited_table_name`, not `compute_table_name`.** The two disagree for a class whose superclass is abstract: `reset_table_name` prefers `superclass.table_name`, while `compute_table_name` treats such a class as its own `base_class` and builds from its own `model_name`. A concrete class under an abstract intermediate that carries a table — an abstract class sandwiched beneath a concrete pinned parent — therefore *inherits* `foos` but *computes* `gkids`. Keying on `compute_table_name` misread that inherited name as an explicit declaration, skipped the resync, and left the model reading the tenant's table. The predicate mirrors `reset_table_name`'s own branching instead.
 
-**`class_attribute` inheritance:** Setting `table_name_prefix` on a pinned class propagates to subclasses. This is correct for STI, where all subclasses share the same physical table. Only STI subclasses of pinned bases are supported; don't subclass a pinned model with a tenant-scoped model that needs its own table — use composition instead.
+The collected set is sorted by ancestor depth so an intermediate is always reset before anything beneath it. `reset_table_name` on a class under an abstract parent reads `superclass.table_name` — the memo, not `base_class` — so a grandchild reset first would re-freeze its parent's stale value. ActiveSupport's `descendants` happens to return ancestors first today, but that ordering is undocumented; the sort makes the pass order-independent.
+
+**A descendant whose declared table differs from convention is left alone** — it is unaffected by an ancestor's qualification, and qualifying it is a separate decision requiring its own `pin_tenant`. A declaration that happens to *equal* what convention computes is indistinguishable from an inherited name (Rails retains no "explicitly set" flag), so it is treated as inherited and qualified along with the ancestor. That is the safe side of an unavoidable ambiguity: such a class descends from a pinned base, so it is a pinned model, and qualifying it targets the default tenant — whereas leaving it alone would resolve through `search_path` to the tenant's table. The cost is that this shape no longer trips `warn_unregistered_pinned_subclasses`, so a model intended as tenant-scoped is silently qualified rather than flagged; declaring a table that differs from convention, or pinning explicitly, keeps the signal.
+
+Both helpers rescue per descendant: Rails' naming machinery raises on shapes the gem does not control (an anonymous class has no `model_name`), and neither qualification nor teardown may fail on one bad descendant.
+
+**Abstract classes qualify by broadcast, not assignment.** An abstract class has no table of its own — `table_name` is `nil` — so there is nothing to assign, and interpolating it would raise. Pinning one is a supported pattern (an abstract `connects_to` base is pinned so Apartment does not build tenant pools for it; see the `connects_to` gotcha in the root `CLAUDE.md`).
+
+Its qualifier still has to reach the concrete descendants that inherit the pin, and those are **never qualified directly**: `pin_tenant` early-returns once any superclass is pinned (`apartment_pinned?` walks the chain), so a descendant is never registered and `process_pinned_models` never sees it. `qualify_pinned_table_name_prefix` therefore sets `table_name_prefix` — a `class_attribute`, so it broadcasts down the inheritance chain and each descendant composes it in its own `compute_table_name`. Any prefix the app set is preserved rather than overwritten (`myapp_` becomes `<qualifier>.myapp_`). Teardown restores the original prefix (`:prefix` path).
+
+This is the one place the prefix mechanism remains correct, and the distinction is the whole point: here it is a **broadcast to other classes**, not an attempt to qualify the class's own name. Removing it wholesale regressed exactly the silent-tenant-read this design exists to prevent — a pinned `GlobalRecord` abstract base left `GlobalSetting` resolving to `global_settings` instead of `public.global_settings`.
+
+#### Subclasses of a concrete pinned model
+
+A subclass can mean two opposite things, and the gem originally could not tell them apart — both inherit `apartment_pinned? == true` through the superclass walk, and neither was registered, because `pin_tenant` early-returned once *any* superclass was pinned:
+
+| Shape | Intent | Behaviour before |
+|---|---|---|
+| **A** STI child sharing the parent's table | global | correct — resolves through `base_class.table_name` |
+| **B** own table, calls `pin_tenant` | global | **`pin_tenant` silently no-opped**; unqualified |
+| **C** own table, never pinned | tenant-scoped | unqualified |
+
+Measured, the defect **inverts by adapter path**, so no configuration was correct for both:
+
+| | B (wants global) | C (wants tenant) |
+|---|---|---|
+| Shared connection (PG schema, MySQL) | reads tenant ❌ | reads tenant ✅ |
+| Separate pool (`force_separate_pinned_pool`, PG database-per-tenant, SQLite) | reads default ✅ | reads default ❌ |
+
+**Resolution.** `pin_tenant` is now idempotent *per class* rather than per hierarchy, so B registers and qualifies when declared. A is skipped at qualification time by `inherits_pinned_table?` — a subclass with no table of its own reaches its table through `base_class.table_name`, which the base's qualification already covers; assigning would freeze a copy onto the child and desynchronise the two on teardown. C is untouched.
+
+The justification does **not** rest on B being a good idea. B is an anti-pattern whose one real appearance is transitional — migrating an STI child off a pinned parent's table — and the correct steady-state shapes are a pinned abstract base or a shared concern. But an API call that is accepted and silently does nothing is wrong regardless: it must either work or be absent.
+
+`inherits_pinned_table?` is a discriminator, and discriminators in this method have a poor record (see above). It differs in kind: it asks whether the base class is **in the pin registry**, a fact the gem owns, rather than inferring intent from Rails' naming internals.
+
+**Residual gap, warned not raised.** A subclass in shape C — or in shape B without the `pin_tenant` call — is still unqualified. `warn_unregistered_pinned_subclasses` walks `descendants` after processing and warns. Detection is complete under eager loading (production boot, CI) and partial under Zeitwerk lazy loading, which is tolerable for a warning and would not be for a raise. The transitional window is exactly when this bites, and a silent failure there reads as a botched backfill.
+
+**Why not `table_name_prefix` (superseded hybrid):** The original design set `table_name_prefix = "#{qualifier}."` and called `reset_table_name` for convention-named models, falling back to direct assignment only for explicit `self.table_name`. That was unsound. `compute_table_name` consults `full_table_name_prefix` **only on its `base_class?` branch**; every other route ignores the prefix, and Rails raises nothing when it does. Three shipped failure modes, all silent — the model kept resolving through `search_path` to the *tenant's* table:
+
+| Model shape | Produced | Should have been |
+|---|---|---|
+| Not its own `base_class` (`compute_table_name` returns `base_class.table_name` verbatim) | `versions` | `public.versions` |
+| Module parent defines `table_name_prefix` (`full_table_name_prefix` prefers the parent's) | `billing_invoices` | `public.billing_invoices` |
+| Model sets its own `table_name_prefix` (overwritten, so the app's prefix is dropped) | `public.ledgers` | `public.myapp_ledgers` |
+
+The third is worse than a no-op: it points the model at a *different* table rather than an unqualified one.
+
+The trigger for the first row is worth stating precisely, because the original design called it a benign edge case ("the convention path is the superset"): `apartment_explicit_table_name?` compares `@table_name` against `compute_table_name`, and for a subclass `compute_table_name` *is* `base_class.table_name`. So the very common `self.table_name = 'versions'` on a subclass of a model whose table is `versions` reads as "identical to convention" and routes into the path that cannot qualify it. The predicate was answering a restore question and being used to answer a qualification question — see below.
+
+**Detecting explicit table names (restore only):** `@table_name` is set both by `self.table_name = 'custom'` (explicit) and by the first call to `table_name` (lazy convention computation), so `apartment_explicit_table_name?` compares the cached value against `compute_table_name` rather than merely checking that the ivar exists. It is now used solely to choose a **restore** strategy, where the comparison is exactly the right question: if convention reproduces the current name, qualification can be undone by discarding the override and recomputing (`:computed`); if it does not, the name must be saved and restored verbatim (`:explicit`). The `compute_table_name` call is cheap (string assembly, no IO), and it remains a private Rails API covered by the Rails-main canary in CI.
+
+This also removes the ordering constraint the hybrid carried: qualification no longer depends on `process_pinned_model` running before any `table_name` access, because a memoized conventional name is exactly what we want to read.
+
+**STI:** `apartment_pinned?` walks the superclass chain (model.rb:28-30), so STI children are recognized as pinned without their own `pin_tenant` call. A child that is itself pinned is now qualified on its own merits rather than depending on its base class having been pinned and qualified first — which is what the first failure mode above amounted to. Because qualification no longer touches `table_name_prefix`, it no longer leaks to subclasses through `class_attribute` inheritance.
 
 **Limitation:** Qualification only affects AR-generated SQL via `table_name`. Raw SQL (`execute`, `find_by_sql`), Arel fragments that hardcode unqualified table names, and `FROM` clauses in custom scopes are not covered. This is the same limitation as v3's `excluded_models` and is documented rather than solved.
 
@@ -124,10 +166,10 @@ Implementation must also run `rg apartment_connection_established` to catch any 
 
 **Teardown in `clear_config`:** Beyond renaming the ivar, `clear_config` must restore pinned models to their pre-qualification state. The approach depends on which qualification path was used:
 
-- **Convention path:** Reset `klass.table_name_prefix = ""` and call `klass.reset_table_name`. This recomputes the unqualified name from Rails' convention machinery.
-- **Explicit path:** The original `self.table_name` value was overwritten by direct assignment. To restore it, `process_pinned_model` stores the pre-qualification name in `@apartment_original_table_name` before qualifying. Teardown restores it via `klass.table_name = klass.instance_variable_get(:@apartment_original_table_name)`.
+- **`:computed` path:** The pre-qualification name was reproducible by Rails' convention machinery, so teardown discards the override — `remove_instance_variable(:@table_name)` followed by `reset_table_name`. Dropping the ivar rather than assigning the old string back leaves the model responsive to later `table_name_prefix` and base-class changes, exactly as it was before pinning.
+- **`:explicit` path:** The original `self.table_name` value cannot be rebuilt by convention, so `qualify_pinned_table_name` stores it in `@apartment_original_table_name` before qualifying, and teardown assigns it back verbatim.
 
-`process_pinned_model` also sets `@apartment_qualification_path` (`:convention` or `:explicit`) so teardown knows which branch to take. Both ivars are cleaned up alongside `@apartment_pinned_processed`.
+`qualify_pinned_table_name` sets `@apartment_qualification_path` (`:computed` or `:explicit`) so teardown knows which branch to take. Both ivars are cleaned up alongside `@apartment_pinned_processed`. Teardown never touches `table_name_prefix`, because qualification never sets it.
 
 `clear_config` is primarily used in test suites (reconfigure between examples) and full app reload (Zeitwerk). In production, Apartment is configured once at boot; teardown is not expected.
 
@@ -194,7 +236,7 @@ Models (or abstract base classes) that use `connects_to` to point at a *differen
 - `AbstractAdapter#shared_pinned_connection?` returns `false` by default
 - `AbstractAdapter#process_pinned_model`: both code paths (shared vs separate), idempotency via `@apartment_pinned_processed`
 - Each concrete adapter: `shared_pinned_connection?` return value, `qualify_pinned_table_name` output (including already-qualified and custom table names)
-- `qualify_pinned_table_name` hybrid paths: convention-named model uses `table_name_prefix` + `reset_table_name`; explicit `self.table_name` model uses direct assignment
+- `qualify_pinned_table_name` produces a qualified `table_name` for every model shape — convention-named, explicit `self.table_name`, already-qualified (idempotent), non-`base_class?` subclass, module-parent `table_name_prefix`, and own `table_name_prefix`. Asserted on the resulting `table_name`, never on the mutators used to reach it: mocking `table_name_prefix=` / `reset_table_name` is what hid the three failure modes above.
 - `qualify_pinned_table_name` with `table_name_suffix` set (convention path preserves it)
 - `explicit_table_name?` helper: returns `true` when cached differs from computed, `false` when equal (convention path), `false` when `@table_name` not yet set
 - `ConnectionHandling#connection_pool`: pinned model routing for both shared and separate paths

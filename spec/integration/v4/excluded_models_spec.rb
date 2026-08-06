@@ -142,6 +142,155 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
+  # Regression: a pinned model that is not its own base_class. Rails'
+  # compute_table_name returns base_class.table_name verbatim for a subclass,
+  # so the old prefix-based qualification was discarded and the model resolved
+  # to the *tenant's* table with no error. The unit specs pin the table_name;
+  # this one proves the emitted SQL reaches the default tenant's rows.
+  context 'pinned subclass whose table_name matches its base class' do
+    before do
+      skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
+
+      ActiveRecord::Base.connection.create_table(:versions, force: true) do |t|
+        t.string(:event)
+      end
+      Apartment::Tenant.switch('tenant_a') do
+        ActiveRecord::Base.connection.create_table(:versions, force: true) do |t|
+          t.string(:event)
+        end
+      end
+
+      # Unpinned base, mirroring a gem-owned model (e.g. PaperTrail::Version).
+      stub_const('BaseVersion', Class.new(ApplicationRecord) do
+        self.table_name = 'versions'
+      end)
+
+      # The app's pinned subclass. Its explicit table_name is identical to what
+      # convention computes for a subclass — base_class.table_name — which is
+      # exactly the shape that used to route into the unqualifiable path.
+      stub_const('PublicVersion', Class.new(BaseVersion) do
+        self.table_name = 'versions'
+        include Apartment::Model
+      end)
+
+      # pin_tenant defers via TracePoint(:end), which never fires for
+      # Class.new; process explicitly, as the docs instruct.
+      PublicVersion.pin_tenant
+      Apartment.process_pinned_model(PublicVersion)
+    end
+
+    it 'is not its own base_class' do
+      expect(PublicVersion.base_class?).to(be(false))
+      expect(PublicVersion.base_class).to(eq(BaseVersion))
+    end
+
+    it 'qualifies the table name against the default tenant' do
+      # PG qualifies with the default schema, MySQL with the default database;
+      # the bug produced a bare 'versions' under both.
+      expect(PublicVersion.table_name).to(eq("#{Apartment.adapter.pinned_table_qualifier}.versions"))
+    end
+
+    it 'reads default-tenant rows from inside a tenant switch' do
+      PublicVersion.create!(event: 'default_row')
+      Apartment::Tenant.switch('tenant_a') do
+        BaseVersion.create!(event: 'tenant_row')
+      end
+
+      Apartment::Tenant.switch('tenant_a') do
+        expect(PublicVersion.pluck(:event)).to(eq(['default_row']))
+      end
+    end
+
+    it 'writes to the default tenant from inside a tenant switch' do
+      Apartment::Tenant.switch('tenant_a') do
+        PublicVersion.create!(event: 'written_inside_tenant')
+      end
+
+      expect(PublicVersion.pluck(:event)).to(eq(['written_inside_tenant']))
+      Apartment::Tenant.switch('tenant_a') do
+        expect(BaseVersion.count).to(eq(0))
+      end
+    end
+  end
+
+  # Regression: `pin_tenant` early-returns once any superclass is pinned, so a
+  # concrete descendant of a pinned abstract base is never registered and never
+  # qualified on its own. The abstract base's qualifier has to reach it through
+  # table_name_prefix, or the "pinned" model silently reads tenant rows.
+  context 'concrete descendant of a pinned abstract base' do
+    before do
+      skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
+
+      %i[global_flags early_flags].each do |table|
+        ActiveRecord::Base.connection.create_table(table, force: true) { |t| t.string(:label) }
+      end
+      Apartment::Tenant.switch('tenant_a') do
+        %i[global_flags early_flags].each do |table|
+          ActiveRecord::Base.connection.create_table(table, force: true) { |t| t.string(:label) }
+        end
+      end
+
+      stub_const('GlobalRecord', Class.new(ApplicationRecord) do
+        self.abstract_class = true
+        include Apartment::Model
+      end)
+      GlobalRecord.pin_tenant
+
+      # Declared and READ before the base is processed, the way an initializer
+      # or an eager-loading gem would. Rails memoizes @table_name per class and
+      # never invalidates a descendant's copy when an ancestor changes, so
+      # without a resync this one keeps the unqualified name and silently reads
+      # the tenant's rows.
+      stub_const('EarlyFlag', Class.new(GlobalRecord))
+      EarlyFlag.table_name
+
+      Apartment.process_pinned_model(GlobalRecord)
+
+      # Declared AFTER the base is qualified, and never pinned itself —
+      # it inherits the pin, which is exactly why it is never registered.
+      stub_const('GlobalFlag', Class.new(GlobalRecord))
+
+      # Unpinned views of the same tables, used to write the tenant-side rows.
+      stub_const('TenantFlag', Class.new(ApplicationRecord) do
+        self.table_name = 'global_flags'
+      end)
+      stub_const('TenantEarlyFlag', Class.new(ApplicationRecord) do
+        self.table_name = 'early_flags'
+      end)
+    end
+
+    it 'inherits the pin without being registered' do
+      expect(GlobalFlag.apartment_pinned?).to(be(true))
+      expect(Apartment.pinned_models).not_to(include(GlobalFlag))
+    end
+
+    it 'still resolves to a qualified table name' do
+      expect(GlobalFlag.table_name).to(eq("#{Apartment.adapter.pinned_table_qualifier}.global_flags"))
+    end
+
+    it 'reads default-tenant rows from inside a tenant switch' do
+      GlobalFlag.create!(label: 'default_row')
+      Apartment::Tenant.switch('tenant_a') do
+        TenantFlag.create!(label: 'tenant_row')
+      end
+
+      Apartment::Tenant.switch('tenant_a') do
+        expect(GlobalFlag.pluck(:label)).to(eq(['default_row']))
+      end
+    end
+
+    it 'reads default-tenant rows even if it memoized its name before the base was qualified' do
+      EarlyFlag.create!(label: 'default_row')
+      Apartment::Tenant.switch('tenant_a') do
+        TenantEarlyFlag.create!(label: 'tenant_row')
+      end
+
+      Apartment::Tenant.switch('tenant_a') do
+        expect(EarlyFlag.pluck(:label)).to(eq(['default_row']))
+      end
+    end
+  end
+
   context 'transactional integrity (shared connection path)' do
     it 'rolls back both pinned and tenant model writes on transaction rollback' do
       skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
