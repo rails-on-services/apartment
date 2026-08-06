@@ -221,12 +221,12 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     before do
       skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
 
-      ActiveRecord::Base.connection.create_table(:global_flags, force: true) do |t|
-        t.string(:label)
+      %i[global_flags early_flags].each do |table|
+        ActiveRecord::Base.connection.create_table(table, force: true) { |t| t.string(:label) }
       end
       Apartment::Tenant.switch('tenant_a') do
-        ActiveRecord::Base.connection.create_table(:global_flags, force: true) do |t|
-          t.string(:label)
+        %i[global_flags early_flags].each do |table|
+          ActiveRecord::Base.connection.create_table(table, force: true) { |t| t.string(:label) }
         end
       end
 
@@ -235,15 +235,27 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
         include Apartment::Model
       end)
       GlobalRecord.pin_tenant
+
+      # Declared and READ before the base is processed, the way an initializer
+      # or an eager-loading gem would. Rails memoizes @table_name per class and
+      # never invalidates a descendant's copy when an ancestor changes, so
+      # without a resync this one keeps the unqualified name and silently reads
+      # the tenant's rows.
+      stub_const('EarlyFlag', Class.new(GlobalRecord))
+      EarlyFlag.table_name
+
       Apartment.process_pinned_model(GlobalRecord)
 
       # Declared AFTER the base is qualified, and never pinned itself —
       # it inherits the pin, which is exactly why it is never registered.
       stub_const('GlobalFlag', Class.new(GlobalRecord))
 
-      # Unpinned view of the same table, used to write the tenant-side row.
+      # Unpinned views of the same tables, used to write the tenant-side rows.
       stub_const('TenantFlag', Class.new(ApplicationRecord) do
         self.table_name = 'global_flags'
+      end)
+      stub_const('TenantEarlyFlag', Class.new(ApplicationRecord) do
+        self.table_name = 'early_flags'
       end)
     end
 
@@ -264,6 +276,17 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
 
       Apartment::Tenant.switch('tenant_a') do
         expect(GlobalFlag.pluck(:label)).to(eq(['default_row']))
+      end
+    end
+
+    it 'reads default-tenant rows even if it memoized its name before the base was qualified' do
+      EarlyFlag.create!(label: 'default_row')
+      Apartment::Tenant.switch('tenant_a') do
+        TenantEarlyFlag.create!(label: 'tenant_row')
+      end
+
+      Apartment::Tenant.switch('tenant_a') do
+        expect(EarlyFlag.pluck(:label)).to(eq(['default_row']))
       end
     end
   end

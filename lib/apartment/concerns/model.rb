@@ -88,6 +88,77 @@ module Apartment
         instance_variable_get(:@table_name) != send(:compute_table_name)
       end
 
+      # Descendants that reach their table name through this class rather than
+      # declaring one of their own, and have already memoized it.
+      #
+      # Rails memoizes @table_name per class on first read and never
+      # invalidates a descendant's copy when an ancestor's name or prefix
+      # changes. Anything touching a descendant's table_name before
+      # qualification runs — an initializer, a gem, a route constraint, a
+      # descendants sweep — freezes the pre-qualification name, and the model
+      # then resolves to the wrong tenant's table for the life of the process.
+      #
+      # MUST be called BEFORE the ancestor is mutated: afterwards
+      # apartment_explicit_table_name? can no longer distinguish a stale memo
+      # from a genuine declaration, since the ancestor's change has moved what
+      # convention computes. Descendants without a memo are omitted — they
+      # compute lazily and will pick the new value up on their own.
+      def apartment_descendants_inheriting_table_name
+        return [] unless respond_to?(:descendants)
+
+        stale = descendants.select do |sub|
+          sub.instance_variable_defined?(:@table_name) &&
+            sub.respond_to?(:apartment_inherited_table_name) &&
+            sub.instance_variable_get(:@table_name) == sub.apartment_inherited_table_name
+        rescue StandardError
+          # Rails' naming machinery raises on shapes we do not control (an
+          # anonymous class has no model_name). Skip rather than guess.
+          false
+        end
+
+        # Reset an intermediate before anything beneath it: reset_table_name on
+        # a class under an abstract parent reads superclass.table_name — the
+        # memo, not base_class — so a grandchild reset first would re-freeze its
+        # parent's stale value. ActiveSupport's descendants happens to be
+        # ancestor-first today, but that ordering is undocumented.
+        stale.sort_by { |sub| sub.ancestors.size }
+      end
+
+      # What Rails' own reset_table_name would recompute for this class right
+      # now. Mirrors ActiveRecord::ModelSchema#reset_table_name deliberately.
+      #
+      # NOT compute_table_name: the two disagree for a class whose superclass
+      # is abstract. reset_table_name prefers `superclass.table_name`, while
+      # compute_table_name treats such a class as its own base_class and builds
+      # from its own model_name. So a concrete class under an abstract
+      # intermediate that carries a table (an abstract class sandwiched under a
+      # concrete pinned parent) inherits `foos` but computes `gkids` — and
+      # keying on compute_table_name misreads that inherited name as an
+      # explicit declaration, skipping the resync and leaving the model on the
+      # tenant's table.
+      def apartment_inherited_table_name
+        if abstract_class?
+          superclass.table_name
+        elsif superclass.abstract_class?
+          superclass.table_name || send(:compute_table_name)
+        else
+          send(:compute_table_name)
+        end
+      end
+
+      # Recompute the table name of each descendant captured above, now that
+      # this class has changed. reset_table_name goes through Rails' own
+      # table_name= setter, so the derived @quoted_table_name and @arel_table
+      # caches are cleared with it.
+      def apartment_resync_descendant_table_names!(subclasses)
+        subclasses.each do |sub|
+          sub.reset_table_name
+        rescue StandardError => e
+          warn "[Apartment] could not reset table name for #{sub.name || sub.inspect}: " \
+               "#{e.class}: #{e.message}"
+        end
+      end
+
       # Whether process_pinned_model has already run for this class.
       def apartment_pinned_processed?
         @apartment_pinned_processed == true
@@ -118,7 +189,9 @@ module Apartment
       def apartment_restore!
         return unless @apartment_pinned_processed
 
+        inheriting = apartment_descendants_inheriting_table_name
         apartment_undo_qualification!
+        apartment_resync_descendant_table_names!(inheriting)
 
         @apartment_pinned_processed = nil
         @apartment_qualification_path = nil

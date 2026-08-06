@@ -49,6 +49,27 @@ Reading `klass.table_name` first lets Rails compute the conventional name — ho
 
 **Prefix stripping:** Uses `sub(/\A[^.]+\./, '')` instead of `split('.').last`, stripping at most one leading `schema.` or `database.` segment. This preserves names that contain dots for other reasons (unlikely in practice, but defensive) and makes re-qualification idempotent.
 
+#### Descendant table-name memos must be resynced
+
+Rails memoizes `@table_name` per class on first read and **never invalidates a descendant's copy** when an ancestor's name or prefix changes. Qualification mutates one class; every descendant that already read its own `table_name` keeps the pre-qualification value.
+
+That is not hypothetical. Anything touching a descendant's `table_name` before `Tenant.init` — an initializer, an eager-loading gem, a route constraint, a `descendants` sweep — freezes the unqualified name, and the "pinned" model then resolves to the **tenant's** table for the life of the process. It also produced a *false* warning: the stale memo no longer matches `compute_table_name`, so `apartment_explicit_table_name?` read `true` and `warn_unregistered_pinned_subclasses` reported that the model "declares its own table", which it does not.
+
+So `qualify_pinned_table_name` and `apartment_restore!` both bracket their mutation:
+
+1. `apartment_descendants_inheriting_table_name` — **before** mutating, collect descendants that have memoized a name they did not declare. The ordering is load-bearing: afterwards there is no way to distinguish a stale memo from a genuine declaration, because the ancestor's change has moved what convention computes.
+2. `apartment_resync_descendant_table_names!` — after mutating, `reset_table_name` each of them. That routes through Rails' own `table_name=` setter, so the derived `@quoted_table_name` and `@arel_table` caches are cleared with it.
+
+Descendants with no memo are deliberately omitted — they compute lazily and pick the new value up unaided.
+
+**What counts as "inherited" is `apartment_inherited_table_name`, not `compute_table_name`.** The two disagree for a class whose superclass is abstract: `reset_table_name` prefers `superclass.table_name`, while `compute_table_name` treats such a class as its own `base_class` and builds from its own `model_name`. A concrete class under an abstract intermediate that carries a table — an abstract class sandwiched beneath a concrete pinned parent — therefore *inherits* `foos` but *computes* `gkids`. Keying on `compute_table_name` misread that inherited name as an explicit declaration, skipped the resync, and left the model reading the tenant's table. The predicate mirrors `reset_table_name`'s own branching instead.
+
+The collected set is sorted by ancestor depth so an intermediate is always reset before anything beneath it. `reset_table_name` on a class under an abstract parent reads `superclass.table_name` — the memo, not `base_class` — so a grandchild reset first would re-freeze its parent's stale value. ActiveSupport's `descendants` happens to return ancestors first today, but that ordering is undocumented; the sort makes the pass order-independent.
+
+**A descendant whose declared table differs from convention is left alone** — it is unaffected by an ancestor's qualification, and qualifying it is a separate decision requiring its own `pin_tenant`. A declaration that happens to *equal* what convention computes is indistinguishable from an inherited name (Rails retains no "explicitly set" flag), so it is treated as inherited and qualified along with the ancestor. That is the safe side of an unavoidable ambiguity: such a class descends from a pinned base, so it is a pinned model, and qualifying it targets the default tenant — whereas leaving it alone would resolve through `search_path` to the tenant's table. The cost is that this shape no longer trips `warn_unregistered_pinned_subclasses`, so a model intended as tenant-scoped is silently qualified rather than flagged; declaring a table that differs from convention, or pinning explicitly, keeps the signal.
+
+Both helpers rescue per descendant: Rails' naming machinery raises on shapes the gem does not control (an anonymous class has no `model_name`), and neither qualification nor teardown may fail on one bad descendant.
+
 **Abstract classes qualify by broadcast, not assignment.** An abstract class has no table of its own — `table_name` is `nil` — so there is nothing to assign, and interpolating it would raise. Pinning one is a supported pattern (an abstract `connects_to` base is pinned so Apartment does not build tenant pools for it; see the `connects_to` gotcha in the root `CLAUDE.md`).
 
 Its qualifier still has to reach the concrete descendants that inherit the pin, and those are **never qualified directly**: `pin_tenant` early-returns once any superclass is pinned (`apartment_pinned?` walks the chain), so a descendant is never registered and `process_pinned_models` never sees it. `qualify_pinned_table_name_prefix` therefore sets `table_name_prefix` — a `class_attribute`, so it broadcasts down the inheritance chain and each descendant composes it in its own `compute_table_name`. Any prefix the app set is preserved rather than overwritten (`myapp_` becomes `<qualifier>.myapp_`). Teardown restores the original prefix (`:prefix` path).
