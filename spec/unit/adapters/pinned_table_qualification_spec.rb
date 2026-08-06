@@ -8,10 +8,10 @@ require_relative '../../../lib/apartment/adapters/mysql2_adapter'
 # End-to-end behaviour of pinned table-name qualification, asserted on the
 # resulting table_name rather than on the mutators used to get there.
 #
-# The per-adapter specs mock table_name_prefix=/reset_table_name/table_name=,
-# which cannot see whether the mutation actually took effect. Every regression
-# guarded here was invisible to that style: Rails silently ignores
-# table_name_prefix for whole categories of model (see compute_table_name).
+# Asserting on the mutators instead — mocking table_name_prefix= /
+# reset_table_name / table_name= — cannot see whether the mutation took effect,
+# and Rails silently ignores table_name_prefix for whole categories of model
+# (see compute_table_name), so the distinction is not academic.
 RSpec.describe('pinned table name qualification') do
   # Each example builds real AR classes so Rails' own compute_table_name /
   # reset_table_name run for real. Named via stub_const so model_name works.
@@ -47,10 +47,10 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq("#{qualifier}.jobs"))
     end
 
-    # Regression: a subclass is not its own base_class, so Rails'
-    # compute_table_name returns base_class.table_name verbatim and never
-    # consults full_table_name_prefix. The convention path set the prefix and
-    # the model kept resolving through search_path to the *tenant's* table.
+    # A subclass is not its own base_class, so Rails' compute_table_name
+    # returns base_class.table_name verbatim and never consults
+    # full_table_name_prefix. Prefix-based qualification therefore cannot reach
+    # it, and it resolves through search_path to the *tenant's* table.
     it 'qualifies a subclass whose explicit table_name matches its base class' do
       model('QualBaseVersion') { self.table_name = 'versions' }
       klass = model('QualPublicVersion', QualBaseVersion) { self.table_name = 'versions' }
@@ -61,9 +61,9 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq("#{qualifier}.versions"))
     end
 
-    # Regression: full_table_name_prefix prefers the first module parent that
-    # responds to table_name_prefix, so a prefix set on the class itself is
-    # ignored outright for engine-namespaced models.
+    # full_table_name_prefix prefers the first module parent that responds to
+    # table_name_prefix, so a prefix set on the class itself is ignored
+    # outright for engine-namespaced models.
     it 'qualifies a model whose module parent defines table_name_prefix' do
       mod = Module.new { def self.table_name_prefix = 'billing_' }
       stub_const('QualBilling', mod)
@@ -74,9 +74,9 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq("#{qualifier}.billing_invoices"))
     end
 
-    # Regression: overwriting table_name_prefix dropped the app's own prefix,
-    # pointing the model at a table that does not exist (or, worse, a
-    # different one) instead of merely leaving it unqualified.
+    # Overwriting table_name_prefix would drop the app's own prefix, pointing
+    # the model at a table that does not exist (or, worse, a different one)
+    # rather than merely leaving it unqualified.
     it "preserves the model's own table_name_prefix while qualifying" do
       klass = model('QualLedger') { self.table_name_prefix = 'myapp_' }
 
@@ -117,8 +117,8 @@ RSpec.describe('pinned table name qualification') do
     # reset_table_name prefers superclass.table_name here, while
     # compute_table_name treats the grandchild as its own base_class and builds
     # from its own model_name — so the two disagree, and keying the resync on
-    # compute_table_name misread the grandchild's INHERITED name as an explicit
-    # declaration and skipped it, leaving it on the tenant's table.
+    # compute_table_name misreads the grandchild's INHERITED name as an
+    # explicit declaration and skips it, leaving it on the tenant's table.
     it 'requalifies a grandchild under an abstract intermediate' do
       base = model('ChainBase') { self.table_name = 'chain_foos' }
       mid = Class.new(base) { self.abstract_class = true }
@@ -141,6 +141,104 @@ RSpec.describe('pinned table name qualification') do
       adapter.qualify_pinned_table_name(parent)
 
       expect(child.table_name).to(eq('declared_table'))
+    end
+
+    # Descendants WARN rather than raise: detection walks `descendants`, which
+    # is complete under eager loading and partial under Zeitwerk, so raising
+    # would fail production boots for a condition dev never reports while still
+    # missing descendants that load later. The registered model itself raises —
+    # that check is complete (see the qualifier and self specs below).
+    #
+    # This shape is the live example: `full_table_name_prefix` prefers the
+    # module parent's prefix, so an abstract base's broadcast never reaches an
+    # engine-namespaced descendant.
+    it 'warns when a resynced descendant is left unqualified' do
+      parent = model('VerifyBase') { self.abstract_class = true }
+      mod = Module.new { def self.table_name_prefix = 'engine_' }
+      stub_const('VerifyEngine', mod)
+      child = Class.new(parent)
+      stub_const('VerifyEngine::Thing', child)
+      child.table_name
+
+      expect { adapter.qualify_pinned_table_name(parent) }
+        .to(output(/VerifyEngine::Thing.*engine_things/m).to_stderr)
+    end
+
+    # The natural shape: nothing read the descendant first, so it holds no memo
+    # and is not part of the resync set. Verifying only resynced descendants
+    # would miss it entirely — a descendant with no memo inherits its name
+    # lazily and can be just as wrong.
+    it 'warns for an unqualified descendant that was never read' do
+      parent = model('VerifyLazyBase') { self.abstract_class = true }
+      mod = Module.new { def self.table_name_prefix = 'lazy_engine_' }
+      stub_const('VerifyLazyEngine', mod)
+      stub_const('VerifyLazyEngine::Thing', Class.new(parent))
+
+      expect { adapter.qualify_pinned_table_name(parent) }
+        .to(output(/lazy_engine_things/).to_stderr)
+    end
+
+    # The remedy the error message prescribes must actually work. Registry
+    # order is always parent-first (defining the child loads the parent), so
+    # verifying the base's descendants would raise on a descendant that is
+    # itself registered and about to be qualified on the next iteration —
+    # failing the boot of an app that did exactly the right thing.
+    it 'does not raise for a descendant that is itself pinned and not yet processed' do
+      parent = model('RemedyBase') { self.abstract_class = true }
+      parent.pin_tenant
+      mod = Module.new { def self.table_name_prefix = 'remedy_engine_' }
+      stub_const('RemedyEngine', mod)
+      child = Class.new(parent) { include(Apartment::Model) }
+      stub_const('RemedyEngine::Thing', child)
+      child.pin_tenant
+
+      expect { adapter.qualify_pinned_table_name(parent) }.not_to(output.to_stderr)
+    end
+
+    it 'still warns once that descendant has been processed and is unqualified' do
+      parent = model('RemedyDoneBase') { self.abstract_class = true }
+      parent.pin_tenant
+      mod = Module.new { def self.table_name_prefix = 'done_engine_' }
+      stub_const('DoneEngine', mod)
+      child = Class.new(parent) { include(Apartment::Model) }
+      stub_const('DoneEngine::Thing', child)
+      child.pin_tenant
+      child.apartment_mark_processed! # pretend its turn came and left it unqualified
+
+      expect { adapter.qualify_pinned_table_name(parent) }
+        .to(output(/done_engine_things/).to_stderr)
+    end
+
+    # A nil qualifier produces a bare ".table", which start_with?('.') would
+    # happily accept — the check proving nothing in exactly the case it exists
+    # for. On MySQL this is a connection config with no 'database' key.
+    it 'raises when the qualifier itself is empty' do
+      klass = model('EmptyQualifier')
+      allow(adapter).to(receive(:pinned_table_qualifier).and_return(nil))
+
+      expect { adapter.qualify_pinned_table_name(klass) }.to(
+        raise_error(Apartment::ConfigurationError, /pinned_table_qualifier is nil/)
+      )
+    end
+
+    it 'does not raise for a descendant that declares its own table' do
+      parent = model('VerifyDeclaredBase') { self.abstract_class = true }
+      child = Class.new(parent) { self.table_name = 'declared_elsewhere' }
+      stub_const('VerifyDeclaredChild', child)
+
+      expect { adapter.qualify_pinned_table_name(parent) }.not_to(raise_error)
+    end
+
+    it 'raises when the model itself is left unqualified' do
+      klass = model('VerifyStubborn')
+      # Simulate qualification failing to take effect — the shape every past
+      # bug had, and what a future Rails change to the naming internals would
+      # look like.
+      allow(klass).to(receive(:table_name).and_return('verify_stubborns'))
+
+      expect { adapter.qualify_pinned_table_name(klass) }.to(
+        raise_error(Apartment::ConfigurationError, /verify_stubborns/)
+      )
     end
 
     it 'marks the model processed' do

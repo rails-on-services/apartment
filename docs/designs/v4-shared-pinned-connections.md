@@ -49,6 +49,28 @@ Reading `klass.table_name` first lets Rails compute the conventional name — ho
 
 **Prefix stripping:** Uses `sub(/\A[^.]+\./, '')` instead of `split('.').last`, stripping at most one leading `schema.` or `database.` segment. This preserves names that contain dots for other reasons (unlikely in practice, but defensive) and makes re-qualification idempotent.
 
+#### Qualification proves its own outcome
+
+Every silent cross-tenant read this gem has shipped had one signature: qualification ran, produced an unqualified name, marked the model processed, and raised nothing. The model then served the tenant's rows indefinitely. `verify_pinned_qualification!` closes that class of bug by checking the post-condition — the table name actually carries the qualifier — and refusing to let an unqualified result pass unremarked.
+
+It also guards the private-API risk: `compute_table_name` is not public Rails, and a future change to the naming internals that silently stopped composing the way this design expects would surface on the first affected app rather than as cross-tenant reads.
+
+**The registered model raises; its descendants only warn.** The asymmetry is the rule, not a compromise: raise on what the pass can actually prove. For the registered model the check is complete and unambiguous — it was just qualified, so an unqualified result is broken every time, on every boot, under any loading mode. For descendants it is neither: detection walks `descendants`, which is complete under eager loading and partial under Zeitwerk lazy loading. Raising there would fail production boots for a condition local development never reports, *while still* missing the descendants that load later — paying the full cost of a hard break for a partial guarantee. This is the same reasoning `warn_unregistered_pinned_subclasses` already documents, and the two now agree instead of contradicting each other.
+
+Consequence worth stating plainly: the engine-namespaced descendant surfaces in **CI and on deploy**, not in local development, because that is where eager loading happens. That determines where an adopter meets it.
+
+Four scoping decisions, each load-bearing:
+
+- **Descendants awaiting their own qualification are skipped.** Registry order is always parent-first — defining a subclass loads its parent, and `pin_tenant` registers during class-body execution — so an abstract base is processed before an engine-namespaced descendant that is *itself* pinned. Verifying the base's descendants would otherwise fire on a model about to be qualified correctly on the next iteration, and it would fire on the very configuration the message prescribes as the remedy. The test is **registry membership** (`Apartment.pinned_models.include?`), not `apartment_pinned?` — the latter walks the superclass chain and is true for *every* descendant of a pinned base, which would skip all of them and disable the check entirely.
+
+- **The no-op branch is not verified.** A subclass sharing an already-pinned base's table is correct by construction, and if its base has not been qualified yet — registry order puts children first when a child is pinned before its parent — asserting on it would fail a boot for a model about to become correct.
+- **Descendants that declare their own table are excluded.** An ancestor's qualification was never meant to reach them, and `warn_unregistered_pinned_subclasses` already reports that shape. Raising there would break the tenant-scoped subclass the gem deliberately tolerates.
+- **The descendant set is computed independently of the resync set.** The resync pass is deliberately limited to descendants holding a memo, because only those need resetting. Verification cannot inherit that limit: a descendant with no memo computes its name lazily and can be just as wrong, and the engine-namespaced descendant — the shape most likely to be unqualified — is typically one of those.
+
+An abstract base has no table of its own, so it is proven through the descendants its prefix was meant to reach.
+
+**Upgrade consequence.** The engine-namespaced descendant limitation below now warns at boot rather than passing silently — in CI and on deploy, where eager loading populates `descendants`. It does not fail the boot: the descendant walk cannot prove completeness, so it does not get to stop an app.
+
 #### Descendant table-name memos must be resynced
 
 Rails memoizes `@table_name` per class on first read and **never invalidates a descendant's copy** when an ancestor's name or prefix changes. Qualification mutates one class; every descendant that already read its own `table_name` keeps the pre-qualification value.
@@ -74,7 +96,7 @@ Both helpers rescue per descendant: Rails' naming machinery raises on shapes the
 
 Its qualifier still has to reach the concrete descendants that inherit the pin, and those are **never qualified directly**: `pin_tenant` early-returns once any superclass is pinned (`apartment_pinned?` walks the chain), so a descendant is never registered and `process_pinned_models` never sees it. `qualify_pinned_table_name_prefix` therefore sets `table_name_prefix` — a `class_attribute`, so it broadcasts down the inheritance chain and each descendant composes it in its own `compute_table_name`. Any prefix the app set is preserved rather than overwritten (`myapp_` becomes `<qualifier>.myapp_`). Teardown restores the original prefix (`:prefix` path).
 
-This is the one place the prefix mechanism remains correct, and the distinction is the whole point: here it is a **broadcast to other classes**, not an attempt to qualify the class's own name. Removing it wholesale regressed exactly the silent-tenant-read this design exists to prevent — a pinned `GlobalRecord` abstract base left `GlobalSetting` resolving to `global_settings` instead of `public.global_settings`.
+This is the one place the prefix mechanism remains correct, and the distinction is the whole point: here it is a **broadcast to other classes**, not an attempt to qualify the class's own name. Without it a pinned `GlobalRecord` abstract base leaves `GlobalSetting` resolving to `global_settings` rather than `public.global_settings` — the silent tenant read this design exists to prevent.
 
 #### Subclasses of a concrete pinned model
 
