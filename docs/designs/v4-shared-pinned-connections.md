@@ -65,7 +65,7 @@ Four scoping decisions, each load-bearing:
 
 - **The no-op branch is not verified.** A subclass sharing an already-pinned base's table is correct by construction, and if its base has not been qualified yet — registry order puts children first when a child is pinned before its parent — asserting on it would fail a boot for a model about to become correct.
 - **Descendants that declare their own table are excluded.** An ancestor's qualification was never meant to reach them, and `warn_unregistered_pinned_subclasses` already reports that shape. Raising there would break the tenant-scoped subclass the gem deliberately tolerates.
-- **The descendant set is computed independently of the resync set.** The resync pass is deliberately limited to descendants holding a memo, because only those need resetting. Verification cannot inherit that limit: a descendant with no memo computes its name lazily and can be just as wrong. An early version reused the resync set and missed exactly that case — the engine-namespaced descendant, which is the shape most likely to hit it.
+- **The descendant set is computed independently of the resync set.** The resync pass is deliberately limited to descendants holding a memo, because only those need resetting. Verification cannot inherit that limit: a descendant with no memo computes its name lazily and can be just as wrong, and the engine-namespaced descendant — the shape most likely to be unqualified — is typically one of those.
 
 An abstract base has no table of its own, so it is proven through the descendants its prefix was meant to reach.
 
@@ -96,7 +96,7 @@ Both helpers rescue per descendant: Rails' naming machinery raises on shapes the
 
 Its qualifier still has to reach the concrete descendants that inherit the pin, and those are **never qualified directly**: `pin_tenant` early-returns once any superclass is pinned (`apartment_pinned?` walks the chain), so a descendant is never registered and `process_pinned_models` never sees it. `qualify_pinned_table_name_prefix` therefore sets `table_name_prefix` — a `class_attribute`, so it broadcasts down the inheritance chain and each descendant composes it in its own `compute_table_name`. Any prefix the app set is preserved rather than overwritten (`myapp_` becomes `<qualifier>.myapp_`). Teardown restores the original prefix (`:prefix` path).
 
-This is the one place the prefix mechanism remains correct, and the distinction is the whole point: here it is a **broadcast to other classes**, not an attempt to qualify the class's own name. Removing it wholesale regressed exactly the silent-tenant-read this design exists to prevent — a pinned `GlobalRecord` abstract base left `GlobalSetting` resolving to `global_settings` instead of `public.global_settings`.
+This is the one place the prefix mechanism remains correct, and the distinction is the whole point: here it is a **broadcast to other classes**, not an attempt to qualify the class's own name. Without it a pinned `GlobalRecord` abstract base leaves `GlobalSetting` resolving to `global_settings` rather than `public.global_settings` — the silent tenant read this design exists to prevent.
 
 #### Subclasses of a concrete pinned model
 
