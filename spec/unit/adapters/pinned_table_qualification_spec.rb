@@ -8,10 +8,10 @@ require_relative '../../../lib/apartment/adapters/mysql2_adapter'
 # End-to-end behaviour of pinned table-name qualification, asserted on the
 # resulting table_name rather than on the mutators used to get there.
 #
-# The per-adapter specs mock table_name_prefix=/reset_table_name/table_name=,
-# which cannot see whether the mutation actually took effect. Every regression
-# guarded here was invisible to that style: Rails silently ignores
-# table_name_prefix for whole categories of model (see compute_table_name).
+# Asserting on the mutators instead — mocking table_name_prefix= /
+# reset_table_name / table_name= — cannot see whether the mutation took effect,
+# and Rails silently ignores table_name_prefix for whole categories of model
+# (see compute_table_name), so the distinction is not academic.
 RSpec.describe('pinned table name qualification') do
   # Each example builds real AR classes so Rails' own compute_table_name /
   # reset_table_name run for real. Named via stub_const so model_name works.
@@ -47,10 +47,10 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq("#{qualifier}.jobs"))
     end
 
-    # Regression: a subclass is not its own base_class, so Rails'
-    # compute_table_name returns base_class.table_name verbatim and never
-    # consults full_table_name_prefix. The convention path set the prefix and
-    # the model kept resolving through search_path to the *tenant's* table.
+    # A subclass is not its own base_class, so Rails' compute_table_name
+    # returns base_class.table_name verbatim and never consults
+    # full_table_name_prefix. Prefix-based qualification therefore cannot reach
+    # it, and it resolves through search_path to the *tenant's* table.
     it 'qualifies a subclass whose explicit table_name matches its base class' do
       model('QualBaseVersion') { self.table_name = 'versions' }
       klass = model('QualPublicVersion', QualBaseVersion) { self.table_name = 'versions' }
@@ -61,9 +61,9 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq("#{qualifier}.versions"))
     end
 
-    # Regression: full_table_name_prefix prefers the first module parent that
-    # responds to table_name_prefix, so a prefix set on the class itself is
-    # ignored outright for engine-namespaced models.
+    # full_table_name_prefix prefers the first module parent that responds to
+    # table_name_prefix, so a prefix set on the class itself is ignored
+    # outright for engine-namespaced models.
     it 'qualifies a model whose module parent defines table_name_prefix' do
       mod = Module.new { def self.table_name_prefix = 'billing_' }
       stub_const('QualBilling', mod)
@@ -74,9 +74,9 @@ RSpec.describe('pinned table name qualification') do
       expect(klass.table_name).to(eq("#{qualifier}.billing_invoices"))
     end
 
-    # Regression: overwriting table_name_prefix dropped the app's own prefix,
-    # pointing the model at a table that does not exist (or, worse, a
-    # different one) instead of merely leaving it unqualified.
+    # Overwriting table_name_prefix would drop the app's own prefix, pointing
+    # the model at a table that does not exist (or, worse, a different one)
+    # rather than merely leaving it unqualified.
     it "preserves the model's own table_name_prefix while qualifying" do
       klass = model('QualLedger') { self.table_name_prefix = 'myapp_' }
 
@@ -117,8 +117,8 @@ RSpec.describe('pinned table name qualification') do
     # reset_table_name prefers superclass.table_name here, while
     # compute_table_name treats the grandchild as its own base_class and builds
     # from its own model_name — so the two disagree, and keying the resync on
-    # compute_table_name misread the grandchild's INHERITED name as an explicit
-    # declaration and skipped it, leaving it on the tenant's table.
+    # compute_table_name misreads the grandchild's INHERITED name as an
+    # explicit declaration and skips it, leaving it on the tenant's table.
     it 'requalifies a grandchild under an abstract intermediate' do
       base = model('ChainBase') { self.table_name = 'chain_foos' }
       mid = Class.new(base) { self.abstract_class = true }

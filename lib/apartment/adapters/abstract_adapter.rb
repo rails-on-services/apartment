@@ -172,8 +172,8 @@ module Apartment
       #   * overwriting the prefix drops one the app set, silently retargeting
       #     the model at a different table.
       #
-      # Each case left the model resolving to the *tenant's* table with no
-      # error. Reading table_name first lets Rails compute the conventional
+      # In each case the model resolves to the *tenant's* table and nothing
+      # raises. Reading table_name first lets Rails compute the conventional
       # name — honouring any prefix, suffix, or nesting the app declared —
       # before we qualify the result.
       def qualify_pinned_table_name(klass)
@@ -211,12 +211,12 @@ module Apartment
 
       # Prove the qualification took effect rather than assuming it did.
       #
-      # Every silent cross-tenant read this gem has shipped had one signature:
-      # qualification ran, produced an unqualified name, and marked the model
-      # processed. Nothing raised, and the model quietly served the tenant's
-      # rows. A post-condition converts that entire class of bug — including
-      # ones a future Rails change to the naming internals would introduce —
-      # into a boot error.
+      # A failed qualification is otherwise indistinguishable from a successful
+      # one: the model is marked processed, nothing raises, and it serves the
+      # current tenant's rows. Checking the post-condition surfaces that class
+      # of failure at the point it happens — including one introduced by a
+      # future Rails change to the naming internals, since compute_table_name
+      # is not public API.
       #
       # An abstract base has no table of its own, so it is proven through the
       # descendants its prefix was meant to reach; a `nil` name is skipped.

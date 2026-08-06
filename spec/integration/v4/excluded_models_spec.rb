@@ -142,11 +142,11 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
-  # Regression: a pinned model that is not its own base_class. Rails'
-  # compute_table_name returns base_class.table_name verbatim for a subclass,
-  # so the old prefix-based qualification was discarded and the model resolved
-  # to the *tenant's* table with no error. The unit specs pin the table_name;
-  # this one proves the emitted SQL reaches the default tenant's rows.
+  # A pinned model that is not its own base_class. Rails' compute_table_name
+  # returns base_class.table_name verbatim for a subclass, so prefix-based
+  # qualification cannot reach it and the model resolves to the *tenant's*
+  # table with no error. The unit specs pin the table_name; this one proves the
+  # emitted SQL reaches the default tenant's rows.
   context 'pinned subclass whose table_name matches its base class' do
     before do
       skip 'requires shared_pinned_connection?' unless Apartment.adapter.shared_pinned_connection?
@@ -167,7 +167,7 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
 
       # The app's pinned subclass. Its explicit table_name is identical to what
       # convention computes for a subclass — base_class.table_name — which is
-      # exactly the shape that used to route into the unqualifiable path.
+      # exactly the shape that a naive discriminator reads as "convention".
       stub_const('PublicVersion', Class.new(BaseVersion) do
         self.table_name = 'versions'
         include Apartment::Model
@@ -213,7 +213,7 @@ RSpec.describe('v4 Pinned models integration (Apartment::Model)', :integration,
     end
   end
 
-  # Regression: `pin_tenant` early-returns once any superclass is pinned, so a
+  # `pin_tenant` is idempotent per class, so an inherited pin leaves a
   # concrete descendant of a pinned abstract base is never registered and never
   # qualified on its own. The abstract base's qualifier has to reach it through
   # table_name_prefix, or the "pinned" model silently reads tenant rows.
