@@ -227,19 +227,63 @@ module Apartment
       # just as wrong. Descendants that declare their own table are excluded —
       # an ancestor's qualification was never meant to reach them, and
       # warn_unregistered_pinned_subclasses already reports that shape.
+      # The model itself RAISES; its descendants only WARN. The asymmetry is
+      # the point, and it is the same rule warn_unregistered_pinned_subclasses
+      # follows: raise only on what this pass can actually prove.
+      #
+      # For the registered model, the check is complete and unambiguous — it
+      # was just qualified, so if the name is not qualified something is
+      # genuinely broken, every time, on every boot.
+      #
+      # For descendants it is neither. Detection walks `descendants`, so it is
+      # complete under eager loading and partial under Zeitwerk lazy loading:
+      # raising would fail production boots for a condition that dev never
+      # reports, while still missing the descendants that load later. A warning
+      # carries the same signal without making detection completeness a
+      # boot-time dependency.
       def verify_pinned_qualification!(klass)
-        prefix = "#{pinned_table_qualifier}."
+        prefix = "#{verified_pinned_qualifier}."
 
-        [klass, *inheriting_descendants(klass)].each do |model|
-          name = begin
-            model.table_name
-          rescue StandardError
-            next
-          end
-          next if name.nil? || name.start_with?(prefix)
-
-          raise(Apartment::ConfigurationError, unqualified_pinned_message(model, name, prefix))
+        name = pinned_table_name_for(klass)
+        if name && !name.start_with?(prefix)
+          raise(Apartment::ConfigurationError, unqualified_pinned_message(klass, name, prefix))
         end
+
+        warn_unqualified_descendants(klass, prefix)
+      end
+
+      def warn_unqualified_descendants(klass, prefix)
+        inheriting_descendants(klass).each do |sub|
+          sub_name = pinned_table_name_for(sub)
+          next if sub_name.nil? || sub_name.start_with?(prefix)
+
+          warn(unqualified_pinned_message(sub, sub_name, prefix))
+        end
+      end
+
+      # A model whose table_name raises cannot be verified. Say so rather than
+      # skipping silently: the thesis of this check is proving rather than
+      # assuming, and an unverifiable model is exactly what it must not wave
+      # through unremarked.
+      def pinned_table_name_for(model)
+        model.table_name
+      rescue StandardError => e
+        warn '[Apartment] could not verify the pinned table name for ' \
+             "#{model.name || model.inspect}: #{e.class}: #{e.message}"
+        nil
+      end
+
+      # A nil or empty qualifier produces a bare ".table", which start_with?(".")
+      # would happily accept — the check proving nothing in exactly the case it
+      # exists for. On MySQL this is a connection config with no 'database' key.
+      def verified_pinned_qualifier
+        qualifier = pinned_table_qualifier
+        return qualifier unless qualifier.nil? || qualifier.to_s.empty?
+
+        raise(Apartment::ConfigurationError,
+              "[Apartment] #{self.class}#pinned_table_qualifier is #{qualifier.inspect}, so pinned " \
+              'models were qualified to a bare ".table" and would not resolve. On MySQL this ' \
+              "usually means the connection config carries no 'database' key.")
       end
 
       def inheriting_descendants(klass)
@@ -247,10 +291,25 @@ module Apartment
 
         klass.descendants.select do |sub|
           sub.respond_to?(:apartment_inherited_table_name) &&
+            !awaiting_own_qualification?(sub) &&
             sub.table_name == sub.apartment_inherited_table_name
-        rescue StandardError
+        rescue StandardError => e
+          warn "[Apartment] could not classify pinned descendant #{sub.name || sub.inspect}: " \
+               "#{e.class}: #{e.message}"
           false
         end
+      end
+
+      # A descendant that is registered but not yet processed gets qualified on
+      # its own turn, by direct assignment, which reaches names the ancestor's
+      # broadcast cannot. Registry order is always parent-first — defining a
+      # subclass loads its parent, and pin_tenant registers during class-body
+      # execution — so verifying the base's descendants would otherwise raise
+      # on a model that is about to become correct, aborting the very iteration
+      # that would have fixed it. That is the remedy this check's own error
+      # message prescribes, so it has to keep working.
+      def awaiting_own_qualification?(klass)
+        Apartment.pinned_models.include?(klass) && !klass.apartment_pinned_processed?
       end
 
       def unqualified_pinned_message(model, name, prefix)
