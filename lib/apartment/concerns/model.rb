@@ -71,14 +71,20 @@ module Apartment
       # qualification can be undone by discarding the override; true means the
       # name must be saved verbatim and restored verbatim.
       #
-      # This answers a *restore* question. It is deliberately NOT a
-      # qualification discriminator: a table_name that matches convention is no
-      # evidence that setting table_name_prefix would qualify the model. Rails
-      # ignores the prefix outright for any class that is not its own
-      # base_class (compute_table_name returns base_class.table_name verbatim),
-      # and full_table_name_prefix prefers a module parent's prefix over the
-      # class's own. Qualification therefore always assigns table_name
-      # directly — see AbstractAdapter#qualify_pinned_table_name.
+      # Callers use this answer for three things: recording the restore
+      # strategy, deciding whether a subclass shares its base's table
+      # (AbstractAdapter#inherits_pinned_table?), and deciding whether an
+      # unregistered descendant declared its own
+      # (AbstractAdapter#unregistered_pinned_subclass?).
+      #
+      # What it must NOT select is the qualification *strategy*. A table_name
+      # matching convention is no evidence that setting table_name_prefix would
+      # qualify the model: Rails ignores the prefix outright for any class that
+      # is not its own base_class (compute_table_name returns
+      # base_class.table_name verbatim), and full_table_name_prefix prefers a
+      # module parent's prefix over the class's own. Qualification therefore
+      # always assigns table_name directly — see
+      # AbstractAdapter#qualify_pinned_table_name.
       #
       # NOTE: compute_table_name is a private Rails API; tested against
       # Rails main as a canary in CI.
