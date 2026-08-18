@@ -199,6 +199,24 @@ RSpec.shared_examples('a MySQL adapter') do
 
       expect(statements.first).to(match(/TO 'app_web'@'%', 'app_worker'@'%'/))
     end
+
+    # 'me@localhost' is a legal MySQL username, so splitting on the last @ would
+    # guess wrong. standard grants to role@'%' and refuses anything else, rather
+    # than quoting the whole value into a different account than the caller meant.
+    it 'refuses a grant_to carrying a host, naming the policy escape hatch', :aggregate_failures do
+      raised = nil
+      begin
+        adapter.standard_privilege_statements(
+          context(:before_schema_load), grant_to: 'app_user@10.0.0.5', include_functions: true
+        )
+      rescue StandardError => e
+        raised = e
+      end
+
+      expect(raised).to(be_a(Apartment::ConfigurationError))
+      expect(raised.message).to(match(/bare role names/))
+      expect(raised.message).to(match(/tenant_privilege_policy/))
+    end
   end
 
   describe '#drop (via drop_tenant)' do

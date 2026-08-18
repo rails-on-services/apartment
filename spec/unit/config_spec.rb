@@ -415,18 +415,8 @@ RSpec.describe(Apartment::Config) do
         config.tenants_provider = -> { [] }
       end
 
-      it 'rejects a non-symbol value' do
-        config.ddl_role = 'db_manager'
-        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /ddl_role/))
-      end
-
       it 'accepts nil' do
         config.ddl_role = nil
-        expect { config.validate! }.not_to(raise_error)
-      end
-
-      it 'accepts a symbol' do
-        config.ddl_role = :db_manager
         expect { config.validate! }.not_to(raise_error)
       end
 
@@ -477,6 +467,14 @@ RSpec.describe(Apartment::Config) do
             c.tenant_privilege_policy = 'app_user'
           end
         end.to(raise_error(Apartment::ConfigurationError, /tenant_privilege_policy must be nil or a callable/))
+      end
+
+      it 'accepts nil, which means privileges are managed outside Apartment' do
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+        config.tenant_privilege_policy = nil
+
+        expect { config.validate! }.not_to(raise_error)
       end
 
       it 'no longer accepts app_role' do
@@ -663,11 +661,6 @@ RSpec.describe(Apartment::Config) do
 
   describe 'ddl_role' do
     it 'defaults to nil' do
-      expect(config.ddl_role).to(be_nil)
-    end
-
-    it 'accepts nil' do
-      config.ddl_role = nil
       expect(config.ddl_role).to(be_nil)
     end
 

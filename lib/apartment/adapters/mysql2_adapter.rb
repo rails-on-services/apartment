@@ -38,16 +38,24 @@ module Apartment
       # MySQL has no ALTER DEFAULT PRIVILEGES. `ON db.*` is pattern-based and covers
       # objects created later, so one statement in the first phase is the whole
       # policy and include_functions has nothing to control here.
+      #
+      # grant_to takes bare role names and every grant lands on `role@'%'`. Splitting
+      # an account on its last @ would be wrong, because `me@localhost` is itself a
+      # legal MySQL username, so a value carrying @ is refused rather than guessed at.
+      # A specific host is what a custom policy is for.
       def standard_privilege_statements(ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
         return [] unless ctx.before_schema_load?
 
-        accounts = Array(grant_to).map { |role| "#{ctx.connection.quote(role)}@'%'" }.join(', ')
+        roles = Array(grant_to)
+        validate_bare_role_names!(roles)
+        accounts = roles.map { |role| "#{ctx.connection.quote(role)}@'%'" }.join(', ')
         ["GRANT SELECT, INSERT, UPDATE, DELETE ON #{ctx.quoted_container}.* TO #{accounts}"]
       end
 
-      # Returns MySQL's `role@host` form. Its GRANT syntax wants the halves quoted
-      # separately, which is why the statement builder above splits rather than
-      # interpolating this value whole.
+      # Returns MySQL's `role@host` form, for a policy that needs to name the
+      # executing account. The statement builder above does not consume it: it assumes
+      # the `%` host, and MySQL's GRANT syntax wants the halves quoted separately
+      # (`'role'@'host'`), which a whole `role@host` token cannot express.
       def current_db_role(connection)
         connection.select_value('SELECT CURRENT_USER()')
       end
@@ -67,6 +75,15 @@ module Apartment
       end
 
       private
+
+      def validate_bare_role_names!(roles)
+        hosted = roles.grep(/@/)
+        return if hosted.empty?
+
+        raise(Apartment::ConfigurationError,
+              "Apartment::Privileges.standard takes bare role names and grants to role@'%'. " \
+              "Got: #{hosted.inspect}. Write a tenant_privilege_policy to grant to another host.")
+      end
 
       def container_error?(error)
         error.is_a?(ActiveRecord::NoDatabaseError)

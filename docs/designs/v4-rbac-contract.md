@@ -93,7 +93,7 @@ Fields:
 
 `db_role` is the resolved **database** role name. This is the field that closes the structural gap: `ddl_role` is an ActiveRecord `connects_to` symbol whose actual database principal lives in `database.yml`, and the proc never had a way to see it. A policy can now write `ALTER DEFAULT PRIVILEGES FOR ROLE #{ctx.db_role} …` and be correct **by statement** rather than by position.
 
-Resolution is adapter-delegated rather than one hardcoded query, because the token differs by engine. PostgreSQL's `SELECT current_user` yields a role name, which still needs identifier quoting before it goes into `FOR ROLE`. MySQL's `CURRENT_USER()` yields `role@host`, and MySQL's own `GRANT` wants those halves quoted separately as `'role'@'host'` — so on MySQL the field carries the account, and the guide shows the split rather than pretending the two engines share a token shape. SQLite has no role system: `db_role` is nil, and a policy needing it should not be configured there.
+Resolution is adapter-delegated rather than one hardcoded query, because the token differs by engine. PostgreSQL's `SELECT current_user` yields a role name, which still needs identifier quoting before it goes into `FOR ROLE`; it is quoted with `quote_column_name`, since `quote_table_name` splits on dots and a role name may legally contain one. MySQL's `CURRENT_USER()` yields `role@host`, a token MySQL's own `GRANT` cannot take whole because it wants the halves quoted separately as `'role'@'host'` — so on MySQL the field carries the account for a policy's own use, and nothing in the gem interpolates it into a `GRANT`. SQLite has no role system: `db_role` is nil, and a policy needing it should not be configured there.
 
 Resolved lazily — once per create, only when a policy is configured — so the extra round trip is not paid by adopters without one.
 
@@ -161,7 +161,7 @@ c.tenant_privilege_policy = lambda { |ctx|
 
 The granted capabilities are the same as the deleted adapter code's; the SQL is not identical, because `FOR ROLE` is now explicit rather than implied by the executing role.
 
-`grant_to` accepts one role name or an Array of them. An empty Array raises at configure time rather than silently granting nothing. On MySQL the values are accounts, and the guide shows the `'role'@'host'` form.
+`grant_to` accepts one role name or an Array of them. An empty Array raises at configure time rather than silently granting nothing. The values are bare role names, on MySQL as much as on PostgreSQL: MySQL grants land on `role@'%'`, and a value carrying an `@` raises rather than being split, because `me@localhost` is itself a legal MySQL username and guessing where the account divides would grant to a different principal than the caller named. Another host is what a custom policy is for.
 
 `include_functions:` (rather than `functions:`, which reads like a list) controls only the `GRANT EXECUTE ON FUNCTIONS` default-privileges rule. It defaults to true, matching the deleted behaviour.
 

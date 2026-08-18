@@ -161,7 +161,8 @@ module Apartment
       def standard_privilege_statements(_ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
         raise(Apartment::ConfigurationError,
               "Apartment::Privileges.standard does not support #{self.class.name}. " \
-              'Write a tenant_privilege_policy for this strategy; see docs/rbac.md.')
+              'Write a tenant_privilege_policy for this strategy; ' \
+              'see docs/designs/v4-rbac-contract.md.')
       end
 
       # The executing database role, for policies that need to name it explicitly
@@ -620,12 +621,12 @@ module Apartment
       def run_tenant_ddl(tenant)
         MigrationRole.wrap do
           create_tenant(tenant)
-          apply_privilege_policy(tenant, :before_schema_load)
+          db_role = resolve_privilege_db_role
+          apply_privilege_policy(tenant, :before_schema_load, db_role)
           import_schema(tenant) if Apartment.config.schema_load_strategy
-          apply_privilege_policy(tenant, :after_schema_load)
+          apply_privilege_policy(tenant, :after_schema_load, db_role)
         end
       ensure
-        @privilege_db_role = nil
         discard_ddl_role_pool(tenant)
       end
 
@@ -703,28 +704,40 @@ module Apartment
         Apartment::Current.migrating = previous
       end
 
+      # The database role both phases report, resolved once per create inside the
+      # ddl_role wrap so the round trip is paid once. nil when no policy is
+      # configured: an adopter without one should pay nothing at all.
+      #
+      # Deliberately a local in run_tenant_ddl rather than an ivar. Apartment.adapter
+      # is one instance for the life of the process, so an adapter ivar is shared
+      # across concurrent creates — thread B could read the role thread A resolved and
+      # name it in ALTER DEFAULT PRIVILEGES FOR ROLE while creating objects as its
+      # own. That is the bug this design exists to prevent, arriving through shared
+      # state, and it is invisible whenever both creates share a ddl_role.
+      def resolve_privilege_db_role
+        return unless Apartment.config.tenant_privilege_policy
+
+        current_db_role(ActiveRecord::Base.connection)
+      end
+
       # Invoke the adopter's policy for one phase. Two calls per create, because
       # position is policy: a default-privileges-only model has to record its rules
       # before the schema import or imported tables fall outside them, while a model
       # granting existing objects has to run after. See
       # docs/designs/v4-rbac-contract.md.
       #
-      # A fresh context per phase; nothing is shared but the resolved role, which is
-      # memoized for the create so the round trip is paid once. run_tenant_ddl clears
-      # the memo in its ensure, so a later create re-resolves.
-      def apply_privilege_policy(tenant, phase)
+      # A fresh context per phase; the two share nothing but the resolved role, which
+      # arrives as an argument.
+      def apply_privilege_policy(tenant, phase, db_role)
         policy = Apartment.config.tenant_privilege_policy
         return unless policy
-
-        conn = ActiveRecord::Base.connection
-        @privilege_db_role ||= current_db_role(conn)
 
         policy.call(
           Privileges::Context.new(
             tenant: tenant,
             container_name: physical_tenant_name(tenant),
-            connection: conn,
-            db_role: @privilege_db_role,
+            connection: ActiveRecord::Base.connection,
+            db_role: db_role,
             phase: phase
           )
         )

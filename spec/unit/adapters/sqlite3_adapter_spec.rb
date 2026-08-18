@@ -28,6 +28,32 @@ RSpec.describe(Apartment::Adapters::Sqlite3Adapter) do
     end
   end
 
+  # Reasoned exclusion, pinned: SQLite has no role system at all, so there is no
+  # standard policy to inherit and a configured one is a misconfiguration to report
+  # rather than a no-op to swallow.
+  describe '#standard_privilege_statements' do
+    it 'has no standard policy, and says so rescuably', :aggregate_failures do
+      ctx = Apartment::Privileges::Context.new(
+        tenant: 'acme', container_name: 'acme', connection: double('Connection'),
+        db_role: nil, phase: :before_schema_load
+      )
+
+      raised = nil
+      begin
+        adapter.standard_privilege_statements(ctx, grant_to: 'app_user')
+      rescue StandardError => e
+        raised = e
+      end
+
+      expect(raised).to(be_a(Apartment::ConfigurationError))
+      expect(raised.message).to(match(/does not support/))
+    end
+
+    it 'reports no database role' do
+      expect(adapter.current_db_role(double('Connection'))).to(be_nil)
+    end
+  end
+
   describe 'inheritance' do
     it 'is a subclass of AbstractAdapter' do
       expect(described_class).to(be < Apartment::Adapters::AbstractAdapter)

@@ -1045,33 +1045,28 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       expect(names.first).to(eq(['acme', adapter.send(:physical_tenant_name, 'acme')]))
     end
 
-    it 'resolves the database role once, not once per phase' do
-      reconfigure(tenant_privilege_policy: ->(_ctx) {})
+    # One round trip per create, and the SAME role reported to both phases. The
+    # value matters as much as the count: db_role is the field that lets a policy
+    # write ALTER DEFAULT PRIVILEGES FOR ROLE and be correct by statement rather
+    # than by position, so replacing it with nil must not stay green.
+    it 'resolves the database role once and reports it to both phases', :aggregate_failures do
+      roles = []
+      reconfigure(tenant_privilege_policy: ->(ctx) { roles << ctx.db_role })
 
       adapter.create('acme')
 
       expect(adapter).to(have_received(:current_db_role).once)
+      expect(roles).to(eq(%w[db_manager db_manager]))
     end
 
-    # A second create on the same adapter instance must re-resolve the role: the
-    # memo is per create, cleared in run_tenant_ddl's ensure.
-    it 'resolves the database role again on the next create' do
-      reconfigure(tenant_privilege_policy: ->(_ctx) {})
+    # Resolution is skipped entirely without a policy, so an adopter who manages
+    # privileges elsewhere pays no round trip.
+    it 'does not resolve the database role when no policy is configured' do
+      reconfigure
 
       adapter.create('acme')
-      adapter.create('other')
 
-      expect(adapter).to(have_received(:current_db_role).twice)
-    end
-
-    # And it must clear even when the create blew up, or every later create on
-    # this instance would reuse a role resolved under the failed one.
-    it 'clears the resolved role when the policy raises' do
-      reconfigure(tenant_privilege_policy: ->(_ctx) { raise(ArgumentError, 'boom') })
-
-      expect { adapter.create('acme') }.to(raise_error(ArgumentError))
-
-      expect(adapter.instance_variable_get(:@privilege_db_role)).to(be_nil)
+      expect(adapter).not_to(have_received(:current_db_role))
     end
 
     it 'aborts the create when the policy raises, without seeding', :aggregate_failures do

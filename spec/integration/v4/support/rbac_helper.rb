@@ -148,8 +148,8 @@ module RbacHelper
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:db_manager]}'@'%'")
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:app_user]}'@'%'")
     connection.execute("GRANT ALL PRIVILEGES ON *.* TO '#{ROLES[:db_manager]}'@'%' WITH GRANT OPTION")
-    # No wildcard grant for app_user — tests must depend entirely on
-    # Mysql2Adapter#grant_privileges (fired during adapter.create).
+    # No wildcard grant for app_user — tests must depend entirely on the
+    # tenant_privilege_policy the specs configure (fired during adapter.create).
     connection.execute('FLUSH PRIVILEGES')
   end
 

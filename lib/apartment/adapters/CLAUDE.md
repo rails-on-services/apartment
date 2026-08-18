@@ -65,7 +65,7 @@ AbstractAdapter
 
 **Tenant creation**: Runs callbacks, creates tenant via subclass, switches context, imports schema, optionally seeds data. See `AbstractAdapter#create` method.
 
-The container, the `app_role` grants, and the schema import are DDL and run together on `config.ddl_role` (`#run_tenant_ddl`); seeding runs outside that wrap. PostgreSQL scopes the create-time `ALTER DEFAULT PRIVILEGES` rule to the role that executed it, so creation and migrations must share one role. See the Key Invariant in `docs/designs/v4-phase5-rbac-roles-schema-cache.md`.
+The container, both `tenant_privilege_policy` phases, and the schema import are DDL and run together on `config.ddl_role` (`#run_tenant_ddl`); seeding runs outside that wrap. PostgreSQL scopes an `ALTER DEFAULT PRIVILEGES` rule with no `FOR ROLE` to the role that executed it, so creation and migrations must share one role. The policy is invoked at `:before_schema_load` and `:after_schema_load`, and its statements come from `#standard_privilege_statements` when the adopter uses `Apartment::Privileges.standard`. See `docs/designs/v4-rbac-contract.md`.
 
 **Tenant switching**: Stores previous tenant, switches, yields to block, ensures rollback in ensure clause with fallback to default. See `AbstractAdapter#switch` method.
 

@@ -54,17 +54,28 @@ module Apartment
         [ActiveRecord::StatementInvalid, Apartment::ApartmentError]
       end
 
+      # Role names are quoted with quote_column_name, not quote_table_name: the latter
+      # splits on dots, so a legal role like `svc.migrator` becomes "svc"."migrator"
+      # and `a.b.c` silently loses a segment. Neither is valid where one role
+      # identifier is required, and role names never pass TenantNameValidator.
+      # quoted_container stays as it is; container names do pass it, and it rejects dots.
       def standard_privilege_statements(ctx, grant_to:, include_functions: true)
-        roles = Array(grant_to).map { |role| ctx.connection.quote_table_name(role) }.join(', ')
+        roles = Array(grant_to).map { |role| ctx.connection.quote_column_name(role) }.join(', ')
         schema = ctx.quoted_container
 
-        if ctx.before_schema_load?
+        case ctx.phase
+        when :before_schema_load
           before_schema_load_statements(ctx, schema, roles, include_functions)
-        else
+        when :after_schema_load
           [
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA #{schema} TO #{roles}",
             "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA #{schema} TO #{roles}",
           ]
+        else
+          # Contexts are gem-built, so an unknown phase is a gem bug. Raising beats
+          # falling through to the after-phase statements, which would grant on
+          # objects the caller may not have created yet.
+          raise(Apartment::ConfigurationError, "Unknown privilege policy phase: #{ctx.phase.inspect}")
         end
       end
 
@@ -113,7 +124,7 @@ module Apartment
       # is what let a rule be recorded under one role while tables were created
       # under another — see docs/designs/v4-rbac-contract.md.
       def before_schema_load_statements(ctx, schema, roles, include_functions)
-        grantor = ctx.connection.quote_table_name(ctx.db_role)
+        grantor = ctx.connection.quote_column_name(ctx.db_role)
         defaults = "ALTER DEFAULT PRIVILEGES FOR ROLE #{grantor} IN SCHEMA #{schema} GRANT"
 
         statements = [

@@ -236,6 +236,8 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
 
     before do
       allow(connection).to(receive(:quote_table_name)) { |name| %("#{name}") }
+      # Role names go through quote_column_name, which quotes one identifier whole.
+      allow(connection).to(receive(:quote_column_name)) { |name| %("#{name}") }
       reconfigure
     end
 
@@ -247,6 +249,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
         context(:before_schema_load), grant_to: 'app_user', include_functions: true
       )
 
+      expect(statements.size).to(eq(4))
       expect(statements).to(include(a_string_matching(/GRANT USAGE ON SCHEMA "acme" TO "app_user"/)))
       expect(statements.grep(/ALTER DEFAULT PRIVILEGES/).size).to(eq(3))
       expect(statements).to(include(a_string_matching(/ALTER DEFAULT PRIVILEGES FOR ROLE "db_manager"/)))
@@ -258,6 +261,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
         context(:before_schema_load), grant_to: 'app_user', include_functions: false
       )
 
+      expect(statements.size).to(eq(3))
       expect(statements.grep(/ON FUNCTIONS/)).to(be_empty)
     end
 
@@ -268,6 +272,9 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
         context(:after_schema_load), grant_to: 'app_user', include_functions: true
       )
 
+      # Exactly two: an after-phase that re-emitted GRANT USAGE ON SCHEMA, or kept a
+      # default-privileges rule, would otherwise stay green.
+      expect(statements.size).to(eq(2))
       expect(statements).to(include(a_string_matching(/ON ALL TABLES IN SCHEMA "acme"/)))
       expect(statements).to(include(a_string_matching(/ON ALL SEQUENCES IN SCHEMA "acme"/)))
       expect(statements.grep(/ALTER DEFAULT PRIVILEGES/)).to(be_empty)
@@ -279,6 +286,25 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
       )
 
       expect(statements.first).to(match(/TO "app_web", "app_worker"/))
+    end
+
+    # quote_table_name would split this into "svc"."migrator" — two identifiers where
+    # GRANT wants one. Role names are legal with dots and never pass TenantNameValidator.
+    it 'quotes a dotted role name as a single identifier' do
+      expect(connection).to(receive(:quote_column_name).with('svc.migrator').and_return('"svc.migrator"'))
+      allow(connection).to(receive(:quote_column_name)) { |name| %("#{name}") }
+
+      statements = adapter.standard_privilege_statements(
+        context(:after_schema_load), grant_to: 'svc.migrator', include_functions: true
+      )
+
+      expect(statements.first).to(match(/TO "svc\.migrator"/))
+    end
+
+    it 'raises on a phase it does not know, rather than falling through' do
+      expect do
+        adapter.standard_privilege_statements(context(:sometime_later), grant_to: 'app_user')
+      end.to(raise_error(Apartment::ConfigurationError, /Unknown privilege policy phase/))
     end
   end
 

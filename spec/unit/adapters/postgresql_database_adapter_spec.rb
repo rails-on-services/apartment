@@ -40,6 +40,30 @@ RSpec.describe(Apartment::Adapters::PostgresqlDatabaseAdapter) do
     end
   end
 
+  # Reasoned exclusion, pinned so a refactor cannot quietly undo it. Re-parenting this
+  # class under PostgresqlSchemaAdapter is a plausible tidy-up, and it would emit
+  # schema-scoped SQL at a database-per-tenant deployment. Database-per-tenant needs
+  # cross-database ordering (GRANT CONNECT on the server, table grants inside the
+  # tenant database) that Privileges.standard does not implement.
+  describe '#standard_privilege_statements' do
+    it 'has no standard policy, and says so rescuably', :aggregate_failures do
+      ctx = Apartment::Privileges::Context.new(
+        tenant: 'acme', container_name: 'acme', connection: double('Connection'),
+        db_role: nil, phase: :before_schema_load
+      )
+
+      raised = nil
+      begin
+        adapter.standard_privilege_statements(ctx, grant_to: 'app_user')
+      rescue StandardError => e
+        raised = e
+      end
+
+      expect(raised).to(be_a(Apartment::ConfigurationError))
+      expect(raised.message).to(match(/does not support/))
+    end
+  end
+
   describe 'inheritance' do
     it 'is a subclass of AbstractAdapter' do
       expect(described_class).to(be < Apartment::Adapters::AbstractAdapter)
