@@ -1132,6 +1132,19 @@ RSpec.describe(Apartment::MigrationRole) do
     expect { described_class.wrap { raise(ArgumentError, 'from the block') } }
       .to(raise_error(ArgumentError, 'from the block'))
   end
+
+  # THIS is the example that exercises the `entered` guard. The one above does not:
+  # ArgumentError never reaches the rescue clause, so `entered` is never consulted
+  # on that path and the example passes with the guard removed. Here the block raises
+  # the SAME class the rescue catches, which is the only way to tell "could not enter
+  # the role" apart from "the block failed inside it".
+  it 'does not blame ddl_role for a connection error the block itself raised' do
+    configure(:db_manager)
+    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
+
+    expect { described_class.wrap { raise(ActiveRecord::ConnectionNotEstablished, 'from the block') } }
+      .to(raise_error(ActiveRecord::ConnectionNotEstablished, 'from the block'))
+  end
 end
 ```
 
@@ -1211,7 +1224,11 @@ Expected: PASS.
 
 - [ ] **Step 5: Probe non-vacuity**
 
-Temporarily change `raise if entered` to `raise if false` and re-run. The fourth example ("does not swallow an error raised by the block itself") must FAIL. Restore it, re-run, confirm PASS. Per `spec/CLAUDE.md`, a guard never seen failing is decoration.
+Temporarily change `raise if entered` to `raise if false` and re-run. Exactly ONE example must fail: **"does not blame ddl_role for a connection error the block itself raised"** — the fifth one, whose block raises a class the rescue actually catches. Restore it, re-run, confirm 5 examples pass.
+
+Do not use the fourth example as the probe target. An earlier version of this plan did, and it cannot fail: `ArgumentError` never reaches the rescue clause, so `entered` is never consulted and the example is green with the guard deleted. Verified by running it. A probe that cannot fail is worse than no probe, because it certifies the guard while testing nothing.
+
+Note also that `ActiveRecord::ConnectionNotDefined` subclasses `ConnectionNotEstablished`, so naming both in the rescue is redundant. Keep both anyway: the narrower class is what an unregistered role actually raises, and naming it documents the case.
 
 - [ ] **Step 6: Commit**
 
@@ -1275,24 +1292,16 @@ Add to `spec/unit/adapters/abstract_adapter_spec.rb`:
 
     it 'keeps pool bookkeeping outside the wrap' do
       reconfigure(ddl_role: :db_manager)
-      inside = nil
-      allow(ActiveRecord::Base).to(receive(:connected_to)) do |role:, &block|
-        _ = role
-        inside = true
-        begin
-          block.call
-        ensure
-          inside = false
-        end
-      end
+      current_depth, = role_depth_tracker
+      depths = {}
+      allow(adapter).to(receive(:drop_tenant) { depths[:drop_tenant] = current_depth.call })
       pool_manager = instance_double(Apartment::PoolManager)
-      allow(pool_manager).to(receive(:remove_tenant) { [] .tap { expect(inside).to(be(false)) } })
+      allow(pool_manager).to(receive(:remove_tenant) { depths[:remove_tenant] = current_depth.call; [] })
       allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
-      allow(adapter).to(receive(:drop_tenant))
 
       adapter.drop('acme')
 
-      expect(pool_manager).to(have_received(:remove_tenant).with('acme'))
+      expect(depths).to(eq(drop_tenant: 1, remove_tenant: 0))
     end
   end
 ```
@@ -1301,6 +1310,8 @@ Add to `spec/unit/adapters/abstract_adapter_spec.rb`:
 
 Run: `bundle exec rspec spec/unit/adapters/abstract_adapter_spec.rb -e "drop and the DDL role"`
 Expected: the first example FAILS with `observed` at 0 — `drop_tenant` runs outside any wrap today.
+
+Use the same `role_depth_tracker` helper shape the create-path examples in that file already use, and assert on a recorded depth map. An earlier version of this plan put an `expect` inside the `remove_tenant` stub instead; that is worse in two ways — a failure surfaces from inside a stub during `adapter.drop` rather than at an assertion, and if `remove_tenant` were never called the assertion would silently not run, which is why it needed a trailing `have_received` to shore it up. Its discrimination also rested on the tracking variable being `nil` before the wrap and `false` after, an accident of initialization rather than a stated fact.
 
 - [ ] **Step 3: Wrap the engine call only**
 
