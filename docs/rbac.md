@@ -90,15 +90,16 @@ c.tenant_privilege_policy = lambda { |ctx|
 
 ```
 validate name
-run :create callbacks
-  ddl_role wrap
-    create_tenant
-    policy.call(context(phase: :before_schema_load))
-    import_schema                    (when schema_load_strategy is set)
-    policy.call(context(phase: :after_schema_load))
-  leave wrap
-  seed                               (when seed_after_create is set)
-  instrument :create
+suppress pending-migration check
+  run :create callbacks
+    ddl_role wrap
+      create_tenant
+      policy.call(context(phase: :before_schema_load))
+      import_schema                    (when schema_load_strategy is set)
+      policy.call(context(phase: :after_schema_load))
+    leave wrap
+    seed                               (when seed_after_create is set)
+    instrument :create
 ```
 
 Which phase a statement belongs in is a property of your privilege model, not a detail.
