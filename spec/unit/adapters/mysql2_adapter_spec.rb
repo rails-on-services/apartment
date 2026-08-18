@@ -181,7 +181,7 @@ RSpec.shared_examples('a MySQL adapter') do
       )
 
       expect(statements.size).to(eq(1))
-      expect(statements.first).to(match(/GRANT SELECT, INSERT, UPDATE, DELETE ON `acme_test`\.\* TO 'app_user'@'%'/))
+      expect(statements.first).to(include("GRANT SELECT, INSERT, UPDATE, DELETE ON `acme_test`.* TO 'app_user'@'%'"))
     end
 
     it 'needs no statements after the schema load' do
@@ -197,7 +197,7 @@ RSpec.shared_examples('a MySQL adapter') do
         context(:before_schema_load), grant_to: %w[app_web app_worker], include_functions: true
       )
 
-      expect(statements.first).to(match(/TO 'app_web'@'%', 'app_worker'@'%'/))
+      expect(statements.first).to(include("TO 'app_web'@'%', 'app_worker'@'%'"))
     end
 
     it 'raises on a phase it does not know, rather than returning nothing' do
@@ -220,8 +220,8 @@ RSpec.shared_examples('a MySQL adapter') do
       end
 
       expect(raised).to(be_a(Apartment::ConfigurationError))
-      expect(raised.message).to(match(/bare role names/))
-      expect(raised.message).to(match(/tenant_privilege_policy/))
+      expect(raised.message).to(include('bare role names'))
+      expect(raised.message).to(include('tenant_privilege_policy'))
     end
   end
 

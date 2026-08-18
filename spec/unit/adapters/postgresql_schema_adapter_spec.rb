@@ -285,7 +285,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
         context(:after_schema_load), grant_to: %w[app_web app_worker], include_functions: true
       )
 
-      expect(statements.first).to(match(/TO "app_web", "app_worker"/))
+      expect(statements.first).to(include('TO "app_web", "app_worker"'))
     end
 
     # quote_table_name would split this into "svc"."migrator" — two identifiers where
@@ -298,7 +298,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
         context(:after_schema_load), grant_to: 'svc.migrator', include_functions: true
       )
 
-      expect(statements.first).to(match(/TO "svc\.migrator"/))
+      expect(statements.first).to(include('TO "svc.migrator"'))
     end
 
     it 'raises on a phase it does not know, rather than falling through' do

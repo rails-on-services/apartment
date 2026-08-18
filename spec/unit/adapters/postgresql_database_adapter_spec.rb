@@ -70,7 +70,7 @@ RSpec.describe(Apartment::Adapters::PostgresqlDatabaseAdapter) do
       end
 
       expect(raised).to(be_a(Apartment::ConfigurationError))
-      expect(raised.message).to(match(/does not support/))
+      expect(raised.message).to(include('does not support'))
     end
   end
 

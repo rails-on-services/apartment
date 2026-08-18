@@ -46,7 +46,7 @@ RSpec.describe(Apartment::Adapters::Sqlite3Adapter) do
       end
 
       expect(raised).to(be_a(Apartment::ConfigurationError))
-      expect(raised.message).to(match(/does not support/))
+      expect(raised.message).to(include('does not support'))
     end
 
     it 'reports no database role' do
