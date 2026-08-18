@@ -564,10 +564,20 @@ Seeding stays outside the wrap. It writes rows, and rows carry no ownership.
 
 `import_schema` switches into the new tenant, and a pool key carries the role it was resolved
 under, so that switch registers a `<tenant>:<migration_role>` pool that nothing else will claim.
-`create` discards exactly that key (`Apartment.deregister_shard`) in an `ensure`. It deliberately
-does not call `PoolManager#evict_by_role`, which the Migrator uses at the end of a run: eviction
-by role has no in-use guard, so a create running while a migration is in flight would drop the
-pool that migration is holding.
+`create` discards exactly that key (`Apartment.deregister_shard`) in an `ensure`, under two
+narrowings that both come down to not disconnecting another operation's work.
+
+It does not call `PoolManager#evict_by_role`, which the Migrator uses at the end of a run:
+eviction by role has no in-use guard, so a create running during a migration would drop pools
+belonging to *other* tenants.
+
+And it skips a pool that is still in use (`Apartment.pool_in_use?`, the predicate `PoolReaper`
+uses and now delegates to), because the *same* key is what a concurrent migration of *this*
+tenant leases. Creating a tenant a Migrator run already covers would otherwise disconnect the
+pool that migration is holding. What lingers instead is one idle pool for the reaper to collect.
+
+The lease `import_schema` took is released before that check runs; without the release the check
+would see this thread's own connection and skip every discard.
 
 ### Callable Escape Hatch
 

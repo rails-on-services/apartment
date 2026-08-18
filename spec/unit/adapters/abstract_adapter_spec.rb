@@ -968,6 +968,41 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
     end
 
+    it 'releases the connection the schema import leased before discarding the pool' do
+      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+      pool = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool, connections: [])
+      allow(pool).to(receive(:release_connection))
+      pool_manager = instance_double(Apartment::PoolManager, peek: pool)
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.create('acme')
+
+      # Without the release, the in-use check would see this thread's own lease and
+      # skip the discard on every create.
+      expect(pool).to(have_received(:release_connection))
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+
+    it 'leaves a pool another operation is using registered' do
+      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+      busy = double('Connection', in_use?: true, open_transactions: 0)
+      pool = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool, connections: [busy])
+      allow(pool).to(receive(:release_connection))
+      pool_manager = instance_double(Apartment::PoolManager, peek: pool)
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.create('acme')
+
+      # A concurrent migration of this same tenant leases the same
+      # "<tenant>:<migration_role>" pool. Disconnecting it under that migration is
+      # worse than leaving a pool for the reaper to collect.
+      expect(Apartment).not_to(have_received(:deregister_shard))
+    end
+
     it 'discards that pool even when the schema import raises' do
       reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
       role_depth_tracker

@@ -604,14 +604,38 @@ module Apartment
 
       # import_schema switches into the new tenant, and a pool key carries the role it
       # was resolved under (Patches::ConnectionHandling), so that switch registers a
-      # migration-role pool nothing else will claim. Migrator evicts its own by role at
-      # the end of a run; a one-shot create discards this tenant's key alone, because
-      # evict_by_role would also drop a pool another thread is migrating through.
+      # migration-role pool nothing else will claim.
+      #
+      # Two narrowings, both about not disconnecting somebody else's work. This
+      # discards a single key rather than calling PoolManager#evict_by_role, which
+      # Migrator uses at the end of a run and which would also drop a pool another
+      # thread is migrating through. And it skips a pool that is still in use, since
+      # the SAME key is what a concurrent migration of this tenant leases: creating a
+      # tenant that a Migrator run is already covering would otherwise pull the pool
+      # out from under it. What lingers instead is one idle pool, which the reaper
+      # collects on its own terms.
+      #
+      # The release comes first because our own import_schema lease is on this pool;
+      # without it the in-use check would see this thread and skip every discard.
       def discard_migration_role_pool(tenant)
         role = Apartment.config.migration_role
         return unless role
 
-        Apartment.deregister_shard(Apartment.pool_key(tenant, role))
+        pool_key = Apartment.pool_key(tenant, role)
+        pool = Apartment.pool_manager&.peek(pool_key)
+        release_pool_connection(tenant, pool)
+        return if Apartment.pool_in_use?(pool)
+
+        Apartment.deregister_shard(pool_key)
+      end
+
+      # Releasing a lease must not mask the create's own outcome, and it has thrown
+      # before: see Migrator#release_tenant_pool_connection, which learned the same
+      # lesson from a ThreadError during teardown.
+      def release_pool_connection(tenant, pool)
+        pool&.release_connection
+      rescue StandardError => e
+        warn "[Apartment] Connection release failed for '#{tenant}': #{e.class}: #{e.message}"
       end
 
       def grant_tenant_privileges(tenant)
