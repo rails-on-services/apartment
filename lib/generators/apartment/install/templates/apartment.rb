@@ -76,7 +76,7 @@ Apartment.configure do |config|
   # == RBAC & Roles =========================================================
 
   # config.ddl_role                = nil   # e.g. :db_manager - the role all tenant DDL runs on
-  # config.app_role                = nil   # e.g. 'app_role' or -> { "app_#{Rails.env}" }
+  # config.tenant_privilege_policy = nil   # e.g. Apartment::Privileges.standard(grant_to: 'app_user')
   # config.environmentify_strategy = nil   # nil, :prepend, :append, or a callable
 
   # == PostgreSQL ===========================================================

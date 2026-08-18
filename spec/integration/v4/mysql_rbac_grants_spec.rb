@@ -13,14 +13,14 @@ RSpec.describe('MySQL RBAC privilege grants', :integration, :mysql_only, :rbac,
   before do
     config = V4IntegrationHelper.establish_default_connection!
 
-    # Create tenant as db_manager with app_role grants
+    # Create tenant as db_manager with the standard privilege policy
     RbacHelper.connect_as(:db_manager)
 
     Apartment.configure do |c|
       c.tenant_strategy = :database_name
       c.tenants_provider = -> { [tenant] }
       c.default_tenant = V4IntegrationHelper.default_tenant
-      c.app_role = RbacHelper::ROLES[:app_user]
+      c.tenant_privilege_policy = Apartment::Privileges.standard(grant_to: RbacHelper::ROLES[:app_user])
       c.check_pending_migrations = false
     end
 

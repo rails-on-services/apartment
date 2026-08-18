@@ -880,13 +880,13 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
-  # PostgreSQL scopes the ALTER DEFAULT PRIVILEGES rule that grant_privileges installs
-  # to the role that EXECUTES it, so create-time grants cover the tables later
-  # migrations create only if create and migrate run as the same role. Two further
-  # constraints force the whole DDL sequence into one wrap rather than just the grants:
-  # the tenant container is owned by whoever created it, and grant_privileges hands the
-  # app role USAGE plus DML but never CREATE, so a schema import left on the writing
-  # role could not create tables in a container it does not own.
+  # PostgreSQL scopes an ALTER DEFAULT PRIVILEGES rule with no FOR ROLE to the role
+  # that EXECUTES it, so a create-time rule covers the tables later migrations create
+  # only if create and migrate run as the same role. Two further constraints force the
+  # whole DDL sequence into one wrap rather than just the policy: the tenant container
+  # is owned by whoever created it, and a policy handing the app role USAGE plus DML
+  # but never CREATE leaves a schema import on the writing role unable to create
+  # tables in a container it does not own.
   describe '#create under a configured ddl_role' do
     # Records the connected_to nesting depth so each step of create can be asserted to
     # run inside (1) or outside (0) the role wrap.
@@ -911,17 +911,18 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       allow(ActiveRecord::Base).to(receive(:connection).and_return(double('Connection')))
     end
 
-    it 'runs create_tenant, the grants, and the schema import inside the migration role' do
-      reconfigure(ddl_role: :db_manager, app_role: 'app_user', schema_load_strategy: :schema_rb)
+    it 'runs create_tenant, both policy phases, and the schema import inside the DDL role' do
       current_depth, observed_roles = role_depth_tracker
       depths = {}
+      policy = ->(ctx) { depths[ctx.phase] = current_depth.call }
+      reconfigure(ddl_role: :db_manager, tenant_privilege_policy: policy, schema_load_strategy: :schema_rb)
+      allow(adapter).to(receive(:current_db_role).and_return('db_manager'))
       allow(adapter).to(receive(:create_tenant) { depths[:create_tenant] = current_depth.call })
-      allow(adapter).to(receive(:grant_privileges) { depths[:grant_privileges] = current_depth.call })
       allow(adapter).to(receive(:import_schema) { depths[:import_schema] = current_depth.call })
 
       adapter.create('acme')
 
-      expect(depths).to(eq(create_tenant: 1, grant_privileges: 1, import_schema: 1))
+      expect(depths).to(eq(create_tenant: 1, before_schema_load: 1, import_schema: 1, after_schema_load: 1))
       expect(observed_roles).to(eq([:db_manager]))
     end
 
@@ -989,6 +990,106 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       expect { adapter.create('acme') }.to(raise_error(Apartment::SchemaLoadError))
 
       expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+  end
+
+  describe '#create and the privilege policy' do
+    let(:connection) { double('Connection') }
+
+    before do
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
+      allow(adapter).to(receive(:current_db_role).and_return('db_manager'))
+    end
+
+    it 'invokes the policy once per phase, in order' do
+      phases = []
+      reconfigure(tenant_privilege_policy: ->(ctx) { phases << ctx.phase })
+
+      adapter.create('acme')
+
+      expect(phases).to(eq(%i[before_schema_load after_schema_load]))
+    end
+
+    it 'invokes both phases even when no schema is loaded' do
+      phases = []
+      reconfigure(schema_load_strategy: nil, tenant_privilege_policy: ->(ctx) { phases << ctx.phase })
+
+      adapter.create('acme')
+
+      # :after_schema_load means "after the import step", including when that step
+      # did nothing. A policy behaves the same either way.
+      expect(phases.size).to(eq(2))
+    end
+
+    it 'brackets the schema import between the phases' do
+      order = []
+      allow(adapter).to(receive(:import_schema) { order << :import })
+      reconfigure(schema_load_strategy: :schema_rb,
+                  tenant_privilege_policy: ->(ctx) { order << ctx.phase })
+
+      adapter.create('acme')
+
+      expect(order).to(eq(%i[before_schema_load import after_schema_load]))
+    end
+
+    it 'gives the policy the physical container name, not the logical tenant' do
+      names = []
+      reconfigure(environmentify_strategy: :append,
+                  tenant_privilege_policy: ->(ctx) { names << [ctx.tenant, ctx.container_name] })
+
+      adapter.create('acme')
+
+      # A policy interpolating the logical name would target the wrong object
+      # under any environmentify_strategy.
+      expect(names.first).to(eq(['acme', adapter.send(:physical_tenant_name, 'acme')]))
+    end
+
+    it 'resolves the database role once, not once per phase' do
+      reconfigure(tenant_privilege_policy: ->(_ctx) {})
+
+      adapter.create('acme')
+
+      expect(adapter).to(have_received(:current_db_role).once)
+    end
+
+    # A second create on the same adapter instance must re-resolve the role: the
+    # memo is per create, cleared in run_tenant_ddl's ensure.
+    it 'resolves the database role again on the next create' do
+      reconfigure(tenant_privilege_policy: ->(_ctx) {})
+
+      adapter.create('acme')
+      adapter.create('other')
+
+      expect(adapter).to(have_received(:current_db_role).twice)
+    end
+
+    # And it must clear even when the create blew up, or every later create on
+    # this instance would reuse a role resolved under the failed one.
+    it 'clears the resolved role when the policy raises' do
+      reconfigure(tenant_privilege_policy: ->(_ctx) { raise(ArgumentError, 'boom') })
+
+      expect { adapter.create('acme') }.to(raise_error(ArgumentError))
+
+      expect(adapter.instance_variable_get(:@privilege_db_role)).to(be_nil)
+    end
+
+    it 'aborts the create when the policy raises, without seeding', :aggregate_failures do
+      reconfigure(seed_after_create: true,
+                  tenant_privilege_policy: ->(_ctx) { raise(ArgumentError, 'boom') })
+      allow(adapter).to(receive(:seed))
+
+      expect { adapter.create('acme') }.to(raise_error(ArgumentError, 'boom'))
+
+      expect(adapter).not_to(have_received(:seed))
+      expect(Apartment::Instrumentation).not_to(have_received(:instrument).with(:create, anything))
+    end
+
+    it 'creates the tenant without a policy configured' do
+      reconfigure
+
+      expect { adapter.create('acme') }.not_to(raise_error)
+      expect(adapter.created_tenants).to(include('acme'))
     end
   end
 

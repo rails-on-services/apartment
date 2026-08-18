@@ -49,11 +49,12 @@ module Apartment
         )
       end
 
-      # grant_privileges: inherits no-op from AbstractAdapter.
-      # Database-per-tenant RBAC grants require cross-database ordering
-      # (GRANT CONNECT on server, table grants inside tenant DB).
-      # Use the callable app_role escape hatch for this strategy.
-      # See docs/designs/v4-phase5-rbac-roles-schema-cache.md.
+      # standard_privilege_statements: inherits the ConfigurationError raise from
+      # AbstractAdapter. Database-per-tenant RBAC grants require cross-database
+      # ordering (GRANT CONNECT on the server, table grants inside the tenant DB),
+      # which Privileges.standard does not implement. Write a
+      # tenant_privilege_policy for this strategy instead.
+      # See docs/designs/v4-rbac-contract.md.
 
       private
 

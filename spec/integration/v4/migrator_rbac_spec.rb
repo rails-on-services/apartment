@@ -21,7 +21,7 @@ RSpec.describe('Migrator with ddl_role', :integration, :postgresql_only, :rbac,
       c.tenants_provider = -> { tenants }
       c.default_tenant = 'public'
       c.ddl_role = :db_manager
-      c.app_role = RbacHelper::ROLES[:app_user]
+      c.tenant_privilege_policy = Apartment::Privileges.standard(grant_to: RbacHelper::ROLES[:app_user])
       c.check_pending_migrations = false
     end
 

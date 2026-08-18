@@ -600,30 +600,32 @@ module Apartment
         error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error
       end
 
-      # Every DDL step of a create runs on config.ddl_role when one is set:
-      # the container, its grants, and any schema import.
+      # Every DDL step of a create runs on config.ddl_role when one is set: the
+      # container, both privilege-policy phases, and any schema import.
       #
-      # PostgreSQL scopes the ALTER DEFAULT PRIVILEGES rule grant_privileges installs
-      # to the role that EXECUTES it, never to the role named in the GRANT. Recording
-      # that rule under one role while migrations create tables under another leaves
-      # every migration-created table outside it — the same missing-grant failure as
-      # running the migrations themselves on the writing role, only it surfaces later,
-      # from whatever ordinary query first touches the new table.
+      # PostgreSQL scopes an ALTER DEFAULT PRIVILEGES rule with no FOR ROLE to the
+      # role that EXECUTES it, never to the role named in the GRANT. Recording such a
+      # rule under one role while migrations create tables under another leaves every
+      # migration-created table outside it — the same missing-grant failure as running
+      # the migrations themselves on the writing role, only it surfaces later, from
+      # whatever ordinary query first touches the new table.
       #
-      # Two further constraints keep the three steps in ONE wrap rather than wrapping
-      # only the grants. The container is owned by whoever created it, and ALTER on a
-      # table needs ownership. And grant_privileges hands the app role USAGE plus DML,
-      # never CREATE, so a schema import left on the writing role could not add tables
-      # to a container it does not own.
+      # Two further constraints keep the steps in ONE wrap rather than wrapping only
+      # the policy. The container is owned by whoever created it, and ALTER on a table
+      # needs ownership. And a policy that hands the app role USAGE plus DML, never
+      # CREATE, leaves a schema import on the writing role unable to add tables to a
+      # container it does not own.
       #
       # Seeding stays outside the wrap: it writes rows, and rows carry no ownership.
       def run_tenant_ddl(tenant)
         MigrationRole.wrap do
           create_tenant(tenant)
-          grant_tenant_privileges(tenant)
+          apply_privilege_policy(tenant, :before_schema_load)
           import_schema(tenant) if Apartment.config.schema_load_strategy
+          apply_privilege_policy(tenant, :after_schema_load)
         end
       ensure
+        @privilege_db_role = nil
         discard_ddl_role_pool(tenant)
       end
 
@@ -701,21 +703,31 @@ module Apartment
         Apartment::Current.migrating = previous
       end
 
-      def grant_tenant_privileges(tenant)
-        app_role = Apartment.config.app_role
-        return unless app_role
+      # Invoke the adopter's policy for one phase. Two calls per create, because
+      # position is policy: a default-privileges-only model has to record its rules
+      # before the schema import or imported tables fall outside them, while a model
+      # granting existing objects has to run after. See
+      # docs/designs/v4-rbac-contract.md.
+      #
+      # A fresh context per phase; nothing is shared but the resolved role, which is
+      # memoized for the create so the round trip is paid once. run_tenant_ddl clears
+      # the memo in its ensure, so a later create re-resolves.
+      def apply_privilege_policy(tenant, phase)
+        policy = Apartment.config.tenant_privilege_policy
+        return unless policy
 
         conn = ActiveRecord::Base.connection
-        if app_role.respond_to?(:call)
-          app_role.call(tenant, conn)
-        else
-          grant_privileges(tenant, conn, app_role)
-        end
-      end
+        @privilege_db_role ||= current_db_role(conn)
 
-      # No-op base implementation — PG schema and MySQL adapters override.
-      def grant_privileges(tenant, connection, role_name)
-        # intentional no-op
+        policy.call(
+          Privileges::Context.new(
+            tenant: tenant,
+            container_name: physical_tenant_name(tenant),
+            connection: conn,
+            db_role: @privilege_db_role,
+            phase: phase
+          )
+        )
       end
 
       # Connection config with string keys (used by subclasses to build tenant configs).
