@@ -414,6 +414,8 @@ Add to `spec/unit/adapters/postgresql_schema_adapter_spec.rb`:
 Run: `bundle exec rspec spec/unit/adapters/postgresql_schema_adapter_spec.rb -e standard_privilege_statements`
 Expected: FAIL with `NoMethodError: undefined method 'standard_privilege_statements'`.
 
+**Method visibility matters here and the snippets below do not carry it.** Each adapter file has `protected` and then `private` sections, and `grant_privileges` sat under `private`. Pasting the replacements where it was makes them private, and the first green run fails with "protected method 'standard_privilege_statements' called". Put both public methods immediately BEFORE the `protected` keyword in each adapter, and any helper in the existing `private` section. Do not paste the `private` keyword that appears inside the PostgreSQL snippet below — the file already has one.
+
 - [ ] **Step 3: Add the base seam**
 
 In `lib/apartment/adapters/abstract_adapter.rb`, public section:
@@ -546,7 +548,7 @@ Add to `spec/unit/adapters/mysql2_adapter_spec.rb`:
 - [ ] **Step 7: Run it to make sure it fails**
 
 Run: `bundle exec rspec spec/unit/adapters/mysql2_adapter_spec.rb -e standard_privilege_statements`
-Expected: FAIL — the base implementation raises `Apartment::ConfigurationError`.
+Expected: FAIL — the base implementation raises `Apartment::ConfigurationError`. Expect **six** failures from the three examples: that file is a `shared_examples` block run for both `Mysql2Adapter` and `TrilogyAdapter`, so every count in it doubles.
 
 - [ ] **Step 8: Implement MySQL**
 
@@ -671,8 +673,11 @@ RSpec.describe(Apartment::Privileges) do
     end
 
     it 'executes the statements the adapter supplies for that phase', :aggregate_failures do
+      # ['app_user'], not 'app_user': the factory normalizes with Array() once, so the
+      # adapter seam always receives one shape. The adapters' own Array() call is
+      # tolerance, not the contract.
       allow(adapter).to(receive(:standard_privilege_statements)
-        .with(anything, grant_to: 'app_user', include_functions: true)
+        .with(anything, grant_to: ['app_user'], include_functions: true)
         .and_return(['GRANT A', 'GRANT B']))
       allow(connection).to(receive(:execute))
 
@@ -682,9 +687,17 @@ RSpec.describe(Apartment::Privileges) do
       expect(connection).to(have_received(:execute).with('GRANT B').ordered)
     end
 
+    it 'accepts an Array of roles and forwards it as given' do
+      expect(adapter).to(receive(:standard_privilege_statements)
+        .with(anything, grant_to: %w[app_web app_worker], include_functions: true)
+        .and_return([]))
+
+      described_class.standard(grant_to: %w[app_web app_worker]).call(context)
+    end
+
     it 'passes include_functions through' do
       expect(adapter).to(receive(:standard_privilege_statements)
-        .with(anything, grant_to: 'app_user', include_functions: false)
+        .with(anything, grant_to: ['app_user'], include_functions: false)
         .and_return([]))
 
       described_class.standard(grant_to: 'app_user', include_functions: false).call(context)
@@ -1004,6 +1017,25 @@ Clear the memo at the end of `#run_tenant_ddl`'s `ensure`, so a second `create` 
 Run: `bundle exec rspec spec/unit/ && bundle exec rubocop lib spec`
 Expected: PASS, no offenses. Existing `#grant_tenant_privileges` examples must already be gone (Task 3, Step 10).
 
+- [ ] **Step 7b: Port the integration specs off `app_role` in this same task**
+
+Originally Task 8's Step 1. Moved here deliberately: removing a config key and updating its call sites belong in one commit. Left in Task 8, the RBAC lane would not merely fail between the two commits — it would raise `NoMethodError` on `c.app_role=` at configure time, and the tree would sit red across a review boundary.
+
+```bash
+grep -rln "app_role" spec/
+```
+
+In each hit, replace `c.app_role = RbacHelper::ROLES[:app_user]` with:
+
+```ruby
+      c.tenant_privilege_policy = Apartment::Privileges.standard(grant_to: RbacHelper::ROLES[:app_user])
+```
+
+Then run the lane:
+
+Run: `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/ --tag rbac`
+Expected: `24 examples, 0 failures, 4 pending`. These five examples went red at the end of Task 3 — `migrator_rbac_spec.rb:87`, `rbac_grants_spec.rb:61`, `:96`, `:119`, and `create_migration_role_spec.rb:67` — because the String form fell through to the base no-op once the adapter overrides were gone. They assert on effective privileges rather than on statements, so a correct port turns all five green without touching an assertion. If one stays red, the phase mapping in Task 3 is wrong; fix the mapping, not the spec.
+
 - [ ] **Step 8: Commit**
 
 ```bash
@@ -1315,22 +1347,12 @@ the privilege."
 - Consumes: everything above; `RbacHelper` from `spec/integration/v4/support/rbac_helper.rb`.
 - Produces: no library code.
 
-- [ ] **Step 1: Find every spec configuring the removed key**
+The port of the existing specs off `app_role` moved into Task 5, Step 7b — see the note there. This task adds only the new coverage.
 
-```bash
-grep -rln "app_role" spec/
-```
-
-Each hit sets `c.app_role = RbacHelper::ROLES[:app_user]`. Replace with:
-
-```ruby
-      c.tenant_privilege_policy = Apartment::Privileges.standard(grant_to: RbacHelper::ROLES[:app_user])
-```
-
-- [ ] **Step 2: Run the RBAC lane to see what breaks**
+- [ ] **Step 1: Confirm the lane is green before you add to it**
 
 Run: `DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/ --tag rbac`
-Expected: PASS once Step 1 is done. These specs assert on effective privileges, not on statements, so a correct port leaves them green. A failure here means the statement mapping in Task 3 is wrong — fix the mapping, not the spec.
+Expected: `24 examples, 0 failures, 4 pending`. If it is red, Task 5 is incomplete; finish it before adding examples.
 
 - [ ] **Step 3: Write the new integration spec**
 
