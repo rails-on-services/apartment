@@ -70,6 +70,67 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       end
     end
 
+    # The four `return super` guards run BEFORE any tenant resolution, so a failure
+    # they surface is stock Rails' failure and must arrive as itself. A method-level
+    # rescue covered them and relabelled every one as "Failed to resolve connection
+    # pool for tenant ''" — an unrelated connection error reported as an Apartment
+    # tenant-resolution failure, on the path most of a Rails app takes.
+    #
+    # `connected_to(role: :nope)` is how the defect was reported: the role resolves no
+    # pool, so AR's own lookup raises. Asserted against ConnectionNotEstablished, not
+    # the ConnectionNotDefined subclass Rails 8 raises, because that subclass does not
+    # exist before Rails 8.0 and this spec runs on the Rails floor too.
+    context 'when the default path raises' do
+      it 'surfaces the error unwrapped for a nil tenant' do
+        Apartment::Current.tenant = nil
+
+        expect { ActiveRecord::Base.connected_to(role: :nope) { ActiveRecord::Base.connection_pool } }
+          .to(raise_error(ActiveRecord::ConnectionNotEstablished))
+      end
+
+      it 'surfaces the error unwrapped for the default tenant' do
+        Apartment::Current.tenant = 'public'
+
+        expect { ActiveRecord::Base.connected_to(role: :nope) { ActiveRecord::Base.connection_pool } }
+          .to(raise_error(ActiveRecord::ConnectionNotEstablished))
+      end
+
+      # Stubbed at Apartment.pool_manager rather than via clear_config, which also
+      # nils the config and would leave guard 1 answering instead of this one.
+      it 'surfaces the error unwrapped when there is no pool manager' do
+        allow(Apartment).to(receive(:pool_manager).and_return(nil))
+        Apartment::Current.tenant = 'acme'
+
+        expect { ActiveRecord::Base.connected_to(role: :nope) { ActiveRecord::Base.connection_pool } }
+          .to(raise_error(ActiveRecord::ConnectionNotEstablished))
+      end
+
+      it 'surfaces the error unwrapped for a pinned model on a separate pool' do
+        require_relative('../../../lib/apartment/concerns/model')
+        allow(mock_adapter).to(receive(:shared_pinned_connection?).and_return(false))
+        pinned_class = Class.new(ActiveRecord::Base) do
+          include Apartment::Model
+        end
+        stub_const('PinnedDefaultPathModel', pinned_class)
+        pinned_class.pin_tenant
+        Apartment::Current.tenant = 'acme'
+
+        expect { ActiveRecord::Base.connected_to(role: :nope) { pinned_class.connection_pool } }
+          .to(raise_error(ActiveRecord::ConnectionNotEstablished))
+      end
+
+      # The other half of the fix: narrowing the rescue must not delete the wrapping.
+      it 'still wraps a failure raised while resolving a tenant pool' do
+        allow(mock_adapter).to(receive(:validated_connection_config).and_raise(RuntimeError, 'boom'))
+        Apartment::Current.tenant = 'acme'
+
+        expect { ActiveRecord::Base.connection_pool }.to(
+          raise_error(Apartment::ApartmentError,
+                      /Failed to resolve connection pool for tenant 'acme': RuntimeError: boom/)
+        )
+      end
+    end
+
     context 'when tenant equals the default tenant' do
       it 'returns the default pool' do
         Apartment::Current.tenant = 'public'

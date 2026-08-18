@@ -50,34 +50,27 @@ module Apartment
     # caller's own code now reaches the probe instead of passing straight through. That
     # is harmless: a registered role re-raises it exactly as before, and if our role is
     # missing then naming +ddl_role+ is correct advice whatever the immediate error was.
+    #
+    # Nothing arrives wrapped, which is why the clause names only ActiveRecord's error.
+    # +Patches::ConnectionHandling#connection_pool+ scopes its relabelling rescue to the
+    # tenant-resolution path, and a ddl_role failure is not on that path: it surfaces from
+    # the default-path lookup the early guards hand to +super+, outside the scope. The
+    # tenant path cannot produce one either, since it establishes a pool for the role
+    # itself and so never fails on an unregistered one. The +Apartment::ApartmentError+
+    # clause and the one-layer unwrap that used to sit here existed only for the
+    # method-level rescue that covered those guards, and went with it.
     def wrap(&)
       role = Apartment.config.ddl_role
       return yield unless role
 
       ActiveRecord::Base.connected_to(role: role, &)
-    rescue ActiveRecord::ConnectionNotEstablished, Apartment::ApartmentError => e
-      original = unwrap(e)
-      raise unless original.is_a?(ActiveRecord::ConnectionNotEstablished)
+    rescue ActiveRecord::ConnectionNotEstablished => e
       raise if role_pool_registered?(role)
 
       raise(Apartment::ConfigurationError,
             "ddl_role is set to #{role.inspect} but ActiveRecord has no connection " \
             'registered for that role. Declare it with connects_to on your ' \
-            "application record, or unset ddl_role. (#{original.class}: #{original.message})")
-    end
-
-    # Patches::ConnectionHandling#connection_pool has a method-level rescue that
-    # relabels any StandardError as Apartment::ApartmentError, and it covers the
-    # early `return super` for a nil tenant — so the role failure a create hits first
-    # arrives here already wrapped, reading "Failed to resolve connection pool for
-    # tenant ''". Unwrapping one layer is the same move AbstractAdapter#unwrap_db_error
-    # makes for the same wrapper.
-    #
-    # This does not widen what gets translated. Two independent conditions still have
-    # to agree: the unwrapped error must be a ConnectionNotEstablished, AND our role must
-    # fail to resolve. An ApartmentError carrying anything else re-raises untouched.
-    def unwrap(error)
-      error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error
+            "application record, or unset ddl_role. (#{e.class}: #{e.message})")
     end
 
     # Whether ActiveRecord can resolve a pool for +role+ on the current shard.
