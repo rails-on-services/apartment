@@ -58,10 +58,12 @@ module Apartment
           strategy: Apartment.config.tenant_strategy,
           adapter_name: base_config['adapter']
         )
-        run_callbacks(:create) do
-          run_tenant_ddl(tenant)
-          seed(tenant) if Apartment.config.seed_after_create
-          Instrumentation.instrument(:create, tenant: tenant)
+        suppressing_pending_migration_check do
+          run_callbacks(:create) do
+            run_tenant_ddl(tenant)
+            seed(tenant) if Apartment.config.seed_after_create
+            Instrumentation.instrument(:create, tenant: tenant)
+          end
         end
       end
 
@@ -636,6 +638,44 @@ module Apartment
         pool&.release_connection
       rescue StandardError => e
         warn "[Apartment] Connection release failed for '#{tenant}': #{e.class}: #{e.message}"
+      end
+
+      # Schema import and seeding switch into the tenant being created, and resolving
+      # that pool is where ConnectionHandling runs its pending-migration check. The
+      # container is seconds old and has of course run no migration, so the check
+      # fires against the very thing create is building and create raises instead of
+      # finishing. Only reproducible where the check is live — check_pending_migrations
+      # true (the default) and Rails.env.local? — so development and test, which is
+      # where creating a tenant by hand is most common.
+      #
+      # A switch alone does not trip it; the pool is resolved by the first query. That
+      # is why the failure looks intermittent across configurations: it needs a schema
+      # import, or seeds that actually touch the database.
+      #
+      # Migrator suppresses the same check with the same flag around its own switches.
+      # The previous value is restored rather than cleared, so a create nested inside a
+      # migration — an adopter's :create callback, a create-then-migrate helper — does
+      # not disarm the migration's own suppression on the way out.
+      #
+      # The window covers the whole :create callback chain, deliberately. Provisioning
+      # rows in the tenant just created is what those callbacks are for, and with the
+      # default schema_load_strategy of nil that tenant has no schema_migrations yet, so
+      # a narrower window would leave every such callback raising the very error this
+      # method exists to prevent.
+      #
+      # The cost of that width: Current.migrating is a boolean, not tenant-scoped, so a
+      # callback that switches to some OTHER cold tenant also skips that tenant's check
+      # and leaves its pool warm and unchecked. Accepted rather than overlooked. The
+      # check is a development convenience (config.check_pending_migrations plus
+      # Rails.env.local?), the effect is one missed warning until that pool is evicted,
+      # and closing it properly means making the flag tenant-aware — which Migrator also
+      # sets, per worker, so it is a change to a shared contract and belongs on its own.
+      def suppressing_pending_migration_check
+        previous = Apartment::Current.migrating
+        Apartment::Current.migrating = true
+        yield
+      ensure
+        Apartment::Current.migrating = previous
       end
 
       def grant_tenant_privileges(tenant)

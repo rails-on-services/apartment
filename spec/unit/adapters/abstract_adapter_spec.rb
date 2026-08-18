@@ -1026,6 +1026,71 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
+  describe '#create and the pending-migration check' do
+    before { allow(Apartment::Instrumentation).to(receive(:instrument)) }
+
+    after { Apartment::Current.migrating = nil }
+
+    it 'suppresses the check while the tenant is being built' do
+      reconfigure
+      observed = nil
+      allow(adapter).to(receive(:create_tenant) { observed = Apartment::Current.migrating })
+
+      adapter.create('acme')
+
+      # import_schema and seed switch into a container that has run no migration, so
+      # the check would otherwise fire against the thing being created.
+      expect(observed).to(be(true))
+    end
+
+    it 'restores the flag afterwards' do
+      reconfigure
+
+      adapter.create('acme')
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+
+    it 'restores the flag when the create raises' do
+      reconfigure
+      allow(adapter).to(receive(:create_tenant).and_raise(ArgumentError, 'boom'))
+
+      expect { adapter.create('acme') }.to(raise_error(ArgumentError))
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+
+    it 'covers the :create callbacks, so one touching the new tenant is protected' do
+      reconfigure
+      observed = nil
+      TestAdapter.set_callback(:create, :after) { observed = Apartment::Current.migrating }
+
+      begin
+        adapter.create('acme')
+      ensure
+        TestAdapter.reset_callbacks(:create)
+      end
+
+      # Provisioning rows in the tenant just created is what a :create callback is for,
+      # and with schema_load_strategy nil that tenant has no schema_migrations, so a
+      # window narrower than the callback chain would leave the callback raising.
+      # The accepted cost is that a callback switching to an unrelated cold tenant also
+      # skips its check; see suppressing_pending_migration_check.
+      expect(observed).to(be(true))
+    end
+
+    it 'leaves an enclosing migration still suppressed' do
+      reconfigure
+      Apartment::Current.migrating = true
+
+      adapter.create('acme')
+
+      # A create nested inside a migration — an adopter :create callback, or a
+      # create-then-migrate helper — must not disarm the migration on its way out.
+      expect(Apartment::Current.migrating).to(be(true))
+    end
+  end
+
   describe '#create with schema loading' do
     it 'calls import_schema when schema_load_strategy is set' do
       reconfigure(schema_load_strategy: :schema_rb)
