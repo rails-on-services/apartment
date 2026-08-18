@@ -69,7 +69,11 @@ module Apartment
 
       # Drop a tenant.
       def drop(tenant)
-        drop_tenant(tenant)
+        # Wrapped for the same reason create is: the container is owned by ddl_role,
+        # and DROP SCHEMA requires ownership, so the writing role generally cannot drop
+        # what the gem created. Only the engine call — the pool removal and shard
+        # deregistration below are local bookkeeping and need no role.
+        MigrationRole.wrap { drop_tenant(tenant) }
         removed_pools = Apartment.pool_manager&.remove_tenant(tenant) || []
         removed_pools.each do |pool_key, pool|
           # remove_tenant already took these out of the manager, so deregister_shard's

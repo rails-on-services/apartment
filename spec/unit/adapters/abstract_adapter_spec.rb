@@ -993,6 +993,62 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
+  describe '#drop and the DDL role' do
+    # Records connected_to nesting depth, so each step of drop can be asserted to run
+    # inside (1) or outside (0) the role wrap. Same shape as the create-path tracker
+    # above; asserting on a recorded depth rather than expecting inside a stub keeps
+    # the failure message at the assertion and cannot pass by never running.
+    def role_depth_tracker
+      depth = 0
+      observed_roles = []
+      allow(ActiveRecord::Base).to(receive(:connected_to)) do |role:, &block|
+        observed_roles << role
+        depth += 1
+        begin
+          block.call
+        ensure
+          depth -= 1
+        end
+      end
+      [-> { depth }, observed_roles]
+    end
+
+    before { allow(Apartment::Instrumentation).to(receive(:instrument)) }
+
+    # DROP SCHEMA requires ownership, and the container is owned by ddl_role, so a
+    # writing role generally cannot drop what the gem created.
+    it 'drops the container inside the DDL role', :aggregate_failures do
+      reconfigure(ddl_role: :db_manager)
+      current_depth, observed_roles = role_depth_tracker
+      observed = nil
+      allow(adapter).to(receive(:drop_tenant) { observed = current_depth.call })
+
+      adapter.drop('acme')
+
+      expect(observed).to(eq(1))
+      expect(observed_roles).to(eq([:db_manager]))
+    end
+
+    # Pool removal and shard deregistration are local bookkeeping. Wrapping them would
+    # hold a ddl_role connection for work that needs no database at all.
+    it 'keeps pool bookkeeping outside the wrap' do
+      reconfigure(ddl_role: :db_manager)
+      current_depth, = role_depth_tracker
+      depths = {}
+      allow(adapter).to(receive(:drop_tenant) { depths[:drop_tenant] = current_depth.call })
+      pool_manager = instance_double(Apartment::PoolManager)
+      allow(pool_manager).to(receive(:remove_tenant)) do
+        depths[:remove_tenant] = current_depth.call
+        []
+      end
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.drop('acme')
+
+      expect(depths).to(eq(drop_tenant: 1, remove_tenant: 0))
+    end
+  end
+
   describe '#create and the privilege policy' do
     let(:connection) { double('Connection') }
 
