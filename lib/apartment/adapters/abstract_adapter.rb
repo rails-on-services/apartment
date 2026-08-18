@@ -165,8 +165,7 @@ module Apartment
       def standard_privilege_statements(_ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
         raise(Apartment::ConfigurationError,
               "Apartment::Privileges.standard does not support #{self.class.name}. " \
-              'Write a tenant_privilege_policy for this strategy; ' \
-              'see docs/designs/v4-rbac-contract.md.')
+              'Write a tenant_privilege_policy for this strategy; see docs/rbac.md.')
       end
 
       # The executing database role, for policies that need to name it explicitly

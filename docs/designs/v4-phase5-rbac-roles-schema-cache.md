@@ -1,5 +1,7 @@
 # Phase 5: Role-Aware Connections, RBAC, Schema Cache, Pending Migration Check
 
+> **Superseded in part.** The `migration_role` and `app_role` sections below, and the Key Invariant, are superseded by [`v4-rbac-contract.md`](v4-rbac-contract.md). `migration_role` is now `ddl_role`, `app_role` is removed, and privilege policy belongs to the adopter. The schema-cache and `PendingMigrationError` sections still stand.
+
 ## Overview
 
 Phase 5 makes Apartment v4's `ConnectionHandling` patch role-aware, enabling RBAC credential separation, replica routing, and custom role composition with tenant switching — all using Rails' native `connected_to(role:)` mechanism. It also adds per-tenant schema cache generation and a development-time pending migration check.
