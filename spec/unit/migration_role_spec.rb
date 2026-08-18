@@ -26,18 +26,44 @@ RSpec.describe(Apartment::MigrationRole) do
     described_class.wrap { :ran }
   end
 
+  # Reality, verified against Rails 8.1: connected_to(role:) resolves no pool. It
+  # pushes onto connected_to_stack and yields, so an unregistered role surfaces only
+  # when the BLOCK asks for a connection. Every example below therefore yields, and
+  # the earlier version of this spec — which stubbed connected_to to raise without
+  # yielding — could not fail, because Rails never does that.
+  #
+  # The classifier is stubbed at ActiveRecord's own seam rather than simulated: a nil
+  # from retrieve_connection_pool is what a missing role looks like, and a pool is
+  # what a present one looks like.
+  def stub_role_pool(pool)
+    handler = instance_double(ActiveRecord::ConnectionAdapters::ConnectionHandler)
+    allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
+    allow(handler).to(receive(:retrieve_connection_pool).and_return(pool))
+  end
+
+  # A wrap whose block never touches the database is silent by design, even with an
+  # unresolvable role: it did not need the role to exist. Do not "fix" this by
+  # probing before the yield — that invents a failure, and it breaks a role
+  # registered lazily on a model load that has not happened yet.
+  it 'stays silent when the block never asks for a connection' do
+    configure(:nope)
+    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
+
+    expect(described_class.wrap { :ran }).to(eq(:ran))
+  end
+
   # The check is here rather than at activate! because activate! runs in
   # after_initialize, which fires after the eager-load initializer — so under lazy
   # loading (development, most test setups) no model has run connects_to yet and a
   # boot-time check would fail on every boot.
   it 'translates an unresolvable role into a ConfigurationError naming the key', :aggregate_failures do
     configure(:nope)
-    allow(ActiveRecord::Base).to(receive(:connected_to)
-      .and_raise(ActiveRecord::ConnectionNotDefined, 'No connection pool for role :nope'))
+    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
+    stub_role_pool(nil)
 
     raised = nil
     begin
-      described_class.wrap { :never }
+      described_class.wrap { raise(ActiveRecord::ConnectionNotDefined, 'No connection pool for role :nope') }
     rescue StandardError => e
       raised = e
     end
@@ -47,32 +73,50 @@ RSpec.describe(Apartment::MigrationRole) do
     expect(raised.cause).to(be_a(ActiveRecord::ConnectionNotDefined))
   end
 
+  # Same error class, opposite verdict. Our role resolves, so a ConnectionNotDefined
+  # from inside the block is about some other connection the caller asked for, and
+  # blaming ddl_role for it would send the reader to the wrong config key.
+  it 'does not blame ddl_role when our role resolves and the block still fails', :aggregate_failures do
+    configure(:db_manager)
+    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
+    stub_role_pool(instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool))
+
+    raised = nil
+    begin
+      described_class.wrap { raise(ActiveRecord::ConnectionNotDefined, 'No connection pool for role :other') }
+    rescue StandardError => e
+      raised = e
+    end
+
+    expect(raised).to(be_a(ActiveRecord::ConnectionNotDefined))
+    expect(raised.message).to(eq('No connection pool for role :other'))
+  end
+
+  # Bare ConnectionNotEstablished is outside the rescue: it does not mean "no pool for
+  # this role", and translating it would report a dead database as a misconfigured key.
+  it 'leaves a bare ConnectionNotEstablished alone' do
+    configure(:db_manager)
+    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
+
+    expect { described_class.wrap { raise(ActiveRecord::ConnectionNotEstablished, 'server closed') } }
+      .to(raise_error(ActiveRecord::ConnectionNotEstablished, 'server closed'))
+  end
+
+  # The classifier must not mask the original error when it cannot answer.
+  it 'reports the role as registered when the probe itself fails' do
+    configure(:nope)
+    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
+    allow(ActiveRecord::Base).to(receive(:connection_handler).and_raise(RuntimeError, 'handler gone'))
+
+    expect { described_class.wrap { raise(ActiveRecord::ConnectionNotDefined, 'no pool') } }
+      .to(raise_error(ActiveRecord::ConnectionNotDefined, 'no pool'))
+  end
+
   it 'does not swallow an error raised by the block itself' do
     configure(:db_manager)
     allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
 
     expect { described_class.wrap { raise(ArgumentError, 'from the block') } }
       .to(raise_error(ArgumentError, 'from the block'))
-  end
-
-  # The example that actually exercises the +entered+ guard. An ArgumentError from
-  # the block never reaches the rescue, so it proves nothing about the guard; a
-  # ConnectionNotEstablished raised by a query INSIDE the block hits the same rescue
-  # as a role that could not be entered, and must still surface as itself. Without
-  # the guard, a caller's own connection failure would be reported as "your ddl_role
-  # is misconfigured".
-  it 'does not blame ddl_role for a connection error the block itself raised', :aggregate_failures do
-    configure(:db_manager)
-    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
-
-    raised = nil
-    begin
-      described_class.wrap { raise(ActiveRecord::ConnectionNotEstablished, 'from a query in the block') }
-    rescue StandardError => e
-      raised = e
-    end
-
-    expect(raised).to(be_a(ActiveRecord::ConnectionNotEstablished))
-    expect(raised.message).to(eq('from a query in the block'))
   end
 end
