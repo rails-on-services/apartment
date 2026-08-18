@@ -306,7 +306,7 @@ Current coverage areas:
 - ⚠️ Migration scenarios (partial)
 - ✅ Fiber safety (tested in v4 via CurrentAttributes)
 - ✅ Request lifecycle (elevator->switch->response in dummy app)
-- ✅ RBAC integration (role-aware connections, privilege grants, Migrator with migration_role)
+- ✅ RBAC integration (role-aware connections, privilege grants, Migrator with ddl_role)
 
 Areas needing more coverage:
 - Concurrent tenant access patterns

@@ -182,11 +182,11 @@ See the [Elevators](#elevators) section for available options.
 
 ### RBAC
 
-`migration_role`: a Symbol naming the database role used for DDL (default: nil, uses the connection's default role). It covers migrations and tenant creation alike: the container, the `app_role` grants, and any `schema_load_strategy` import all run on it.
+`ddl_role`: a Symbol naming the database role used for DDL (default: nil, uses the connection's default role). It covers migrations and tenant creation alike: the container, the `app_role` grants, and any `schema_load_strategy` import all run on it.
 
 `app_role`: a String or callable returning the restricted role for application queries (default: nil).
 
-Set both or neither. The grants Apartment installs at create time include an `ALTER DEFAULT PRIVILEGES` rule, and PostgreSQL scopes that rule to the role that executed it, so tenant creation and migrations have to share one role or the tables your migrations add land outside the rule. Apartment enforces that by running both on `migration_role`; configuring `app_role` alone leaves the rule bound to whichever role happened to create the tenant.
+Set both or neither. The grants Apartment installs at create time include an `ALTER DEFAULT PRIVILEGES` rule, and PostgreSQL scopes that rule to the role that executed it, so tenant creation and migrations have to share one role or the tables your migrations add land outside the rule. Apartment enforces that by running both on `ddl_role`; configuring `app_role` alone leaves the rule bound to whichever role happened to create the tenant.
 
 ### PostgreSQL
 

@@ -909,7 +909,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
   # the tenant container is owned by whoever created it, and grant_privileges hands the
   # app role USAGE plus DML but never CREATE, so a schema import left on the writing
   # role could not create tables in a container it does not own.
-  describe '#create under a configured migration_role' do
+  describe '#create under a configured ddl_role' do
     # Records the connected_to nesting depth so each step of create can be asserted to
     # run inside (1) or outside (0) the role wrap.
     def role_depth_tracker
@@ -934,7 +934,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
 
     it 'runs create_tenant, the grants, and the schema import inside the migration role' do
-      reconfigure(migration_role: :db_manager, app_role: 'app_user', schema_load_strategy: :schema_rb)
+      reconfigure(ddl_role: :db_manager, app_role: 'app_user', schema_load_strategy: :schema_rb)
       current_depth, observed_roles = role_depth_tracker
       depths = {}
       allow(adapter).to(receive(:create_tenant) { depths[:create_tenant] = current_depth.call })
@@ -948,7 +948,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
 
     it 'runs seeding outside the migration role, because seeding writes data' do
-      reconfigure(migration_role: :db_manager, seed_after_create: true)
+      reconfigure(ddl_role: :db_manager, seed_after_create: true)
       current_depth, = role_depth_tracker
       seed_depth = nil
       allow(adapter).to(receive(:seed) { seed_depth = current_depth.call })
@@ -958,8 +958,8 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       expect(seed_depth).to(eq(0))
     end
 
-    it 'discards the migration-role pool the schema import opened for the new tenant' do
-      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+    it 'discards the DDL-role pool the schema import opened for the new tenant' do
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
       role_depth_tracker
       allow(adapter).to(receive(:import_schema))
 
@@ -969,7 +969,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
 
     it 'releases the connection the schema import leased before discarding the pool' do
-      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
       role_depth_tracker
       allow(adapter).to(receive(:import_schema))
       pool = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool, connections: [])
@@ -986,7 +986,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
 
     it 'leaves a pool another operation is using registered' do
-      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
       role_depth_tracker
       allow(adapter).to(receive(:import_schema))
       busy = double('Connection', in_use?: true, open_transactions: 0)
@@ -998,13 +998,13 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       adapter.create('acme')
 
       # A concurrent migration of this same tenant leases the same
-      # "<tenant>:<migration_role>" pool. Disconnecting it under that migration is
+      # "<tenant>:<ddl_role>" pool. Disconnecting it under that migration is
       # worse than leaving a pool for the reaper to collect.
       expect(Apartment).not_to(have_received(:deregister_shard))
     end
 
     it 'discards that pool even when the schema import raises' do
-      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
       role_depth_tracker
       allow(adapter).to(receive(:import_schema).and_raise(Apartment::SchemaLoadError, 'boom'))
 
@@ -1014,7 +1014,7 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
-  describe '#create without a migration_role' do
+  describe '#create without a ddl_role' do
     it 'issues the DDL on the current role and discards no pool' do
       reconfigure(schema_load_strategy: :schema_rb)
       allow(Apartment::Instrumentation).to(receive(:instrument))

@@ -5,7 +5,7 @@ require_relative 'support'
 require_relative 'support/rbac_helper'
 require 'apartment/migrator'
 
-RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :rbac,
+RSpec.describe('Migrator with ddl_role', :integration, :postgresql_only, :rbac,
                skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PG')) do
   include V4IntegrationHelper
 
@@ -20,7 +20,7 @@ RSpec.describe('Migrator with migration_role', :integration, :postgresql_only, :
       c.tenant_strategy = :schema
       c.tenants_provider = -> { tenants }
       c.default_tenant = 'public'
-      c.migration_role = :db_manager
+      c.ddl_role = :db_manager
       c.app_role = RbacHelper::ROLES[:app_user]
       c.check_pending_migrations = false
     end

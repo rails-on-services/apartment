@@ -425,17 +425,17 @@ RSpec.describe(Apartment::Migrator) do
   end
 
   describe '.with_migration_role' do
-    it 'yields without connected_to when migration_role is nil' do
+    it 'yields without connected_to when ddl_role is nil' do
       expect(ActiveRecord::Base).not_to(receive(:connected_to))
       described_class.with_migration_role { 'result' }
     end
 
-    it 'wraps in connected_to when migration_role is set' do
+    it 'wraps in connected_to when ddl_role is set' do
       Apartment.configure do |c|
         c.tenant_strategy = :schema
         c.tenants_provider = -> { [] }
         c.default_tenant = 'public'
-        c.migration_role = :db_manager
+        c.ddl_role = :db_manager
       end
       expect(ActiveRecord::Base).to(receive(:connected_to).with(role: :db_manager).and_yield)
       described_class.with_migration_role { 'result' }
@@ -446,7 +446,7 @@ RSpec.describe(Apartment::Migrator) do
         c.tenant_strategy = :schema
         c.tenants_provider = -> { [] }
         c.default_tenant = 'public'
-        c.migration_role = :db_manager
+        c.ddl_role = :db_manager
       end
       migrator = described_class.new
       expect(ActiveRecord::Base).to(receive(:connected_to).with(role: :db_manager).and_yield)
@@ -455,12 +455,12 @@ RSpec.describe(Apartment::Migrator) do
   end
 
   describe '#evict_migration_pools' do
-    it 'evicts pools by migration_role and deregisters shards' do
+    it 'evicts pools by ddl_role and deregisters shards' do
       Apartment.configure do |c|
         c.tenant_strategy = :schema
         c.tenants_provider = -> { [] }
         c.default_tenant = 'public'
-        c.migration_role = :db_manager
+        c.ddl_role = :db_manager
       end
       pool_manager = instance_double(Apartment::PoolManager)
       allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
@@ -474,7 +474,7 @@ RSpec.describe(Apartment::Migrator) do
       expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
     end
 
-    it 'no-ops when migration_role is nil' do
+    it 'no-ops when ddl_role is nil' do
       migrator = described_class.new
       expect(Apartment).not_to(receive(:pool_manager))
       migrator.send(:evict_migration_pools)
@@ -564,7 +564,7 @@ RSpec.describe(Apartment::Migrator) do
         c.tenant_strategy = :schema
         c.tenants_provider = -> { [] }
         c.default_tenant = 'public'
-        c.migration_role = :db_manager
+        c.ddl_role = :db_manager
       end
       pool_manager = instance_double(Apartment::PoolManager)
       allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))

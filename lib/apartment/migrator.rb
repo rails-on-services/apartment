@@ -42,7 +42,7 @@ module Apartment
       end
     end
 
-    # Wrap a block in connected_to(role: migration_role) when configured.
+    # Wrap a block in connected_to(role: ddl_role) when configured.
     # Class method so both Migrator internals and CLI commands can share
     # the same RBAC role-switching logic without duplication. The adapters
     # need it too (tenant creation is DDL), and they cannot depend on
@@ -228,7 +228,7 @@ module Apartment
     def with_migration_role(&) = self.class.with_migration_role(&)
 
     def evict_migration_pools
-      role = Apartment.config.migration_role
+      role = Apartment.config.ddl_role
       return unless role && Apartment.pool_manager
 
       Apartment.pool_manager.evict_by_role(role).each do |pool_key, pool|

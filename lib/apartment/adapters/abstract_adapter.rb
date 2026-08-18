@@ -577,7 +577,7 @@ module Apartment
         error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error
       end
 
-      # Every DDL step of a create runs on config.migration_role when one is set:
+      # Every DDL step of a create runs on config.ddl_role when one is set:
       # the container, its grants, and any schema import.
       #
       # PostgreSQL scopes the ALTER DEFAULT PRIVILEGES rule grant_privileges installs
@@ -601,12 +601,12 @@ module Apartment
           import_schema(tenant) if Apartment.config.schema_load_strategy
         end
       ensure
-        discard_migration_role_pool(tenant)
+        discard_ddl_role_pool(tenant)
       end
 
       # import_schema switches into the new tenant, and a pool key carries the role it
       # was resolved under (Patches::ConnectionHandling), so that switch registers a
-      # migration-role pool nothing else will claim.
+      # DDL-role pool nothing else will claim.
       #
       # Two narrowings, both about not disconnecting somebody else's work. This
       # discards a single key rather than calling PoolManager#evict_by_role, which
@@ -619,8 +619,8 @@ module Apartment
       #
       # The release comes first because our own import_schema lease is on this pool;
       # without it the in-use check would see this thread and skip every discard.
-      def discard_migration_role_pool(tenant)
-        role = Apartment.config.migration_role
+      def discard_ddl_role_pool(tenant)
+        role = Apartment.config.ddl_role
         return unless role
 
         pool_key = Apartment.pool_key(tenant, role)

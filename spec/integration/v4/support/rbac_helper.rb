@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Shared RBAC test infrastructure for integration tests that verify
-# role-aware connections, privilege grants, and Migrator migration_role.
+# role-aware connections, privilege grants, and Migrator ddl_role.
 #
 # Usage: tag specs with :rbac plus :postgresql_only or :mysql_only.
 # Roles are provisioned once per :rbac describe block via before(:context, :rbac).
@@ -126,7 +126,7 @@ module RbacHelper
     db_name = connection.current_database
     connection.execute("GRANT CREATE ON DATABASE #{connection.quote_table_name(db_name)} TO #{ROLES[:db_manager]}")
     # db_manager needs full access to the public schema for migrate_primary
-    # (which runs under migration_role). PG 15+ revoked CREATE ON SCHEMA public
+    # (which runs under ddl_role). PG 15+ revoked CREATE ON SCHEMA public
     # FROM PUBLIC. We also need access to tables postgres creates (e.g.,
     # schema_migrations from non-RBAC specs that may run before or after
     # provisioning due to RSpec randomization).

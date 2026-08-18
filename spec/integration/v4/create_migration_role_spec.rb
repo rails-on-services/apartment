@@ -4,7 +4,7 @@ require 'spec_helper'
 require_relative 'support'
 require_relative 'support/rbac_helper'
 
-# Tenant creation is DDL, so it runs on config.migration_role like migrations do.
+# Tenant creation is DDL, so it runs on config.ddl_role like migrations do.
 #
 # The case that matters is an adopter who created a tenant from ordinary application
 # code rather than from inside connected_to(role: :db_manager). The create-time grants
@@ -16,7 +16,7 @@ require_relative 'support/rbac_helper'
 # The sibling spec (migrator_rbac_spec.rb) creates its tenants inside an explicit
 # connected_to(role: :db_manager) and so cannot see this: it encodes the discipline
 # whose absence is the bug.
-RSpec.describe('Tenant create under migration_role', :integration, :postgresql_only, :rbac,
+RSpec.describe('Tenant create under ddl_role', :integration, :postgresql_only, :rbac,
                skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PG')) do
   include V4IntegrationHelper
 
@@ -30,7 +30,7 @@ RSpec.describe('Tenant create under migration_role', :integration, :postgresql_o
       c.tenant_strategy = :schema
       c.tenants_provider = -> { [tenant] }
       c.default_tenant = 'public'
-      c.migration_role = :db_manager
+      c.ddl_role = :db_manager
       c.app_role = RbacHelper::ROLES[:app_user]
       c.check_pending_migrations = false
     end

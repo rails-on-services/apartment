@@ -26,7 +26,7 @@ module Apartment
                   :tenant_not_found_handler, :tenant_validator,
                   :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
-                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
+                  :ddl_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
                   :force_separate_pinned_pool, :test_fixture_cleanup, :reap_in_test,
                   :heal_tainted_connections
 
@@ -58,7 +58,7 @@ module Apartment
       @postgres_config = nil
       @mysql_config = nil
       @shard_key_prefix = 'apartment'
-      @migration_role = nil
+      @ddl_role = nil
       @app_role = nil
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
@@ -233,8 +233,8 @@ module Apartment
                                   'Must be nil, :schema_rb, or :sql')
       end
 
-      if @migration_role && !@migration_role.is_a?(Symbol)
-        raise(ConfigurationError, "migration_role must be nil or a Symbol, got: #{@migration_role.inspect}")
+      if @ddl_role && !@ddl_role.is_a?(Symbol)
+        raise(ConfigurationError, "ddl_role must be nil or a Symbol, got: #{@ddl_role.inspect}")
       end
 
       if @app_role && !@app_role.is_a?(String) && !@app_role.respond_to?(:call)
