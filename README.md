@@ -195,7 +195,7 @@ Apartment.configure do |config|
 end
 ```
 
-`Apartment::Privileges.standard` ships the engine-specific grant SQL as a library rather than as implicit behaviour, including PostgreSQL's `ALTER DEFAULT PRIVILEGES FOR ROLE`, which is scoped to the role that executed it and so has to name `ddl_role` explicitly. Two phases because position is policy: a default-privileges-only model must record its rules before the schema import, and a model granting existing objects must run after. [docs/rbac.md](docs/rbac.md) covers writing your own policy, the MySQL `GRANT OPTION` prerequisite, and what happens when a policy raises.
+`Apartment::Privileges.standard` ships the engine-specific grant SQL as a library rather than as implicit behaviour, including PostgreSQL's `ALTER DEFAULT PRIVILEGES FOR ROLE`, which with no `FOR ROLE` is scoped to whichever role executed it and so has to name the database principal `ddl_role` resolves to. Two phases because position is policy: a default-privileges-only model must record its rules before the schema import, and a model granting existing objects must run after. [docs/rbac.md](docs/rbac.md) covers writing your own policy, the MySQL `GRANT OPTION` prerequisite, and what happens when a policy raises.
 
 ### PostgreSQL
 

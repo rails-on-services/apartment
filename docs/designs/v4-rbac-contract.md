@@ -103,7 +103,7 @@ Resolved lazily — once per create, only when a policy is configured — so the
 
 ## Two phases, because position is policy
 
-The hook is invoked at both points in the create sequence:
+The hook is invoked at both points in the create sequence, as it will read once the in-flight pending-migration fix lands; the guide's copy of this diagram omits the suppression line, because that fix is on its own branch and the sequence below is the post-merge state:
 
 ```
 validate name

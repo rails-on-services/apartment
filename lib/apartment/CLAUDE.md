@@ -19,12 +19,12 @@ lib/apartment/
 │   ├── postgresql_config.rb   # PostgresqlConfig: persistent_schemas, include_schemas_in_dump
 │   └── mysql_config.rb        # MysqlConfig: placeholder
 ├── elevators/             # Rack middleware for tenant detection (see CLAUDE.md); v4 uses constructor keyword args, no class-level state; Generic, Subdomain, FirstSubdomain, Domain, Host, HostHash, Header
-├── privileges/            # Tenant privilege policy support
-│   └── context.rb         # Privileges::Context: what a tenant_privilege_policy receives, one per phase
 ├── patches/               # ActiveRecord patches for tenant-aware connections
 │   ├── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
 │   ├── connection_registry.rb # Prepends on AR's PoolManager + ConnectionHandler — serializes the pool registry
 │   └── postgresql_sequence_name.rb # Prepends on the PG adapter — schema-agnostic Model.sequence_name memoization
+├── privileges/            # Tenant privilege policy support
+│   └── context.rb         # Privileges::Context: what a tenant_privilege_policy receives, one per phase
 ├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
 ├── config.rb              # Configuration with validate!/freeze!
 ├── current.rb             # Fiber-safe tenant context (CurrentAttributes)
@@ -33,8 +33,8 @@ lib/apartment/
 ├── migration_role.rb      # Runs a block on config.ddl_role (shared by Migrator, CLI, adapters)
 ├── migrator.rb            # Migration orchestrator: sequential/parallel, Result/MigrationRun value objects
 ├── pool_manager.rb        # Concurrent::Map pool cache with monotonic timestamps
-├── privileges.rb          # Privileges.standard: prebuilt tenant_privilege_policy factory
 ├── pool_reaper.rb         # Background idle/LRU pool eviction
+├── privileges.rb          # Privileges.standard: prebuilt tenant_privilege_policy factory
 ├── railtie.rb             # Rails initialization (activate!, middleware, rake tasks)
 ├── schema_dumper_patch.rb # Rails 8.1 schema dump fix: strips public. prefix from table names
 ├── tenant.rb              # Public API facade (switch, current, reset, lifecycle)

@@ -46,6 +46,16 @@ RSpec.describe(Apartment::Adapters::PostgresqlDatabaseAdapter) do
   # cross-database ordering (GRANT CONNECT on the server, table grants inside the
   # tenant database) that Privileges.standard does not implement.
   describe '#standard_privilege_statements' do
+    # Implemented, not inherited: the base returns nil, and this is the strategy whose
+    # hand-written policy most needs the grantor. A policy resolving current_user
+    # itself would be correct only by where it runs.
+    it 'reports the executing database role, since a custom policy here needs it' do
+      connection = double('Connection')
+      expect(connection).to(receive(:select_value).with('SELECT current_user').and_return('db_manager'))
+
+      expect(adapter.current_db_role(connection)).to(eq('db_manager'))
+    end
+
     it 'has no standard policy, and says so rescuably', :aggregate_failures do
       ctx = Apartment::Privileges::Context.new(
         tenant: 'acme', container_name: 'acme', connection: double('Connection'),

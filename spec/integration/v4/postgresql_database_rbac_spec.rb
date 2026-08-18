@@ -39,7 +39,9 @@ RSpec.describe('PostgreSQL database-per-tenant custom privilege policy', :integr
     callable = lambda { |ctx|
       next unless ctx.before_schema_load?
 
-      @grant_log << { tenant: ctx.tenant, user: ctx.connection.execute('SELECT current_user AS cu').first['cu'] }
+      # ctx.db_role, not a hand-rolled SELECT current_user: the context carries the
+      # resolved grantor, which is the whole point of the field.
+      @grant_log << { tenant: ctx.tenant, user: ctx.db_role }
       Apartment::Tenant.switch(ctx.tenant) do
         tc = ActiveRecord::Base.connection
         role = tc.quote_table_name(RbacHelper::ROLES[:app_user])
