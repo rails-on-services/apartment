@@ -200,6 +200,12 @@ RSpec.shared_examples('a MySQL adapter') do
       expect(statements.first).to(match(/TO 'app_web'@'%', 'app_worker'@'%'/))
     end
 
+    it 'raises on a phase it does not know, rather than returning nothing' do
+      expect do
+        adapter.standard_privilege_statements(context(:sometime_later), grant_to: 'app_user')
+      end.to(raise_error(Apartment::ConfigurationError, /Unknown privilege policy phase/))
+    end
+
     # 'me@localhost' is a legal MySQL username, so splitting on the last @ would
     # guess wrong. standard grants to role@'%' and refuses anything else, rather
     # than quoting the whole value into a different account than the caller meant.

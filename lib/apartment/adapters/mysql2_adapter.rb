@@ -43,13 +43,25 @@ module Apartment
       # an account on its last @ would be wrong, because `me@localhost` is itself a
       # legal MySQL username, so a value carrying @ is refused rather than guessed at.
       # A specific host is what a custom policy is for.
+      #
+      # Branching on the phase by name, rather than falling out of a
+      # before_schema_load? guard, so the empty after-phase is a stated decision and an
+      # unrecognised phase raises. A silent nothing is the defect this whole design
+      # replaces: app_role's String form did nothing on two adapters and told nobody.
       def standard_privilege_statements(ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
-        return [] unless ctx.before_schema_load?
-
-        roles = Array(grant_to)
-        validate_bare_role_names!(roles)
-        accounts = roles.map { |role| "#{ctx.connection.quote(role)}@'%'" }.join(', ')
-        ["GRANT SELECT, INSERT, UPDATE, DELETE ON #{ctx.quoted_container}.* TO #{accounts}"]
+        case ctx.phase
+        when :before_schema_load
+          roles = Array(grant_to)
+          validate_bare_role_names!(roles)
+          accounts = roles.map { |role| "#{ctx.connection.quote(role)}@'%'" }.join(', ')
+          ["GRANT SELECT, INSERT, UPDATE, DELETE ON #{ctx.quoted_container}.* TO #{accounts}"]
+        when :after_schema_load
+          # Nothing to do: the grant above already covers tables the import and later
+          # migrations create.
+          []
+        else
+          raise(Apartment::ConfigurationError, "Unknown privilege policy phase: #{ctx.phase.inspect}")
+        end
       end
 
       # Returns MySQL's `role@host` form, for a policy that needs to name the
