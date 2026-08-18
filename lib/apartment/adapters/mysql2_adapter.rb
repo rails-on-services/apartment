@@ -35,6 +35,23 @@ module Apartment
         [ActiveRecord::NoDatabaseError, Apartment::ApartmentError]
       end
 
+      # MySQL has no ALTER DEFAULT PRIVILEGES. `ON db.*` is pattern-based and covers
+      # objects created later, so one statement in the first phase is the whole
+      # policy and include_functions has nothing to control here.
+      def standard_privilege_statements(ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
+        return [] unless ctx.before_schema_load?
+
+        accounts = Array(grant_to).map { |role| "#{ctx.connection.quote(role)}@'%'" }.join(', ')
+        ["GRANT SELECT, INSERT, UPDATE, DELETE ON #{ctx.quoted_container}.* TO #{accounts}"]
+      end
+
+      # Returns MySQL's `role@host` form. Its GRANT syntax wants the halves quoted
+      # separately, which is why the statement builder above splits rather than
+      # interpolating this value whole.
+      def current_db_role(connection)
+        connection.select_value('SELECT CURRENT_USER()')
+      end
+
       protected
 
       def create_tenant(tenant)
@@ -50,14 +67,6 @@ module Apartment
       end
 
       private
-
-      def grant_privileges(tenant, connection, role_name)
-        db_name = environmentify(tenant)
-        quoted_role = connection.quote(role_name)
-        connection.execute(
-          "GRANT SELECT, INSERT, UPDATE, DELETE ON #{connection.quote_table_name(db_name)}.* TO #{quoted_role}@'%'"
-        )
-      end
 
       def container_error?(error)
         error.is_a?(ActiveRecord::NoDatabaseError)

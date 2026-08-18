@@ -148,6 +148,29 @@ module Apartment
         !tenant_container_exists?(tenant)
       end
 
+      # The statements Privileges.standard should execute for ctx.phase, or [] when
+      # this engine needs none in that phase. A pure function of its inputs: build,
+      # do not execute, so the SQL is unit-testable without a database.
+      #
+      # ConfigurationError rather than NotImplementedError. An adopter who configured
+      # the standard policy on a strategy that has none made a configuration mistake,
+      # and NotImplementedError descends from ScriptError, so `rescue StandardError`
+      # around Tenant.create would not catch it. The NotImplementedError raises
+      # elsewhere in this class mean something different: a subclass owes an
+      # implementation.
+      def standard_privilege_statements(_ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
+        raise(Apartment::ConfigurationError,
+              "Apartment::Privileges.standard does not support #{self.class.name}. " \
+              'Write a tenant_privilege_policy for this strategy; see docs/rbac.md.')
+      end
+
+      # The executing database role, for policies that need to name it explicitly
+      # (PostgreSQL's ALTER DEFAULT PRIVILEGES FOR ROLE). nil where the engine has
+      # no role system. Token shape differs by engine, so each adapter answers.
+      def current_db_role(_connection)
+        nil
+      end
+
       # The namespace that makes the default tenant's tables reachable from any
       # tenant connection — a schema (PostgreSQL) or a database (MySQL).
       # Subclasses must implement when shared_pinned_connection? returns true.

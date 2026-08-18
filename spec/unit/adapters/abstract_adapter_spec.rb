@@ -850,55 +850,33 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
-  describe '#grant_tenant_privileges (private)' do
+  describe '#standard_privilege_statements' do
     let(:connection) { double('Connection') }
 
-    before do
-      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
-      allow(Apartment::Instrumentation).to(receive(:instrument))
+    # ConfigurationError, not NotImplementedError: the latter descends from
+    # ScriptError, so an adopter's `rescue StandardError` around Tenant.create
+    # would miss it and the process would die on a misconfiguration.
+    it 'raises a rescuable error on a strategy with no standard policy', :aggregate_failures do
+      reconfigure
+      ctx = Apartment::Privileges::Context.new(
+        tenant: 'acme', container_name: 'acme', connection: connection,
+        db_role: nil, phase: :before_schema_load
+      )
+
+      raised = nil
+      begin
+        adapter.standard_privilege_statements(ctx, grant_to: 'app_user')
+      rescue StandardError => e
+        raised = e
+      end
+
+      expect(raised).to(be_a(Apartment::ConfigurationError))
+      expect(raised.message).to(match(/does not support/))
     end
 
-    context 'when app_role is a string' do
-      before { reconfigure(app_role: 'app_user') }
-
-      it 'calls grant_privileges with tenant, connection, and role_name' do
-        expect(adapter).to(receive(:grant_privileges).with('acme', connection, 'app_user'))
-        adapter.create('acme')
-      end
-    end
-
-    context 'when app_role is callable' do
-      it 'invokes the callable with (tenant, connection)' do
-        called_with = nil
-        reconfigure(app_role: ->(tenant, conn) { called_with = [tenant, conn] })
-
-        adapter.create('acme')
-
-        expect(called_with).to(eq(['acme', connection]))
-      end
-    end
-
-    context 'when app_role is nil' do
-      it 'does not call grant_privileges and does not raise' do
-        # Default config has app_role = nil
-        expect(adapter).not_to(receive(:grant_privileges))
-        expect { adapter.create('acme') }.not_to(raise_error)
-      end
-    end
-
-    context 'ordering: grants run after create_tenant, before import_schema' do
-      it 'calls create_tenant then grant_tenant_privileges then import_schema' do
-        reconfigure(app_role: 'app_user', schema_load_strategy: :schema_rb)
-        call_order = []
-
-        allow(adapter).to(receive(:create_tenant).with('acme') { call_order << :create_tenant })
-        allow(adapter).to(receive(:grant_privileges) { call_order << :grant_privileges })
-        allow(adapter).to(receive(:import_schema).with('acme') { call_order << :import_schema })
-
-        adapter.create('acme')
-
-        expect(call_order).to(eq(%i[create_tenant grant_privileges import_schema]))
-      end
+    it 'reports no database role by default' do
+      reconfigure
+      expect(adapter.current_db_role(connection)).to(be_nil)
     end
   end
 

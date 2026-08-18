@@ -54,6 +54,26 @@ module Apartment
         [ActiveRecord::StatementInvalid, Apartment::ApartmentError]
       end
 
+      def standard_privilege_statements(ctx, grant_to:, include_functions: true)
+        roles = Array(grant_to).map { |role| ctx.connection.quote_table_name(role) }.join(', ')
+        schema = ctx.quoted_container
+
+        if ctx.before_schema_load?
+          before_schema_load_statements(ctx, schema, roles, include_functions)
+        else
+          [
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA #{schema} TO #{roles}",
+            "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA #{schema} TO #{roles}",
+          ]
+        end
+      end
+
+      # pg_get_userbyid-free: current_user is what ALTER DEFAULT PRIVILEGES scopes to
+      # when FOR ROLE is omitted, so it is the role a policy must name to be explicit.
+      def current_db_role(connection)
+        connection.select_value('SELECT current_user')
+      end
+
       protected
 
       def create_tenant(tenant)
@@ -89,29 +109,20 @@ module Apartment
         true
       end
 
-      def grant_privileges(tenant, connection, role_name) # rubocop:disable Metrics/MethodLength
-        quoted_schema = connection.quote_table_name(tenant)
-        quoted_role = connection.quote_table_name(role_name)
+      # FOR ROLE is explicit rather than implied by the executing role. Omitting it
+      # is what let a rule be recorded under one role while tables were created
+      # under another — see docs/designs/v4-rbac-contract.md.
+      def before_schema_load_statements(ctx, schema, roles, include_functions)
+        grantor = ctx.connection.quote_table_name(ctx.db_role)
+        defaults = "ALTER DEFAULT PRIVILEGES FOR ROLE #{grantor} IN SCHEMA #{schema} GRANT"
 
-        connection.execute("GRANT USAGE ON SCHEMA #{quoted_schema} TO #{quoted_role}")
-        connection.execute(
-          "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA #{quoted_schema} TO #{quoted_role}"
-        )
-        connection.execute(
-          "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA #{quoted_schema} TO #{quoted_role}"
-        )
-        connection.execute(
-          "ALTER DEFAULT PRIVILEGES IN SCHEMA #{quoted_schema} " \
-          "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO #{quoted_role}"
-        )
-        connection.execute(
-          "ALTER DEFAULT PRIVILEGES IN SCHEMA #{quoted_schema} " \
-          "GRANT USAGE, SELECT ON SEQUENCES TO #{quoted_role}"
-        )
-        connection.execute(
-          "ALTER DEFAULT PRIVILEGES IN SCHEMA #{quoted_schema} " \
-          "GRANT EXECUTE ON FUNCTIONS TO #{quoted_role}"
-        )
+        statements = [
+          "GRANT USAGE ON SCHEMA #{schema} TO #{roles}",
+          "#{defaults} SELECT, INSERT, UPDATE, DELETE ON TABLES TO #{roles}",
+          "#{defaults} USAGE, SELECT ON SEQUENCES TO #{roles}",
+        ]
+        statements << "#{defaults} EXECUTE ON FUNCTIONS TO #{roles}" if include_functions
+        statements
       end
     end
   end
