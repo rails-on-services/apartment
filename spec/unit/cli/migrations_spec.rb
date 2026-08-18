@@ -202,29 +202,29 @@ RSpec.describe(Apartment::CLI::Migrations) do
       expect { run_command('rollback') }.to(raise_error(SystemExit))
     end
 
-    context 'with migration_role configured' do
+    context 'with ddl_role configured' do
       before do
         Apartment.configure do |c|
           c.tenant_strategy = :schema
           c.tenants_provider = -> { %w[acme beta] }
           c.default_tenant = 'public'
-          c.migration_role = :db_manager
+          c.ddl_role = :db_manager
         end
         allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
       end
 
-      it 'wraps single-tenant rollback in connected_to with migration_role' do
+      it 'wraps single-tenant rollback in connected_to with ddl_role' do
         run_command('rollback', 'acme')
         expect(ActiveRecord::Base).to(have_received(:connected_to).with(role: :db_manager))
       end
 
-      it 'wraps all-tenant rollback in connected_to with migration_role' do
+      it 'wraps all-tenant rollback in connected_to with ddl_role' do
         run_command('rollback')
         expect(ActiveRecord::Base).to(have_received(:connected_to).with(role: :db_manager).twice)
       end
     end
 
-    context 'without migration_role' do
+    context 'without ddl_role' do
       it 'does not call connected_to' do
         expect(ActiveRecord::Base).not_to(receive(:connected_to))
         run_command('rollback')

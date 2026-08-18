@@ -65,7 +65,18 @@ AbstractAdapter
 
 **Tenant creation**: Runs callbacks, creates tenant via subclass, switches context, imports schema, optionally seeds data. See `AbstractAdapter#create` method.
 
-The container, the `app_role` grants, and the schema import are DDL and run together on `config.migration_role` (`#run_tenant_ddl`); seeding runs outside that wrap. PostgreSQL scopes the create-time `ALTER DEFAULT PRIVILEGES` rule to the role that executed it, so creation and migrations must share one role. See the Key Invariant in `docs/designs/v4-phase5-rbac-roles-schema-cache.md`.
+The create sequence inside `#run_tenant_ddl`, all of it on `config.ddl_role`: `create_tenant`, the policy at `:before_schema_load`, the schema import when `schema_load_strategy` is set, then the policy at `:after_schema_load`. Seeding runs outside that wrap, because rows carry no ownership. `#drop` wraps its `drop_tenant` call for the same ownership reason and leaves the pool removal and shard deregistration outside. PostgreSQL scopes an `ALTER DEFAULT PRIVILEGES` rule with no `FOR ROLE` to the role that executed it, so creation and migrations must share one role.
+
+Two phases because position is policy: a default-privileges-only model has to record its rules before the import or imported tables fall outside them, while a model granting existing objects has to run after. Both fire even when no schema is loaded. The database role the policy is told about is resolved once per create, inside the wrap, and passed to both phases as an argument — never memoized on the adapter, which is one instance per process and therefore shared across concurrent creates.
+
+### Privilege Seams (Custom Adapters Implement These)
+
+- `#standard_privilege_statements(ctx, grant_to:, include_functions: true)` → `Array<String>`. Builds the statements for `ctx.phase` and returns them; it does not execute, so the SQL unit-tests without a database. Return `[]` for a phase the engine does not need, and branch on `ctx.phase` by name with a raising `else` rather than falling out of a predicate guard — a silent nothing is the defect this contract replaces. The base raises `Apartment::ConfigurationError`, not `NotImplementedError`: the latter descends from `ScriptError`, so an adopter's `rescue StandardError` around `Tenant.create` would miss it. `PostgresqlSchemaAdapter` and `Mysql2Adapter` implement it; `PostgresqlDatabaseAdapter` and `Sqlite3Adapter` inherit the raise as a reasoned exclusion, each pinned by its own spec.
+- `#current_db_role(connection)` → `String` or `nil`. The executing database role, for policies that name it explicitly. The token shape differs by engine, which is why each adapter answers: PostgreSQL returns `current_user`, MySQL returns `role@host`, the base returns nil.
+
+Quote role names with `quote_column_name`, not `quote_table_name`: the latter splits on dots, and a legal role like `svc.migrator` would come back as two identifiers. Container names go through `quoted_container`, which is safe because they pass `TenantNameValidator` and it rejects dots.
+
+Guide: `docs/rbac.md`. Rationale: `docs/designs/v4-rbac-contract.md`.
 
 **Tenant switching**: Stores previous tenant, switches, yields to block, ensures rollback in ensure clause with fallback to default. See `AbstractAdapter#switch` method.
 

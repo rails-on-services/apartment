@@ -69,7 +69,11 @@ module Apartment
 
       # Drop a tenant.
       def drop(tenant)
-        drop_tenant(tenant)
+        # Wrapped for the same reason create is: the container is owned by ddl_role,
+        # and DROP SCHEMA requires ownership, so the writing role generally cannot drop
+        # what the gem created. Only the engine call — the pool removal and shard
+        # deregistration below are local bookkeeping and need no role.
+        MigrationRole.wrap { drop_tenant(tenant) }
         removed_pools = Apartment.pool_manager&.remove_tenant(tenant) || []
         removed_pools.each do |pool_key, pool|
           # remove_tenant already took these out of the manager, so deregister_shard's
@@ -146,6 +150,29 @@ module Apartment
         return false unless container_error?(unwrap_db_error(error))
 
         !tenant_container_exists?(tenant)
+      end
+
+      # The statements Privileges.standard should execute for ctx.phase, or [] when
+      # this engine needs none in that phase. A pure function of its inputs: build,
+      # do not execute, so the SQL is unit-testable without a database.
+      #
+      # ConfigurationError rather than NotImplementedError. An adopter who configured
+      # the standard policy on a strategy that has none made a configuration mistake,
+      # and NotImplementedError descends from ScriptError, so `rescue StandardError`
+      # around Tenant.create would not catch it. The NotImplementedError raises
+      # elsewhere in this class mean something different: a subclass owes an
+      # implementation.
+      def standard_privilege_statements(_ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
+        raise(Apartment::ConfigurationError,
+              "Apartment::Privileges.standard does not support #{self.class.name}. " \
+              'Write a tenant_privilege_policy for this strategy; see docs/rbac.md.')
+      end
+
+      # The executing database role, for policies that need to name it explicitly
+      # (PostgreSQL's ALTER DEFAULT PRIVILEGES FOR ROLE). nil where the engine has
+      # no role system. Token shape differs by engine, so each adapter answers.
+      def current_db_role(_connection)
+        nil
       end
 
       # The namespace that makes the default tenant's tables reachable from any
@@ -577,36 +604,38 @@ module Apartment
         error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error
       end
 
-      # Every DDL step of a create runs on config.migration_role when one is set:
-      # the container, its grants, and any schema import.
+      # Every DDL step of a create runs on config.ddl_role when one is set: the
+      # container, both privilege-policy phases, and any schema import.
       #
-      # PostgreSQL scopes the ALTER DEFAULT PRIVILEGES rule grant_privileges installs
-      # to the role that EXECUTES it, never to the role named in the GRANT. Recording
-      # that rule under one role while migrations create tables under another leaves
-      # every migration-created table outside it — the same missing-grant failure as
-      # running the migrations themselves on the writing role, only it surfaces later,
-      # from whatever ordinary query first touches the new table.
+      # PostgreSQL scopes an ALTER DEFAULT PRIVILEGES rule with no FOR ROLE to the
+      # role that EXECUTES it, never to the role named in the GRANT. Recording such a
+      # rule under one role while migrations create tables under another leaves every
+      # migration-created table outside it — the same missing-grant failure as running
+      # the migrations themselves on the writing role, only it surfaces later, from
+      # whatever ordinary query first touches the new table.
       #
-      # Two further constraints keep the three steps in ONE wrap rather than wrapping
-      # only the grants. The container is owned by whoever created it, and ALTER on a
-      # table needs ownership. And grant_privileges hands the app role USAGE plus DML,
-      # never CREATE, so a schema import left on the writing role could not add tables
-      # to a container it does not own.
+      # Two further constraints keep the steps in ONE wrap rather than wrapping only
+      # the policy. The container is owned by whoever created it, and ALTER on a table
+      # needs ownership. And a policy that hands the app role USAGE plus DML, never
+      # CREATE, leaves a schema import on the writing role unable to add tables to a
+      # container it does not own.
       #
       # Seeding stays outside the wrap: it writes rows, and rows carry no ownership.
       def run_tenant_ddl(tenant)
         MigrationRole.wrap do
           create_tenant(tenant)
-          grant_tenant_privileges(tenant)
+          db_role = resolve_privilege_db_role
+          apply_privilege_policy(tenant, :before_schema_load, db_role)
           import_schema(tenant) if Apartment.config.schema_load_strategy
+          apply_privilege_policy(tenant, :after_schema_load, db_role)
         end
       ensure
-        discard_migration_role_pool(tenant)
+        discard_ddl_role_pool(tenant)
       end
 
       # import_schema switches into the new tenant, and a pool key carries the role it
       # was resolved under (Patches::ConnectionHandling), so that switch registers a
-      # migration-role pool nothing else will claim.
+      # DDL-role pool nothing else will claim.
       #
       # Two narrowings, both about not disconnecting somebody else's work. This
       # discards a single key rather than calling PoolManager#evict_by_role, which
@@ -619,8 +648,8 @@ module Apartment
       #
       # The release comes first because our own import_schema lease is on this pool;
       # without it the in-use check would see this thread and skip every discard.
-      def discard_migration_role_pool(tenant)
-        role = Apartment.config.migration_role
+      def discard_ddl_role_pool(tenant)
+        role = Apartment.config.ddl_role
         return unless role
 
         pool_key = Apartment.pool_key(tenant, role)
@@ -678,21 +707,43 @@ module Apartment
         Apartment::Current.migrating = previous
       end
 
-      def grant_tenant_privileges(tenant)
-        app_role = Apartment.config.app_role
-        return unless app_role
+      # The database role both phases report, resolved once per create inside the
+      # ddl_role wrap so the round trip is paid once. nil when no policy is
+      # configured: an adopter without one should pay nothing at all.
+      #
+      # Deliberately a local in run_tenant_ddl rather than an ivar. Apartment.adapter
+      # is one instance for the life of the process, so an adapter ivar is shared
+      # across concurrent creates — thread B could read the role thread A resolved and
+      # name it in ALTER DEFAULT PRIVILEGES FOR ROLE while creating objects as its
+      # own. That is the bug this design exists to prevent, arriving through shared
+      # state, and it is invisible whenever both creates share a ddl_role.
+      def resolve_privilege_db_role
+        return unless Apartment.config.tenant_privilege_policy
 
-        conn = ActiveRecord::Base.connection
-        if app_role.respond_to?(:call)
-          app_role.call(tenant, conn)
-        else
-          grant_privileges(tenant, conn, app_role)
-        end
+        current_db_role(ActiveRecord::Base.connection)
       end
 
-      # No-op base implementation — PG schema and MySQL adapters override.
-      def grant_privileges(tenant, connection, role_name)
-        # intentional no-op
+      # Invoke the adopter's policy for one phase. Two calls per create, because
+      # position is policy: a default-privileges-only model has to record its rules
+      # before the schema import or imported tables fall outside them, while a model
+      # granting existing objects has to run after. See
+      # docs/designs/v4-rbac-contract.md.
+      #
+      # A fresh context per phase; the two share nothing but the resolved role, which
+      # arrives as an argument.
+      def apply_privilege_policy(tenant, phase, db_role)
+        policy = Apartment.config.tenant_privilege_policy
+        return unless policy
+
+        policy.call(
+          Privileges::Context.new(
+            tenant: tenant,
+            container_name: physical_tenant_name(tenant),
+            connection: ActiveRecord::Base.connection,
+            db_role: db_role,
+            phase: phase
+          )
+        )
       end
 
       # Connection config with string keys (used by subclasses to build tenant configs).

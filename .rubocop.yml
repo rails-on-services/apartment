@@ -84,6 +84,8 @@ Metrics/PerceivedComplexity:
 Metrics/ParameterLists:
   Exclude:
     - lib/apartment/pool_reaper.rb
+    # Five keyword fields plus the anonymous ** that keeps Context additive-only.
+    - lib/apartment/privileges/context.rb
 
 Metrics/AbcSize:
   Max: 20

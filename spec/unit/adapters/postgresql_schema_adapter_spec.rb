@@ -224,73 +224,87 @@ RSpec.describe(Apartment::Adapters::PostgresqlSchemaAdapter) do
     end
   end
 
-  describe '#grant_privileges (private)' do
+  describe '#standard_privilege_statements' do
     let(:connection) { double('Connection') }
 
+    def context(phase)
+      Apartment::Privileges::Context.new(
+        tenant: 'acme', container_name: 'acme', connection: connection,
+        db_role: 'db_manager', phase: phase
+      )
+    end
+
     before do
-      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
-      allow(Apartment::Instrumentation).to(receive(:instrument))
-      allow(connection).to(receive(:quote_table_name).with('acme').and_return('"acme"'))
-      allow(connection).to(receive(:quote_table_name).with('app_user').and_return('"app_user"'))
-      # Allow CREATE SCHEMA call from create_tenant
-      allow(connection).to(receive(:execute).with('CREATE SCHEMA IF NOT EXISTS "acme"'))
+      allow(connection).to(receive(:quote_table_name)) { |name| %("#{name}") }
+      # Role names go through quote_column_name, which quotes one identifier whole.
+      allow(connection).to(receive(:quote_column_name)) { |name| %("#{name}") }
+      reconfigure
     end
 
-    it 'executes exactly 6 SQL statements when app_role is set' do
-      reconfigure(app_role: 'app_user')
-      expect(connection).to(receive(:execute).exactly(6).times)
+    # The default-privileges rules go BEFORE the import so they cover imported
+    # tables and everything migrations add later. Getting this backwards is the
+    # regression the two-phase design exists to prevent — see the spec.
+    it 'issues the default-privileges rules before the schema load', :aggregate_failures do
+      statements = adapter.standard_privilege_statements(
+        context(:before_schema_load), grant_to: 'app_user', include_functions: true
+      )
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+      expect(statements.size).to(eq(4))
+      expect(statements).to(include(a_string_matching(/GRANT USAGE ON SCHEMA "acme" TO "app_user"/)))
+      expect(statements.grep(/ALTER DEFAULT PRIVILEGES/).size).to(eq(3))
+      expect(statements).to(include(a_string_matching(/ALTER DEFAULT PRIVILEGES FOR ROLE "db_manager"/)))
+      expect(statements).to(include(a_string_matching(/ON FUNCTIONS TO "app_user"/)))
     end
 
-    it 'includes GRANT USAGE ON SCHEMA' do
-      expect(connection).to(receive(:execute).with('GRANT USAGE ON SCHEMA "acme" TO "app_user"'))
-      allow(connection).to(receive(:execute))
+    it 'omits the functions rule when include_functions is false' do
+      statements = adapter.standard_privilege_statements(
+        context(:before_schema_load), grant_to: 'app_user', include_functions: false
+      )
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+      expect(statements.size).to(eq(3))
+      expect(statements.grep(/ON FUNCTIONS/)).to(be_empty)
     end
 
-    it 'includes ALTER DEFAULT PRIVILEGES for tables' do
-      expect(connection).to(receive(:execute)
-        .with('ALTER DEFAULT PRIVILEGES IN SCHEMA "acme" ' \
-              'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "app_user"'))
-      allow(connection).to(receive(:execute))
+    # Objects that exist by now: the import created them, and the default-privileges
+    # rule does not retroactively cover objects created before it was recorded.
+    it 'grants on existing objects after the schema load', :aggregate_failures do
+      statements = adapter.standard_privilege_statements(
+        context(:after_schema_load), grant_to: 'app_user', include_functions: true
+      )
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+      # Exactly two: an after-phase that re-emitted GRANT USAGE ON SCHEMA, or kept a
+      # default-privileges rule, would otherwise stay green.
+      expect(statements.size).to(eq(2))
+      expect(statements).to(include(a_string_matching(/ON ALL TABLES IN SCHEMA "acme"/)))
+      expect(statements).to(include(a_string_matching(/ON ALL SEQUENCES IN SCHEMA "acme"/)))
+      expect(statements.grep(/ALTER DEFAULT PRIVILEGES/)).to(be_empty)
     end
 
-    it 'includes ALTER DEFAULT PRIVILEGES for sequences' do
-      expect(connection).to(receive(:execute)
-        .with('ALTER DEFAULT PRIVILEGES IN SCHEMA "acme" ' \
-              'GRANT USAGE, SELECT ON SEQUENCES TO "app_user"'))
-      allow(connection).to(receive(:execute))
+    it 'grants to every role it is given' do
+      statements = adapter.standard_privilege_statements(
+        context(:after_schema_load), grant_to: %w[app_web app_worker], include_functions: true
+      )
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+      expect(statements.first).to(include('TO "app_web", "app_worker"'))
     end
 
-    it 'includes ALTER DEFAULT PRIVILEGES for functions' do
-      expect(connection).to(receive(:execute)
-        .with('ALTER DEFAULT PRIVILEGES IN SCHEMA "acme" ' \
-              'GRANT EXECUTE ON FUNCTIONS TO "app_user"'))
-      allow(connection).to(receive(:execute))
+    # quote_table_name would split this into "svc"."migrator" — two identifiers where
+    # GRANT wants one. Role names are legal with dots and never pass TenantNameValidator.
+    it 'quotes a dotted role name as a single identifier' do
+      expect(connection).to(receive(:quote_column_name).with('svc.migrator').and_return('"svc.migrator"'))
+      allow(connection).to(receive(:quote_column_name)) { |name| %("#{name}") }
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+      statements = adapter.standard_privilege_statements(
+        context(:after_schema_load), grant_to: 'svc.migrator', include_functions: true
+      )
+
+      expect(statements.first).to(include('TO "svc.migrator"'))
     end
 
-    it 'includes GRANT on ALL TABLES' do
-      expect(connection).to(receive(:execute)
-        .with('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "acme" TO "app_user"'))
-      allow(connection).to(receive(:execute))
-
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
-    end
-
-    it 'includes GRANT USAGE, SELECT on ALL SEQUENCES' do
-      expect(connection).to(receive(:execute)
-        .with('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "acme" TO "app_user"'))
-      allow(connection).to(receive(:execute))
-
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    it 'raises on a phase it does not know, rather than falling through' do
+      expect do
+        adapter.standard_privilege_statements(context(:sometime_later), grant_to: 'app_user')
+      end.to(raise_error(Apartment::ConfigurationError, /Unknown privilege policy phase/))
     end
   end
 

@@ -306,7 +306,8 @@ Current coverage areas:
 - ⚠️ Migration scenarios (partial)
 - ✅ Fiber safety (tested in v4 via CurrentAttributes)
 - ✅ Request lifecycle (elevator->switch->response in dummy app)
-- ✅ RBAC integration (role-aware connections, privilege grants, Migrator with migration_role)
+- ✅ RBAC integration (role-aware connections, privilege grants, Migrator with ddl_role)
+- ✅ Two-phase `tenant_privilege_policy` against real roles (`integration/v4/tenant_privilege_policy_spec.rb`): a default-privileges-only policy covers schema-imported tables, and `FOR ROLE` records the rule against the role it names rather than the role executing it. Both probed by neutering the behaviour.
 
 Areas needing more coverage:
 - Concurrent tenant access patterns

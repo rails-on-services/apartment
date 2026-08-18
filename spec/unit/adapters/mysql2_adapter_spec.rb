@@ -156,36 +156,72 @@ RSpec.shared_examples('a MySQL adapter') do
     end
   end
 
-  describe '#grant_privileges (private)' do
+  describe '#standard_privilege_statements' do
     let(:connection) { double('Connection') }
 
+    def context(phase)
+      Apartment::Privileges::Context.new(
+        tenant: 'acme', container_name: 'acme_test', connection: connection,
+        db_role: 'db_manager@%', phase: phase
+      )
+    end
+
     before do
-      allow(connection).to(receive(:quote).with('app_user').and_return("'app_user'"))
       allow(connection).to(receive(:quote_table_name)) { |name| "`#{name}`" }
+      allow(connection).to(receive(:quote)) { |value| "'#{value}'" }
+      reconfigure
     end
 
-    it 'executes exactly 1 SQL statement' do
-      expect(connection).to(receive(:execute).once)
+    # MySQL's database-scoped grant is pattern-based: it already covers tables the
+    # import and later migrations create, so there is nothing to do afterwards.
+    # This asymmetry with PostgreSQL is why statements live behind an adapter seam.
+    it 'grants once, before the schema load', :aggregate_failures do
+      statements = adapter.standard_privilege_statements(
+        context(:before_schema_load), grant_to: 'app_user', include_functions: true
+      )
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+      expect(statements.size).to(eq(1))
+      expect(statements.first).to(include("GRANT SELECT, INSERT, UPDATE, DELETE ON `acme_test`.* TO 'app_user'@'%'"))
     end
 
-    it 'quotes the database name using quote_table_name' do
-      expect(connection).to(receive(:quote_table_name).with('acme').and_return('`acme`'))
-      allow(connection).to(receive(:execute))
+    it 'needs no statements after the schema load' do
+      statements = adapter.standard_privilege_statements(
+        context(:after_schema_load), grant_to: 'app_user', include_functions: true
+      )
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+      expect(statements).to(be_empty)
     end
 
-    it 'environmentifies the database name in the GRANT' do
-      reconfigure(environmentify_strategy: :prepend)
-      allow(Rails).to(receive(:env).and_return('staging'))
-      allow(connection).to(receive(:quote_table_name).with('staging_acme').and_return('`staging_acme`'))
+    it 'grants to every account it is given' do
+      statements = adapter.standard_privilege_statements(
+        context(:before_schema_load), grant_to: %w[app_web app_worker], include_functions: true
+      )
 
-      expect(connection).to(receive(:execute)
-        .with("GRANT SELECT, INSERT, UPDATE, DELETE ON `staging_acme`.* TO 'app_user'@'%'"))
+      expect(statements.first).to(include("TO 'app_web'@'%', 'app_worker'@'%'"))
+    end
 
-      adapter.send(:grant_privileges, 'acme', connection, 'app_user')
+    it 'raises on a phase it does not know, rather than returning nothing' do
+      expect do
+        adapter.standard_privilege_statements(context(:sometime_later), grant_to: 'app_user')
+      end.to(raise_error(Apartment::ConfigurationError, /Unknown privilege policy phase/))
+    end
+
+    # 'me@localhost' is a legal MySQL username, so splitting on the last @ would
+    # guess wrong. standard grants to role@'%' and refuses anything else, rather
+    # than quoting the whole value into a different account than the caller meant.
+    it 'refuses a grant_to carrying a host, naming the policy escape hatch', :aggregate_failures do
+      raised = nil
+      begin
+        adapter.standard_privilege_statements(
+          context(:before_schema_load), grant_to: 'app_user@10.0.0.5', include_functions: true
+        )
+      rescue StandardError => e
+        raised = e
+      end
+
+      expect(raised).to(be_a(Apartment::ConfigurationError))
+      expect(raised.message).to(include('bare role names'))
+      expect(raised.message).to(include('tenant_privilege_policy'))
     end
   end
 

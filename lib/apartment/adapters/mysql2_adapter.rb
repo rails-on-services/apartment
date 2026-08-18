@@ -35,6 +35,43 @@ module Apartment
         [ActiveRecord::NoDatabaseError, Apartment::ApartmentError]
       end
 
+      # MySQL has no ALTER DEFAULT PRIVILEGES. `ON db.*` is pattern-based and covers
+      # objects created later, so one statement in the first phase is the whole
+      # policy and include_functions has nothing to control here.
+      #
+      # grant_to takes bare role names and every grant lands on `role@'%'`. Splitting
+      # an account on its last @ would be wrong, because `me@localhost` is itself a
+      # legal MySQL username, so a value carrying @ is refused rather than guessed at.
+      # A specific host is what a custom policy is for.
+      #
+      # Branching on the phase by name, rather than falling out of a
+      # before_schema_load? guard, so the empty after-phase is a stated decision and an
+      # unrecognised phase raises. A silent nothing is the defect this whole design
+      # replaces: app_role's String form did nothing on two adapters and told nobody.
+      def standard_privilege_statements(ctx, grant_to:, include_functions: true) # rubocop:disable Lint/UnusedMethodArgument
+        case ctx.phase
+        when :before_schema_load
+          roles = Array(grant_to)
+          validate_bare_role_names!(roles)
+          accounts = roles.map { |role| "#{ctx.connection.quote(role)}@'%'" }.join(', ')
+          ["GRANT SELECT, INSERT, UPDATE, DELETE ON #{ctx.quoted_container}.* TO #{accounts}"]
+        when :after_schema_load
+          # Nothing to do: the grant above already covers tables the import and later
+          # migrations create.
+          []
+        else
+          raise(Apartment::ConfigurationError, "Unknown privilege policy phase: #{ctx.phase.inspect}")
+        end
+      end
+
+      # Returns MySQL's `role@host` form, for a policy that needs to name the
+      # executing account. The statement builder above does not consume it: it assumes
+      # the `%` host, and MySQL's GRANT syntax wants the halves quoted separately
+      # (`'role'@'host'`), which a whole `role@host` token cannot express.
+      def current_db_role(connection)
+        connection.select_value('SELECT CURRENT_USER()')
+      end
+
       protected
 
       def create_tenant(tenant)
@@ -51,12 +88,13 @@ module Apartment
 
       private
 
-      def grant_privileges(tenant, connection, role_name)
-        db_name = environmentify(tenant)
-        quoted_role = connection.quote(role_name)
-        connection.execute(
-          "GRANT SELECT, INSERT, UPDATE, DELETE ON #{connection.quote_table_name(db_name)}.* TO #{quoted_role}@'%'"
-        )
+      def validate_bare_role_names!(roles)
+        hosted = roles.grep(/@/)
+        return if hosted.empty?
+
+        raise(Apartment::ConfigurationError,
+              "Apartment::Privileges.standard takes bare role names and grants to role@'%'. " \
+              "Got: #{hosted.inspect}. Write a tenant_privilege_policy to grant to another host.")
       end
 
       def container_error?(error)

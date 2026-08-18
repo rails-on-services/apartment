@@ -81,7 +81,7 @@ module Apartment
       end
 
       # Rollback bypasses the Migrator's parallelism and Result tracking but
-      # respects migration_role for RBAC (rollback is DDL, same as migrate).
+      # respects ddl_role for RBAC (rollback is DDL, same as migrate).
       def rollback_single(tenant)
         step = options[:step]
         say("Rolling back tenant: #{tenant} (#{step} step(s))")

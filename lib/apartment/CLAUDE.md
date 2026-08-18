@@ -23,15 +23,18 @@ lib/apartment/
 │   ├── connection_handling.rb # Prepends on AR::Base — tenant-aware connection_pool
 │   ├── connection_registry.rb # Prepends on AR's PoolManager + ConnectionHandler — serializes the pool registry
 │   └── postgresql_sequence_name.rb # Prepends on the PG adapter — schema-agnostic Model.sequence_name memoization
+├── privileges/            # Tenant privilege policy support
+│   └── context.rb         # Privileges::Context: what a tenant_privilege_policy receives, one per phase
 ├── tasks/                 # Rake task utilities; v4.rake for apartment:create/drop/migrate/seed/rollback
 ├── config.rb              # Configuration with validate!/freeze!
 ├── current.rb             # Fiber-safe tenant context (CurrentAttributes)
 ├── errors.rb              # Exception hierarchy
 ├── instrumentation.rb     # ActiveSupport::Notifications wrapper
-├── migration_role.rb      # Runs a block on config.migration_role (shared by Migrator, CLI, adapters)
+├── migration_role.rb      # Runs a block on config.ddl_role (shared by Migrator, CLI, adapters)
 ├── migrator.rb            # Migration orchestrator: sequential/parallel, Result/MigrationRun value objects
 ├── pool_manager.rb        # Concurrent::Map pool cache with monotonic timestamps
 ├── pool_reaper.rb         # Background idle/LRU pool eviction
+├── privileges.rb          # Privileges.standard: prebuilt tenant_privilege_policy factory
 ├── railtie.rb             # Rails initialization (activate!, middleware, rake tasks)
 ├── schema_dumper_patch.rb # Rails 8.1 schema dump fix: strips public. prefix from table names
 ├── tenant.rb              # Public API facade (switch, current, reset, lifecycle)
@@ -131,7 +134,15 @@ Three hooks in Rails boot order:
 
 ### migration_role.rb — DDL Role Wrap
 
-`Apartment::MigrationRole.wrap` runs a block inside `connected_to(role: config.migration_role)`, or yields when no role is configured. It exists as its own module because both `Migrator` and the adapters need it and an adapter cannot depend on `Migrator`; `Migrator.with_migration_role` stays as the documented entry point and delegates here. All tenant DDL goes through it, migrations and `Tenant.create` alike, because PostgreSQL scopes the create-time `ALTER DEFAULT PRIVILEGES` rule to the role that executed it — see the Key Invariant in `docs/designs/v4-phase5-rbac-roles-schema-cache.md`.
+`Apartment::MigrationRole.wrap` runs a block inside `connected_to(role: config.ddl_role)`, or yields when no role is configured. It exists as its own module because both `Migrator` and the adapters need it and an adapter cannot depend on `Migrator`; `Migrator.with_migration_role` stays as the documented entry point and delegates here. All tenant DDL goes through it — migrations, `Tenant.create`, and `Tenant.drop`'s engine call — because PostgreSQL scopes an `ALTER DEFAULT PRIVILEGES` rule with no `FOR ROLE` to the role that executed it, and because `DROP SCHEMA` needs ownership of a container `ddl_role` owns. See `docs/designs/v4-rbac-contract.md`.
+
+An unresolvable role is translated here: `ActiveRecord::ConnectionNotEstablished` becomes an `Apartment::ConfigurationError` naming `ddl_role` and the symbol given. `connected_to` resolves no pool — it pushes onto `connected_to_stack` and yields — so the failure arrives from *inside* the block and cannot be detected before it; a wrap whose block never touches the database stays silent by design. What discriminates is not the error class but a probe: `retrieve_connection_pool` for our role, nil meaning the failure is ours to explain and a pool meaning it belongs to the caller's block and re-raises untouched. The rescue names `ConnectionNotEstablished` and **only** that class, because `ConnectionNotDefined` does not exist before Rails 8.0 and Ruby resolves rescue constants at raise time, so naming the subclass raised `NameError` on the Rails floor and destroyed the error it was classifying. It also unwraps one layer of `Apartment::ApartmentError`, since `Patches::ConnectionHandling#connection_pool`'s method-level rescue relabels the role failure a create hits first. Checked at first use rather than at `activate!`, which runs in `after_initialize`, after the eager-load initializer: under lazy loading no model has run `connects_to` yet and a boot-time check would fail on every boot.
+
+### privileges.rb / privileges/context.rb — Adopter-Owned Privilege Policy
+
+`Apartment::Privileges.standard(grant_to:, include_functions: true)` returns a callable suitable for `config.tenant_privilege_policy`. It owns its own phase mapping — default-privileges rules before the schema import, grants on existing objects after — so an adopter never re-derives which statements belong where. It validates `grant_to` when the policy is built, not when a tenant is created, and resolves `Apartment.adapter` at call time (the adapter is not set at `configure` time). The SQL itself lives behind the adapter seam `#standard_privilege_statements`; see `adapters/CLAUDE.md`.
+
+`Privileges::Context` is what a policy receives, one instance per phase, frozen. It is deliberately **not** `Data.define` even though `Data` is house style for value objects (`Migrator::Result`, `PoolObserver::Sample`): it carries a live connection, so value equality, hashing and positional decomposition are wrong semantics, and `Data` cannot deliver the additive-only promise — appending a member adds a required positional argument and a required keyword to `.new`, and `Data` responds to `#deconstruct`. New fields arrive as keyword arguments with defaults and unknown keywords are ignored, so a policy reading attributes off a context keeps working. Construction is the gem's business. Full contract: `docs/rbac.md`, rationale in `docs/designs/v4-rbac-contract.md`.
 
 ### schema_dumper_patch.rb — Rails 8.1 Schema Fix
 

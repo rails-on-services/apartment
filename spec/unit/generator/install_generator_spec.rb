@@ -63,8 +63,8 @@ RSpec.describe(Apartment::InstallGenerator) do
 
     it 'includes RBAC options in comments' do
       content = File.read(initializer_path)
-      expect(content).to(include('migration_role'))
-      expect(content).to(include('app_role'))
+      expect(content).to(include('ddl_role'))
+      expect(content).to(include('tenant_privilege_policy'))
     end
 
     it 'includes elevator options in comments' do
