@@ -1060,6 +1060,25 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
       expect(Apartment::Current.migrating).to(be_falsey)
     end
 
+    it 'covers the :create callbacks, so one touching the new tenant is protected' do
+      reconfigure
+      observed = nil
+      TestAdapter.set_callback(:create, :after) { observed = Apartment::Current.migrating }
+
+      begin
+        adapter.create('acme')
+      ensure
+        TestAdapter.reset_callbacks(:create)
+      end
+
+      # Provisioning rows in the tenant just created is what a :create callback is for,
+      # and with schema_load_strategy nil that tenant has no schema_migrations, so a
+      # window narrower than the callback chain would leave the callback raising.
+      # The accepted cost is that a callback switching to an unrelated cold tenant also
+      # skips its check; see suppressing_pending_migration_check.
+      expect(observed).to(be(true))
+    end
+
     it 'leaves an enclosing migration still suppressed' do
       reconfigure
       Apartment::Current.migrating = true

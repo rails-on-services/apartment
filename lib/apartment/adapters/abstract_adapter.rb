@@ -656,6 +656,20 @@ module Apartment
       # The previous value is restored rather than cleared, so a create nested inside a
       # migration — an adopter's :create callback, a create-then-migrate helper — does
       # not disarm the migration's own suppression on the way out.
+      #
+      # The window covers the whole :create callback chain, deliberately. Provisioning
+      # rows in the tenant just created is what those callbacks are for, and with the
+      # default schema_load_strategy of nil that tenant has no schema_migrations yet, so
+      # a narrower window would leave every such callback raising the very error this
+      # method exists to prevent.
+      #
+      # The cost of that width: Current.migrating is a boolean, not tenant-scoped, so a
+      # callback that switches to some OTHER cold tenant also skips that tenant's check
+      # and leaves its pool warm and unchecked. Accepted rather than overlooked. The
+      # check is a development convenience (config.check_pending_migrations plus
+      # Rails.env.local?), the effect is one missed warning until that pool is evicted,
+      # and closing it properly means making the flag tenant-aware — which Migrator also
+      # sets, per worker, so it is a change to a shared contract and belongs on its own.
       def suppressing_pending_migration_check
         previous = Apartment::Current.migrating
         Apartment::Current.migrating = true
