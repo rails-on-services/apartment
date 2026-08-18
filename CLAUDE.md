@@ -43,7 +43,13 @@ bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/              
 DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec/integration/v4/  # PostgreSQL
 DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/          # MySQL
 
-# Lint
+# Lint. Update the plugins first, or a green local run tells you nothing about CI:
+# no Gemfile.lock is committed, so CI resolves rubocop's plugins fresh while a local
+# checkout keeps whatever it last resolved. AllCops.NewCops is `enable`, so a cop
+# added in a plugin minor is enforced the moment it ships — CI fails on a commit that
+# linted clean locally. Deliberate: 247 cops are pending across the loaded plugins and
+# the alternative drops all of them.
+bundle update rubocop rubocop-rspec rubocop-rails rubocop-performance rubocop-rake rubocop-thread_safety
 bundle exec rubocop
 
 # Build gem
