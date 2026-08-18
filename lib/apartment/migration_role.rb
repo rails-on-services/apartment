@@ -33,20 +33,31 @@ module Apartment
     # registered lazily on a model load that has not happened yet.
     #
     # So the error is classified after the fact, in the shape
-    # +AbstractAdapter#tenant_container_gone?+ uses: a cheap error-shape check
-    # (ConnectionNotDefined is the subclass meaning "no pool for this role"), then an
-    # authoritative probe of whether OUR role resolves. Nil means the failure is ours
-    # to explain. Non-nil means the role is fine and the error belongs to something
-    # the caller did inside the block, so it re-raises untouched. Bare
-    # ConnectionNotEstablished is left alone entirely: it does not mean this.
+    # +AbstractAdapter#tenant_container_gone?+ uses: a cheap error-shape check, then an
+    # authoritative probe of whether OUR role resolves. Nil means the failure is ours to
+    # explain. Non-nil means the role is fine and the error belongs to something the
+    # caller did inside the block, so it re-raises untouched.
+    #
+    # The probe is the discriminator; the class is only a pre-filter, and on the Rails
+    # floor it cannot filter at all. +ActiveRecord::ConnectionNotDefined+ does not exist
+    # before Rails 8.0 (absent on 7.2.3.1, present on 8.0.5 and 8.1.3), and Ruby
+    # resolves a rescue clause's constants at raise time — so naming it here raised
+    # NameError on 7.2 and destroyed the error it was meant to classify. 7.2 raises
+    # +ConnectionNotEstablished+ for an unregistered role and 8.0+ raises the subclass,
+    # so the superclass alone covers the whole matrix. Do not narrow it back.
+    #
+    # The cost of the wider clause is that a bare ConnectionNotEstablished from the
+    # caller's own code now reaches the probe instead of passing straight through. That
+    # is harmless: a registered role re-raises it exactly as before, and if our role is
+    # missing then naming +ddl_role+ is correct advice whatever the immediate error was.
     def wrap(&)
       role = Apartment.config.ddl_role
       return yield unless role
 
       ActiveRecord::Base.connected_to(role: role, &)
-    rescue ActiveRecord::ConnectionNotDefined, Apartment::ApartmentError => e
+    rescue ActiveRecord::ConnectionNotEstablished, Apartment::ApartmentError => e
       original = unwrap(e)
-      raise unless original.is_a?(ActiveRecord::ConnectionNotDefined)
+      raise unless original.is_a?(ActiveRecord::ConnectionNotEstablished)
       raise if role_pool_registered?(role)
 
       raise(Apartment::ConfigurationError,
@@ -63,7 +74,7 @@ module Apartment
     # makes for the same wrapper.
     #
     # This does not widen what gets translated. Two independent conditions still have
-    # to agree: the unwrapped error must be a ConnectionNotDefined, AND our role must
+    # to agree: the unwrapped error must be a ConnectionNotEstablished, AND our role must
     # fail to resolve. An ApartmentError carrying anything else re-raises untouched.
     def unwrap(error)
       error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error

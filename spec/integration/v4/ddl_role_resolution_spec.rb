@@ -55,8 +55,13 @@ RSpec.describe('An unresolvable ddl_role', :integration, :postgresql_only, :rbac
   # The cause chain has two links on this path, not one: ConnectionHandling's
   # method-level rescue relabels the role failure as ApartmentError before it reaches
   # MigrationRole, so the ConfigurationError's immediate cause is that wrapper and the
-  # AR error sits under it. The translation unwraps one layer to classify, which is
-  # why the message names ConnectionNotDefined even though #cause does not.
+  # AR error sits under it. The translation unwraps one layer to classify, which is why
+  # the message names the ActiveRecord error even though #cause does not.
+  #
+  # Asserted against ConnectionNotEstablished rather than the ConnectionNotDefined
+  # subclass Rails 8 raises here, because that subclass does not exist before Rails 8.0
+  # and this lane runs on the Rails floor too. The superclass is what both versions
+  # satisfy.
   def cause_chain(error)
     chain = []
     while (error = error.cause)
@@ -75,8 +80,8 @@ RSpec.describe('An unresolvable ddl_role', :integration, :postgresql_only, :rbac
 
     expect(raised).to(be_a(Apartment::ConfigurationError))
     expect(raised.message).to(match(/ddl_role.*:nope/))
-    expect(raised.message).to(match(/ActiveRecord::ConnectionNotDefined/))
-    expect(cause_chain(raised)).to(include(an_instance_of(ActiveRecord::ConnectionNotDefined)))
+    expect(raised.message).to(match(/ActiveRecord::ConnectionNot(Defined|Established)/))
+    expect(cause_chain(raised)).to(include(a_kind_of(ActiveRecord::ConnectionNotEstablished)))
   end
 
   it 'creates no container, because the failure precedes the first statement' do

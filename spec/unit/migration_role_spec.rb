@@ -32,9 +32,13 @@ RSpec.describe(Apartment::MigrationRole) do
   # the earlier version of this spec — which stubbed connected_to to raise without
   # yielding — could not fail, because Rails never does that.
   #
-  # The classifier is stubbed at ActiveRecord's own seam rather than simulated: a nil
-  # from retrieve_connection_pool is what a missing role looks like, and a pool is
-  # what a present one looks like.
+  # Every example raises ActiveRecord::ConnectionNotEstablished and never the
+  # ConnectionNotDefined subclass, which does not exist before Rails 8.0: an example
+  # naming it would pass on 8.1 and die of NameError on the Rails floor. The verdict
+  # under test never comes from the error class anyway — it comes from the probe, which
+  # is stubbed at ActiveRecord's own seam rather than simulated. Nil is what a missing
+  # role looks like there, a pool is what a present one looks like, and the same pair
+  # of examples therefore means the same thing on every supported Rails.
   def stub_role_pool(pool)
     handler = instance_double(ActiveRecord::ConnectionAdapters::ConnectionHandler)
     allow(ActiveRecord::Base).to(receive(:connection_handler).and_return(handler))
@@ -63,19 +67,21 @@ RSpec.describe(Apartment::MigrationRole) do
 
     raised = nil
     begin
-      described_class.wrap { raise(ActiveRecord::ConnectionNotDefined, 'No connection pool for role :nope') }
+      described_class.wrap { raise(ActiveRecord::ConnectionNotEstablished, 'No connection pool for role :nope') }
     rescue StandardError => e
       raised = e
     end
 
     expect(raised).to(be_a(Apartment::ConfigurationError))
     expect(raised.message).to(match(/ddl_role.*:nope/))
-    expect(raised.cause).to(be_a(ActiveRecord::ConnectionNotDefined))
+    expect(raised.cause).to(be_a(ActiveRecord::ConnectionNotEstablished))
   end
 
-  # Same error class, opposite verdict. Our role resolves, so a ConnectionNotDefined
-  # from inside the block is about some other connection the caller asked for, and
-  # blaming ddl_role for it would send the reader to the wrong config key.
+  # Same error, opposite verdict, and the only difference between this example and the
+  # one above is what the probe answers. That is the point: our role resolves, so the
+  # failure is about some other connection the caller asked for, and blaming ddl_role
+  # would send the reader to the wrong config key. Nothing here depends on the error
+  # class, which is what makes the pair meaningful on Rails 7.2 as well as 8.1.
   it 'does not blame ddl_role when our role resolves and the block still fails', :aggregate_failures do
     configure(:db_manager)
     allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
@@ -83,23 +89,13 @@ RSpec.describe(Apartment::MigrationRole) do
 
     raised = nil
     begin
-      described_class.wrap { raise(ActiveRecord::ConnectionNotDefined, 'No connection pool for role :other') }
+      described_class.wrap { raise(ActiveRecord::ConnectionNotEstablished, 'server closed the connection') }
     rescue StandardError => e
       raised = e
     end
 
-    expect(raised).to(be_a(ActiveRecord::ConnectionNotDefined))
-    expect(raised.message).to(eq('No connection pool for role :other'))
-  end
-
-  # Bare ConnectionNotEstablished is outside the rescue: it does not mean "no pool for
-  # this role", and translating it would report a dead database as a misconfigured key.
-  it 'leaves a bare ConnectionNotEstablished alone' do
-    configure(:db_manager)
-    allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
-
-    expect { described_class.wrap { raise(ActiveRecord::ConnectionNotEstablished, 'server closed') } }
-      .to(raise_error(ActiveRecord::ConnectionNotEstablished, 'server closed'))
+    expect(raised).to(be_a(ActiveRecord::ConnectionNotEstablished))
+    expect(raised.message).to(eq('server closed the connection'))
   end
 
   # The classifier must not mask the original error when it cannot answer.
@@ -108,8 +104,8 @@ RSpec.describe(Apartment::MigrationRole) do
     allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)
     allow(ActiveRecord::Base).to(receive(:connection_handler).and_raise(RuntimeError, 'handler gone'))
 
-    expect { described_class.wrap { raise(ActiveRecord::ConnectionNotDefined, 'no pool') } }
-      .to(raise_error(ActiveRecord::ConnectionNotDefined, 'no pool'))
+    expect { described_class.wrap { raise(ActiveRecord::ConnectionNotEstablished, 'no pool') } }
+      .to(raise_error(ActiveRecord::ConnectionNotEstablished, 'no pool'))
   end
 
   it 'does not swallow an error raised by the block itself' do
