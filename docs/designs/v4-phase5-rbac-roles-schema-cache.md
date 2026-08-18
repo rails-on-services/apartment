@@ -445,7 +445,7 @@ end
 
 ### PostgresqlSchemaAdapter Grants
 
-Six statements mirroring `PgSchema::PrivilegeFixer`:
+Six statements, mirroring the privilege model a schema-per-tenant adopter typically maintains by hand:
 
 ```ruby
 def grant_privileges(tenant, connection, role_name)
