@@ -269,6 +269,22 @@ Query `information_schema.schemata` (PostgreSQL) or `SHOW DATABASES` (MySQL) to 
 
 **Always probe non-vacuity**: run the spec with the fix neutered (e.g. `rspec -I lib -r probe.rb`, where `probe.rb` no-ops the patch's `apply!`) and confirm it fails. A concurrency spec that has never been seen to fail is decoration.
 
+### Issue: A Spec Cannot Exercise Code Guarded By `Rails.env.local?`
+
+**Symptom**: A guard like `return false unless defined?(Rails) && Rails.env.local?` never lets its body run, so the behavior behind it looks untestable — or worse, looks tested because the spec passes.
+
+**Cause**: `spec/support/rails_stub.rb` returns an `ActiveSupport::StringInquirer`, which answers `foo?` with `self == 'foo'`. So `Rails.env.local?` asks "is the env named 'local'" and is always false. A real Rails app gets `ActiveSupport::EnvironmentInquirer`, whose `local?` means development-or-test.
+
+**Effect found in practice**: `ConnectionHandling#check_pending_migrations?` was inert for the whole suite. No spec proved it fires — only that it can be switched off — and most integration specs set `check_pending_migrations = false` defensively, which hid that the default path was never exercised.
+
+**Solution**: arm it per-example.
+
+```ruby
+allow(Rails).to(receive(:env).and_return(ActiveSupport::EnvironmentInquirer.new('test')))
+```
+
+See `spec/integration/v4/create_pending_migration_spec.rb`. Changing the shared stub to `EnvironmentInquirer` would arm every such guard at once across the suite; treat that as its own change, not a drive-by.
+
 ### Issue: Pinned-Model Assertions Leak Across Examples
 
 **Symptom**: A spec asserting on what `process_pinned_models` handles (the count, or which classes) passes in isolation but fails in the full suite.
