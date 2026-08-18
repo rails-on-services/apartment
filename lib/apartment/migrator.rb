@@ -44,11 +44,10 @@ module Apartment
 
     # Wrap a block in connected_to(role: migration_role) when configured.
     # Class method so both Migrator internals and CLI commands can share
-    # the same RBAC role-switching logic without duplication.
-    def self.with_migration_role(&)
-      role = Apartment.config.migration_role
-      role ? ActiveRecord::Base.connected_to(role: role, &) : yield
-    end
+    # the same RBAC role-switching logic without duplication. The adapters
+    # need it too (tenant creation is DDL), and they cannot depend on
+    # Migrator, so the implementation lives in Apartment::MigrationRole.
+    def self.with_migration_role(&) = Apartment::MigrationRole.wrap(&)
 
     def initialize(threads: 0, version: nil)
       @threads = threads

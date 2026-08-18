@@ -275,6 +275,15 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # Deliberately un-rescued at this level: both steps rescue their own failures, and
     # swallowing everything here is what once hid a ThreadError, silently orphaning the
     # pool the caller asked us to discard. Misuse should be loud.
+    # @api private
+    # The PoolManager key for one tenant under one connection role. Pools are keyed by
+    # both because a tenant migrated under an elevated role and served under the writing
+    # role are different pools with different credentials. deregister_ar_shard parses the
+    # role back off the tail, so the separator is part of the contract, not cosmetic.
+    def pool_key(tenant, role)
+      "#{tenant}:#{role}"
+    end
+
     def deregister_shard(pool_key)
       return unless @config && defined?(ActiveRecord::Base)
 
