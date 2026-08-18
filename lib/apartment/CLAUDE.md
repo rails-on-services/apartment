@@ -28,6 +28,7 @@ lib/apartment/
 ├── current.rb             # Fiber-safe tenant context (CurrentAttributes)
 ├── errors.rb              # Exception hierarchy
 ├── instrumentation.rb     # ActiveSupport::Notifications wrapper
+├── migration_role.rb      # Runs a block on config.migration_role (shared by Migrator, CLI, adapters)
 ├── migrator.rb            # Migration orchestrator: sequential/parallel, Result/MigrationRun value objects
 ├── pool_manager.rb        # Concurrent::Map pool cache with monotonic timestamps
 ├── pool_reaper.rb         # Background idle/LRU pool eviction
@@ -127,6 +128,10 @@ Three hooks in Rails boot order:
 ### migrator.rb — Migration Orchestrator
 
 `Apartment::Migrator` runs migrations across all tenants with optional thread-based parallelism. Delegates to `Apartment::Tenant.switch` for each tenant — the `ConnectionHandling` patch routes `AR::Base.connection_pool` to the tenant's pool, so Rails' migration machinery (which hardcodes `AR::Base.lease_connection`) uses the correct connection automatically. No standalone pools or handler swaps. Disables PG advisory locks for tenant migrations (database-wide locks serialize parallel execution; see issue #298). `Result` (Data.define) tracks per-tenant success/failure/skip. `MigrationRun` aggregates results with `#success?`, `#summary`. Primary migration aborts the run on failure (tenants are never touched). Constructor accepts `threads:` (0=sequential). RBAC credential separation (`migration_db_config`) is deferred to Phase 5.
+
+### migration_role.rb — DDL Role Wrap
+
+`Apartment::MigrationRole.wrap` runs a block inside `connected_to(role: config.migration_role)`, or yields when no role is configured. It exists as its own module because both `Migrator` and the adapters need it and an adapter cannot depend on `Migrator`; `Migrator.with_migration_role` stays as the documented entry point and delegates here. All tenant DDL goes through it, migrations and `Tenant.create` alike, because PostgreSQL scopes the create-time `ALTER DEFAULT PRIVILEGES` rule to the role that executed it — see the Key Invariant in `docs/designs/v4-phase5-rbac-roles-schema-cache.md`.
 
 ### schema_dumper_patch.rb — Rails 8.1 Schema Fix
 

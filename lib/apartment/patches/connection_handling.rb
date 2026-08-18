@@ -39,7 +39,7 @@ module Apartment
         Apartment::TenantNameValidator.validate_common!(tenant.to_s)
 
         role = ActiveRecord::Base.current_role
-        pool_key = "#{tenant}:#{role}"
+        pool_key = Apartment.pool_key(tenant, role)
 
         Apartment.pool_manager.fetch_or_create(pool_key) do
           # RE-ENTRANCY: when max_total_connections is set, this block runs under

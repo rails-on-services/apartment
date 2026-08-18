@@ -275,6 +275,30 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     # Deliberately un-rescued at this level: both steps rescue their own failures, and
     # swallowing everything here is what once hid a ThreadError, silently orphaning the
     # pool the caller asked us to discard. Misuse should be loud.
+    # @api private
+    # The PoolManager key for one tenant under one connection role. Pools are keyed by
+    # both because a tenant migrated under an elevated role and served under the writing
+    # role are different pools with different credentials. deregister_ar_shard parses the
+    # role back off the tail, so the separator is part of the contract, not cosmetic.
+    def pool_key(tenant, role)
+      "#{tenant}:#{role}"
+    end
+
+    # @api private
+    # True when at least one of +pool+'s connections is leased or holds an open
+    # transaction (a long migration, a batch job, an unpinned fixture transaction).
+    # Discarding such a pool orphans that work, so every caller that removes a pool
+    # outside the reaper's own cycle checks this first. nil counts as not in use: an
+    # untracked pool has nothing to orphan.
+    def pool_in_use?(pool)
+      return false unless pool.respond_to?(:connections)
+
+      pool.connections.any? do |conn|
+        (conn.respond_to?(:in_use?) && conn.in_use?) ||
+          (conn.respond_to?(:open_transactions) && conn.open_transactions.positive?)
+      end
+    end
+
     def deregister_shard(pool_key)
       return unless @config && defined?(ActiveRecord::Base)
 

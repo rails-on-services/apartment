@@ -400,21 +400,30 @@ end
 
 ### Execution Point
 
-Inside `AbstractAdapter#create`, after `create_tenant`, before `import_schema`:
+Inside `AbstractAdapter#create`, after `create_tenant`, before `import_schema` — and, per
+[Key Invariant](#key-invariant), inside the migration-role wrap that brackets all three:
 
 ```ruby
 def create(tenant)
   TenantNameValidator.validate!(tenant, ...)
   run_callbacks(:create) do
-    create_tenant(tenant)
-    grant_tenant_privileges(tenant)
-    import_schema(tenant) if Apartment.config.schema_load_strategy
+    run_tenant_ddl(tenant)
     seed(tenant) if Apartment.config.seed_after_create
     Instrumentation.instrument(:create, tenant: tenant)
   end
 end
 
 private
+
+def run_tenant_ddl(tenant)
+  MigrationRole.wrap do
+    create_tenant(tenant)
+    grant_tenant_privileges(tenant)
+    import_schema(tenant) if Apartment.config.schema_load_strategy
+  end
+ensure
+  discard_migration_role_pool(tenant)
+end
 
 def grant_tenant_privileges(tenant)
   app_role = Apartment.config.app_role
@@ -436,7 +445,7 @@ end
 
 ### PostgresqlSchemaAdapter Grants
 
-Six statements mirroring `PgSchema::PrivilegeFixer`:
+Six statements, mirroring the privilege model a schema-per-tenant adopter typically maintains by hand:
 
 ```ruby
 def grant_privileges(tenant, connection, role_name)
@@ -524,14 +533,51 @@ No override needed — inherits the no-op from `AbstractAdapter`.
 
 ### Key Invariant
 
-**Migration role = grantor role = schema owner.** This holds because:
-1. `Tenant.create` is called inside `connected_to(role: :db_manager)` (recommended pattern)
-2. `CREATE SCHEMA` runs as db_manager — db_manager owns the schema
-3. `ALTER DEFAULT PRIVILEGES` (no `FOR ROLE`) uses current user — db_manager is the grantor
-4. Migrations run under `migration_role: :db_manager` — db_manager creates tables
-5. Default privileges fire because the table creator (db_manager) matches the grantor
+**Migration role = grantor role = container owner.** Steps 2 through 5 hold as written:
 
-If a user doesn't use `connected_to(role: :db_manager)` when calling `Tenant.create`, the grants still execute (as whatever user is connected), but `ALTER DEFAULT PRIVILEGES` applies to that user. This is correct: the grantor is whoever creates objects. The invariant is self-enforcing.
+1. `create` runs its DDL inside `MigrationRole.wrap`, so `CREATE SCHEMA`, the grants, and any
+   `schema_load_strategy` import all execute as `migration_role`
+2. `CREATE SCHEMA` runs as db_manager, so db_manager owns the schema
+3. `ALTER DEFAULT PRIVILEGES` (no `FOR ROLE`) uses the current user, so db_manager is the grantor
+4. Migrations run under `migration_role: :db_manager`, so db_manager creates the tables
+5. Default privileges fire because the table creator matches the grantor
+
+**Step 1 replaces an earlier claim that this was self-enforcing, and it was not.** The original
+design left the create-time role to the adopter ("call `Tenant.create` inside
+`connected_to(role: :db_manager)`") and argued that a create on some other role was still
+correct, because "the grantor is whoever creates objects". That reasoning holds for one role in
+isolation and breaks across the pair: migrations run on `migration_role` whatever role created
+the tenant, so an adopter who configured `app_role` and `migration_role` and then created a
+tenant from ordinary application code got an `ALTER DEFAULT PRIVILEGES` rule recorded under the
+writing role and tables created under the migration role. Every table a later migration added
+fell outside the rule. Nothing raised; the failure surfaced from whatever ordinary query first
+touched the new table.
+
+Two further constraints mean the whole DDL sequence shares one wrap rather than the grants alone.
+The container is owned by whoever created it and `ALTER` needs ownership; and `grant_privileges`
+hands the app role USAGE plus DML, never CREATE, so a `schema_load_strategy` import left on the
+writing role could not add tables to a container it does not own.
+
+Seeding stays outside the wrap. It writes rows, and rows carry no ownership.
+
+### Pool Hygiene for Create
+
+`import_schema` switches into the new tenant, and a pool key carries the role it was resolved
+under, so that switch registers a `<tenant>:<migration_role>` pool that nothing else will claim.
+`create` discards exactly that key (`Apartment.deregister_shard`) in an `ensure`, under two
+narrowings that both come down to not disconnecting another operation's work.
+
+It does not call `PoolManager#evict_by_role`, which the Migrator uses at the end of a run:
+eviction by role has no in-use guard, so a create running during a migration would drop pools
+belonging to *other* tenants.
+
+And it skips a pool that is still in use (`Apartment.pool_in_use?`, the predicate `PoolReaper`
+uses and now delegates to), because the *same* key is what a concurrent migration of *this*
+tenant leases. Creating a tenant a Migrator run already covers would otherwise disconnect the
+pool that migration is holding. What lingers instead is one idle pool for the reaper to collect.
+
+The lease `import_schema` took is released before that check runs; without the release the check
+would see this thread's own connection and skip every discard.
 
 ### Callable Escape Hatch
 

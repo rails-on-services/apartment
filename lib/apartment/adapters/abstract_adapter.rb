@@ -59,9 +59,7 @@ module Apartment
           adapter_name: base_config['adapter']
         )
         run_callbacks(:create) do
-          create_tenant(tenant)
-          grant_tenant_privileges(tenant)
-          import_schema(tenant) if Apartment.config.schema_load_strategy
+          run_tenant_ddl(tenant)
           seed(tenant) if Apartment.config.seed_after_create
           Instrumentation.instrument(:create, tenant: tenant)
         end
@@ -575,6 +573,69 @@ module Apartment
       # present so both shapes classify the same.
       def unwrap_db_error(error)
         error.is_a?(Apartment::ApartmentError) && error.cause ? error.cause : error
+      end
+
+      # Every DDL step of a create runs on config.migration_role when one is set:
+      # the container, its grants, and any schema import.
+      #
+      # PostgreSQL scopes the ALTER DEFAULT PRIVILEGES rule grant_privileges installs
+      # to the role that EXECUTES it, never to the role named in the GRANT. Recording
+      # that rule under one role while migrations create tables under another leaves
+      # every migration-created table outside it — the same missing-grant failure as
+      # running the migrations themselves on the writing role, only it surfaces later,
+      # from whatever ordinary query first touches the new table.
+      #
+      # Two further constraints keep the three steps in ONE wrap rather than wrapping
+      # only the grants. The container is owned by whoever created it, and ALTER on a
+      # table needs ownership. And grant_privileges hands the app role USAGE plus DML,
+      # never CREATE, so a schema import left on the writing role could not add tables
+      # to a container it does not own.
+      #
+      # Seeding stays outside the wrap: it writes rows, and rows carry no ownership.
+      def run_tenant_ddl(tenant)
+        MigrationRole.wrap do
+          create_tenant(tenant)
+          grant_tenant_privileges(tenant)
+          import_schema(tenant) if Apartment.config.schema_load_strategy
+        end
+      ensure
+        discard_migration_role_pool(tenant)
+      end
+
+      # import_schema switches into the new tenant, and a pool key carries the role it
+      # was resolved under (Patches::ConnectionHandling), so that switch registers a
+      # migration-role pool nothing else will claim.
+      #
+      # Two narrowings, both about not disconnecting somebody else's work. This
+      # discards a single key rather than calling PoolManager#evict_by_role, which
+      # Migrator uses at the end of a run and which would also drop a pool another
+      # thread is migrating through. And it skips a pool that is still in use, since
+      # the SAME key is what a concurrent migration of this tenant leases: creating a
+      # tenant that a Migrator run is already covering would otherwise pull the pool
+      # out from under it. What lingers instead is one idle pool, which the reaper
+      # collects on its own terms.
+      #
+      # The release comes first because our own import_schema lease is on this pool;
+      # without it the in-use check would see this thread and skip every discard.
+      def discard_migration_role_pool(tenant)
+        role = Apartment.config.migration_role
+        return unless role
+
+        pool_key = Apartment.pool_key(tenant, role)
+        pool = Apartment.pool_manager&.peek(pool_key)
+        release_pool_connection(tenant, pool)
+        return if Apartment.pool_in_use?(pool)
+
+        Apartment.deregister_shard(pool_key)
+      end
+
+      # Releasing a lease must not mask the create's own outcome, and it has thrown
+      # before: see Migrator#release_tenant_pool_connection, which learned the same
+      # lesson from a ThreadError during teardown.
+      def release_pool_connection(tenant, pool)
+        pool&.release_connection
+      rescue StandardError => e
+        warn "[Apartment] Connection release failed for '#{tenant}': #{e.class}: #{e.message}"
       end
 
       def grant_tenant_privileges(tenant)

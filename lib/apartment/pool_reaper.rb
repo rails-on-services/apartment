@@ -253,14 +253,7 @@ module Apartment
     # eviction would potentially orphan that work, so skip and let the next
     # reap cycle re-evaluate. See docs/testing.md for the server-side-cursor
     # case this misses.
-    def pool_in_use?(pool)
-      return false unless pool.respond_to?(:connections)
-
-      pool.connections.any? do |conn|
-        (conn.respond_to?(:in_use?) && conn.in_use?) ||
-          (conn.respond_to?(:open_transactions) && conn.open_transactions.positive?)
-      end
-    end
+    def pool_in_use?(pool) = Apartment.pool_in_use?(pool)
 
     # Build and emit the :skip_evict payload. :pinned is a binary state
     # with nothing useful to surface; :in_use carries busy_connections and

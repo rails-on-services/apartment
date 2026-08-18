@@ -902,6 +902,130 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
+  # PostgreSQL scopes the ALTER DEFAULT PRIVILEGES rule that grant_privileges installs
+  # to the role that EXECUTES it, so create-time grants cover the tables later
+  # migrations create only if create and migrate run as the same role. Two further
+  # constraints force the whole DDL sequence into one wrap rather than just the grants:
+  # the tenant container is owned by whoever created it, and grant_privileges hands the
+  # app role USAGE plus DML but never CREATE, so a schema import left on the writing
+  # role could not create tables in a container it does not own.
+  describe '#create under a configured migration_role' do
+    # Records the connected_to nesting depth so each step of create can be asserted to
+    # run inside (1) or outside (0) the role wrap.
+    def role_depth_tracker
+      depth = 0
+      observed_roles = []
+      allow(ActiveRecord::Base).to(receive(:connected_to)) do |role:, &block|
+        observed_roles << role
+        depth += 1
+        begin
+          block.call
+        ensure
+          depth -= 1
+        end
+      end
+      [-> { depth }, observed_roles]
+    end
+
+    before do
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(Apartment).to(receive(:deregister_shard))
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(double('Connection')))
+    end
+
+    it 'runs create_tenant, the grants, and the schema import inside the migration role' do
+      reconfigure(migration_role: :db_manager, app_role: 'app_user', schema_load_strategy: :schema_rb)
+      current_depth, observed_roles = role_depth_tracker
+      depths = {}
+      allow(adapter).to(receive(:create_tenant) { depths[:create_tenant] = current_depth.call })
+      allow(adapter).to(receive(:grant_privileges) { depths[:grant_privileges] = current_depth.call })
+      allow(adapter).to(receive(:import_schema) { depths[:import_schema] = current_depth.call })
+
+      adapter.create('acme')
+
+      expect(depths).to(eq(create_tenant: 1, grant_privileges: 1, import_schema: 1))
+      expect(observed_roles).to(eq([:db_manager]))
+    end
+
+    it 'runs seeding outside the migration role, because seeding writes data' do
+      reconfigure(migration_role: :db_manager, seed_after_create: true)
+      current_depth, = role_depth_tracker
+      seed_depth = nil
+      allow(adapter).to(receive(:seed) { seed_depth = current_depth.call })
+
+      adapter.create('acme')
+
+      expect(seed_depth).to(eq(0))
+    end
+
+    it 'discards the migration-role pool the schema import opened for the new tenant' do
+      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+
+      adapter.create('acme')
+
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+
+    it 'releases the connection the schema import leased before discarding the pool' do
+      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+      pool = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool, connections: [])
+      allow(pool).to(receive(:release_connection))
+      pool_manager = instance_double(Apartment::PoolManager, peek: pool)
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.create('acme')
+
+      # Without the release, the in-use check would see this thread's own lease and
+      # skip the discard on every create.
+      expect(pool).to(have_received(:release_connection))
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+
+    it 'leaves a pool another operation is using registered' do
+      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+      busy = double('Connection', in_use?: true, open_transactions: 0)
+      pool = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool, connections: [busy])
+      allow(pool).to(receive(:release_connection))
+      pool_manager = instance_double(Apartment::PoolManager, peek: pool)
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.create('acme')
+
+      # A concurrent migration of this same tenant leases the same
+      # "<tenant>:<migration_role>" pool. Disconnecting it under that migration is
+      # worse than leaving a pool for the reaper to collect.
+      expect(Apartment).not_to(have_received(:deregister_shard))
+    end
+
+    it 'discards that pool even when the schema import raises' do
+      reconfigure(migration_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema).and_raise(Apartment::SchemaLoadError, 'boom'))
+
+      expect { adapter.create('acme') }.to(raise_error(Apartment::SchemaLoadError))
+
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+  end
+
+  describe '#create without a migration_role' do
+    it 'issues the DDL on the current role and discards no pool' do
+      reconfigure(schema_load_strategy: :schema_rb)
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(adapter).to(receive(:import_schema))
+      expect(ActiveRecord::Base).not_to(receive(:connected_to))
+      expect(Apartment).not_to(receive(:deregister_shard))
+
+      adapter.create('acme')
+    end
+  end
+
   describe '#create with schema loading' do
     it 'calls import_schema when schema_load_strategy is set' do
       reconfigure(schema_load_strategy: :schema_rb)
