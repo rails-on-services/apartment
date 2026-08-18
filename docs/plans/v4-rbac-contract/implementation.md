@@ -40,13 +40,15 @@ bundle exec appraisal rails-8.1-sqlite3 rspec spec/integration/v4/
 
 Mechanical and wide. Do it first so every later task writes the new name.
 
-**Files:**
+**Files:** (this list was incomplete on first execution — the extra entries below were found by the sweep in Step 5, not by the plan)
 - Modify: `lib/apartment/config.rb` (attr_accessor list line ~29, `initialize` line ~61, `validate!` lines ~236-238)
 - Modify: `lib/apartment/migration_role.rb` (`wrap`)
-- Modify: `lib/apartment/migrator.rb` (`with_migration_role`, `evict_migration_pools`)
+- Modify: `lib/apartment/migrator.rb` (`evict_migration_pools`)
+- Modify: `lib/apartment/adapters/abstract_adapter.rb` (`discard_migration_role_pool`, renamed in Step 4b)
+- Modify: `lib/apartment/cli/migrations.rb`
 - Modify: `lib/generators/apartment/install/templates/apartment.rb` (commented config line ~78)
-- Modify: `README.md` (RBAC section)
-- Test: `spec/unit/config_spec.rb`, `spec/unit/migrator_spec.rb`, `spec/integration/v4/migrator_rbac_spec.rb`
+- Modify: `README.md` (RBAC section), `CLAUDE.md`, `lib/apartment/CLAUDE.md`, `lib/apartment/adapters/CLAUDE.md`, `spec/CLAUDE.md`
+- Test: `spec/unit/config_spec.rb`, `spec/unit/migrator_spec.rb`, `spec/unit/cli/migrations_spec.rb`, `spec/unit/generator/install_generator_spec.rb`, `spec/unit/adapters/abstract_adapter_spec.rb`, `spec/integration/v4/migrator_rbac_spec.rb`, `spec/integration/v4/support/rbac_helper.rb`
 
 **Interfaces:**
 - Consumes: nothing new.
@@ -116,24 +118,34 @@ In `lib/apartment/config.rb`, replace `:migration_role` with `:ddl_role` in the 
       return unless role && Apartment.pool_manager
 ```
 
-Leave `Migrator.with_migration_role` named as it is. It is the published entry point and renaming it is churn with no reader benefit; its delegation to `MigrationRole.wrap` already carries the widened meaning.
+Leave `Migrator.with_migration_role` named as it is. It is the published entry point and renaming it is churn with no reader benefit; its delegation to `MigrationRole.wrap` already carries the widened meaning. The file `lib/apartment/migration_role.rb` and the module `Apartment::MigrationRole` keep their names for the same reason: they name the wrap, not the config key.
+
+- [ ] **Step 4b: Rename the stale pool helper**
+
+`AbstractAdapter#discard_migration_role_pool` becomes `#discard_ddl_role_pool`, and its doc comment's "migration-role pool" becomes "DDL-role pool". The pool key it builds now derives from `ddl_role`, so the old name is stale terminology. One spec example description in `spec/unit/adapters/abstract_adapter_spec.rb` names the same pool and should follow. No spec calls the private method by name, so the rename is safe.
+
+Leave the "migration-role" prose in `lib/apartment/migrator.rb`, `spec/integration/v4/migrator_rbac_spec.rb` and `spec/integration/v4/create_migration_role_spec.rb` alone — those describe `evict_migration_pools` and the `MigrationRole` wrap, which keep their names.
 
 - [ ] **Step 5: Update the remaining references**
 
 ```bash
-grep -rn "migration_role" lib spec docs README.md
+grep -rn "migration_role" lib spec docs README.md CLAUDE.md **/CLAUDE.md
 ```
+
+Include the `CLAUDE.md` files explicitly. A `lib spec docs README.md` sweep misses the root `CLAUDE.md`, `lib/apartment/CLAUDE.md`, `lib/apartment/adapters/CLAUDE.md` and `spec/CLAUDE.md`, all of which name the config key. Rename the key in them here; Task 9 rewrites those entries substantively.
 
 Update every hit except the `with_migration_role` method name itself and prose in `docs/designs/` that describes historical decisions. In `lib/generators/apartment/install/templates/apartment.rb`, the commented line becomes:
 
 ```ruby
-  # config.ddl_role                 = nil   # e.g. :db_manager — the role all tenant DDL runs on
+  # config.ddl_role                = nil   # e.g. :db_manager - the role all tenant DDL runs on
 ```
+
+Align the `=` with its neighbours in that file, and keep the comment ASCII — the surrounding comments use a hyphen, not an em dash.
 
 - [ ] **Step 6: Run the tests**
 
 Run: `bundle exec rspec spec/unit/ && bundle exec rubocop lib spec`
-Expected: PASS, no offenses. `spec/unit/migrator_spec.rb` has `c.migration_role = :db_manager` in several examples; they must be updated in Step 5 or they fail here.
+Expected: `1140 examples, 0 failures` (1138 on this base plus the two new config examples), and no offenses. `spec/unit/migrator_spec.rb` has `c.migration_role = :db_manager` in several examples; they must be updated in Step 5 or they fail here.
 
 - [ ] **Step 7: Run the RBAC integration lane**
 
@@ -274,7 +286,7 @@ module Apartment
       end
 
       def before_schema_load? = phase == :before_schema_load
-      def after_schema_load?  = phase == :after_schema_load
+      def after_schema_load? = phase == :after_schema_load
 
       # The value every policy needs. Provided so that copied example code quotes
       # by default rather than interpolating a raw identifier.
@@ -284,15 +296,29 @@ module Apartment
 end
 ```
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 4: Exclude the file from `Metrics/ParameterLists`**
 
-Run: `bundle exec rspec spec/unit/privileges/context_spec.rb && bundle exec rubocop lib/apartment/privileges spec/unit/privileges`
-Expected: PASS, no offenses.
+Five keyword parameters plus the anonymous `**` counts as 6 against a max of 5 — the cop counts keyword arguments. The signature is the design, so exclude the file rather than change it. `.rubocop.yml` already excludes `lib/apartment/pool_reaper.rb` from this cop; add a second entry in the same shape, with a comment saying why:
 
-- [ ] **Step 5: Commit**
+```yaml
+Metrics/ParameterLists:
+  Exclude:
+    - lib/apartment/pool_reaper.rb
+    # Five keyword fields plus the anonymous ** that keeps Context additive-only.
+    - lib/apartment/privileges/context.rb
+```
+
+Do **not** set `CountKeywordArgs: false` repo-wide. That is a lint-policy change affecting every file, and it is out of scope for this task.
+
+- [ ] **Step 5: Run the tests**
+
+Run: `bundle exec rspec spec/unit/privileges/context_spec.rb spec/unit/zeitwerk_eager_load_spec.rb && bundle exec rubocop lib spec`
+Expected: PASS, no offenses. Zeitwerk resolves `Apartment::Privileges::Context` from the directory as an implicit namespace with no `privileges.rb` present; Task 4 converting it to an explicit namespace is accepted, so the task order here is correct.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add lib/apartment/privileges/context.rb spec/unit/privileges/context_spec.rb
+git add lib/apartment/privileges/context.rb spec/unit/privileges/context_spec.rb .rubocop.yml
 git commit -m "Feat(v4): add Privileges::Context
 
 What a tenant_privilege_policy receives, one instance per phase. A plain frozen
