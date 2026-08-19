@@ -8,11 +8,15 @@ require 'spec_helper'
 #
 # Requires real ActiveRecord + pg for the PostgreSQL::Utils name splitter.
 # Skips gracefully otherwise (run via any postgresql appraisal).
+# PG_UNIT_REQUIRED=1 turns the skip into a hard failure in the job that IS
+# supposed to load pg — see spec/CLAUDE.md.
 PG_UTILS_AVAILABLE = begin
   require('active_record')
   require('active_record/connection_adapters/postgresql_adapter')
   true
 rescue LoadError => e
+  raise if ENV['PG_UNIT_REQUIRED']
+
   warn "[postgresql_sequence_name_spec] Skipping: #{e.message}"
   false
 end

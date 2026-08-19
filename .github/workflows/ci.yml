@@ -140,6 +140,20 @@ jobs:
           PGPORT: '5432'
           PGUSER: postgres
           PGPASSWORD: postgres
+      # The `unit` job runs sqlite3 gemfiles only, so the pg-gated unit specs
+      # (transaction_taint, postgresql_sequence_name, schema_dumper_patch's
+      # .apply! example) pend there and were covered by no job at all. This is
+      # the only job whose bundle carries pg. PG_UNIT_REQUIRED=1 turns a lost
+      # pg into a hard failure instead of a silent green.
+      - name: Run PG-gated unit specs
+        run: bundle exec rspec spec/unit/ --format progress
+        env:
+          PG_UNIT_REQUIRED: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: postgres
+
       - name: Run request lifecycle spec (isolated)
         run: bundle exec rspec spec/integration/v4/request_lifecycle_spec.rb --format documentation
         env:
