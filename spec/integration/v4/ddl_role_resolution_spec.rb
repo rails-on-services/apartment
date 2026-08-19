@@ -52,24 +52,17 @@ RSpec.describe('An unresolvable ddl_role', :integration, :postgresql_only, :rbac
     Apartment::Current.reset
   end
 
-  # The cause chain has two links on this path, not one: ConnectionHandling's
-  # method-level rescue relabels the role failure as ApartmentError before it reaches
-  # MigrationRole, so the ConfigurationError's immediate cause is that wrapper and the
-  # AR error sits under it. The translation unwraps one layer to classify, which is why
-  # the message names the ActiveRecord error even though #cause does not.
+  # The cause chain is ONE link, and asserting that is the point: the AR error is the
+  # ConfigurationError's immediate cause. ConnectionHandling used to relabel the role
+  # failure as ApartmentError first — its rescue was method-level and so covered the
+  # `return super` guards a default-path lookup takes — which put a wrapper in between
+  # and forced MigrationRole to unwrap a layer before classifying. If that relabelling
+  # ever comes back, #cause is the wrapper and this example fails.
   #
   # Asserted against ConnectionNotEstablished rather than the ConnectionNotDefined
   # subclass Rails 8 raises here, because that subclass does not exist before Rails 8.0
   # and this lane runs on the Rails floor too. The superclass is what both versions
   # satisfy.
-  def cause_chain(error)
-    chain = []
-    while (error = error.cause)
-      chain << error
-    end
-    chain
-  end
-
   it 'names ddl_role when a create cannot enter the role', :aggregate_failures do
     raised = nil
     begin
@@ -81,7 +74,7 @@ RSpec.describe('An unresolvable ddl_role', :integration, :postgresql_only, :rbac
     expect(raised).to(be_a(Apartment::ConfigurationError))
     expect(raised.message).to(match(/ddl_role.*:nope/))
     expect(raised.message).to(match(/ActiveRecord::ConnectionNot(Defined|Established)/))
-    expect(cause_chain(raised)).to(include(a_kind_of(ActiveRecord::ConnectionNotEstablished)))
+    expect(raised.cause).to(be_a(ActiveRecord::ConnectionNotEstablished))
   end
 
   it 'creates no container, because the failure precedes the first statement' do
