@@ -667,6 +667,73 @@ RSpec.describe(Apartment) do
     end
   end
 
+  # The build reads the DEFAULT connection's config. Reading it under a live tenant
+  # goes through the tenant-aware pool lookup, which asks Apartment.adapter for
+  # shared_pinned_connection? — the adapter this build has not finished producing. That
+  # recursed to SystemStackError on the first tenant switch of any process that had not
+  # already built the adapter.
+  describe '.default_connection_db_config (private)' do
+    let(:db_config) { double('db_config', adapter: 'postgresql', configuration_hash: { adapter: 'postgresql' }) }
+
+    before do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+    end
+
+    it 'resolves with the tenant unset, and restores it', :aggregate_failures do
+      observed = :never_called
+      allow(ActiveRecord::Base).to(receive(:connection_db_config)) do
+        observed = Apartment::Current.tenant
+        db_config
+      end
+      Apartment::Current.tenant = 'acme'
+
+      described_class.send(:default_connection_db_config)
+
+      expect(observed).to(be_nil)
+      expect(Apartment::Current.tenant).to(eq('acme'))
+    end
+
+    it 'lets a build complete with a tenant current' do
+      allow(ActiveRecord::Base).to(receive(:connection_db_config).and_return(db_config))
+      Apartment::Current.tenant = 'acme'
+
+      expect(described_class.send(:build_adapter)).to(be_a(Apartment::Adapters::PostgresqlSchemaAdapter))
+    end
+  end
+
+  # The backstop for any future circle of the same shape: a sentence rather than a
+  # stack dump. Simulated by having the config read ask for the adapter again, which
+  # is exactly what the tenant-aware pool lookup used to do.
+  describe '.adapter re-entrancy' do
+    it 'raises a ConfigurationError instead of recursing' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+      allow(ActiveRecord::Base).to(receive(:connection_db_config)) { described_class.adapter }
+
+      expect { described_class.adapter }.to(
+        raise_error(Apartment::ConfigurationError, /re-entered while the adapter was still being built/)
+      )
+    end
+
+    it 'clears the latch, so a later build still works' do
+      described_class.configure do |config|
+        config.tenant_strategy = :schema
+        config.tenants_provider = -> { [] }
+      end
+      db_config = double('db_config', adapter: 'postgresql', configuration_hash: { adapter: 'postgresql' })
+      allow(ActiveRecord::Base).to(receive(:connection_db_config)) { described_class.adapter }
+      expect { described_class.adapter }.to(raise_error(Apartment::ConfigurationError))
+
+      allow(ActiveRecord::Base).to(receive(:connection_db_config).and_return(db_config))
+      expect(described_class.adapter).to(be_a(Apartment::Adapters::PostgresqlSchemaAdapter))
+    end
+  end
+
   describe '.tenant_validator' do
     it 'returns an always-true callable when config.tenant_validator is false' do
       described_class.configure do |c|

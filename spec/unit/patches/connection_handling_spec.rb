@@ -236,6 +236,71 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
       end
     end
 
+    # The defect the base-config fallback hid. On the TENANT path an unregistered
+    # ddl_role does not raise: `super` fails, `base` becomes nil, and the adapter
+    # supplies its own config — so the pool is established with the DEFAULT
+    # connection's credentials while its key still claims the elevated role. Every
+    # per-tenant migration then runs as the application user under a label that lies,
+    # which is the failure the create-under-ddl_role fix exists to prevent, arriving
+    # by typo instead.
+    context 'when ddl_role names an unregistered role' do
+      def configure_ddl_role(role)
+        Apartment.configure do |config|
+          config.tenant_strategy = :schema
+          config.tenants_provider = -> { %w[acme widgets] }
+          config.default_tenant = 'public'
+          config.check_pending_migrations = false
+          config.ddl_role = role
+        end
+        # Reassigned because configure clears @adapter, and a rebuild would resolve the
+        # default config through the guard-1 `super` — surfacing the unregistered role
+        # from the BUILD rather than from the tenant-path fallback under test.
+        Apartment.adapter = mock_adapter
+      end
+
+      it 'raises a ConfigurationError naming the key instead of fabricating a pool', :aggregate_failures do
+        configure_ddl_role(:nope)
+        Apartment::Current.tenant = 'acme'
+
+        raised = nil
+        begin
+          ActiveRecord::Base.connected_to(role: :nope) { ActiveRecord::Base.connection_pool }
+        rescue StandardError => e
+          raised = e
+        end
+
+        expect(raised).to(be_a(Apartment::ConfigurationError))
+        expect(raised.message).to(match(/ddl_role.*:nope/))
+        # Raised inside the rescue, so ActiveRecord's own error stays as the cause.
+        expect(raised.cause).to(be_a(ActiveRecord::ConnectionNotEstablished))
+      end
+
+      # Gated on the role being ddl_role. An unregistered :reading role fabricates the
+      # same way, and that is a separate contract with its own specs — this fix must
+      # not change it by accident.
+      it 'leaves a non-ddl_role role to the existing fallback' do
+        configure_ddl_role(:db_manager)
+        Apartment::Current.tenant = 'acme'
+
+        pool = ActiveRecord::Base.connected_to(role: :reading) { ActiveRecord::Base.connection_pool }
+
+        expect(pool).not_to(be_nil)
+      end
+
+      # The probe is conservative by construction: it reports "registered" when it
+      # cannot answer, so a probe failure can never turn into a spurious raise.
+      it 'falls back rather than raising when the probe cannot answer' do
+        configure_ddl_role(:nope)
+        allow(ActiveRecord::Base).to(receive(:connection_handler).and_call_original)
+        allow(Apartment::MigrationRole).to(receive(:role_pool_registered?).and_return(true))
+        Apartment::Current.tenant = 'acme'
+
+        pool = ActiveRecord::Base.connected_to(role: :nope) { ActiveRecord::Base.connection_pool }
+
+        expect(pool).not_to(be_nil)
+      end
+    end
+
     context 'when tenant equals the default tenant' do
       it 'returns the default pool' do
         Apartment::Current.tenant = 'public'

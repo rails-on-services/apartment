@@ -56,10 +56,38 @@ module Apartment # rubocop:disable Metrics/ModuleLength
     attr_reader :config, :pool_manager, :pool_reaper
     attr_writer :adapter
 
+    # Fiber-local latch guarding the lazy build below. Thread#[] is fiber-local, so a
+    # fiber-based server gets its own, and a nested build cannot see a sibling's.
+    BUILDING_ADAPTER = :apartment_building_adapter
+
     # Lazy-loading adapter. Built on first access via build_adapter.
     # Can be set manually (e.g., in tests) via Apartment.adapter=.
+    #
+    # The latch is a backstop, not the fix. @adapter is not assigned until the build
+    # returns, so anything inside the build that resolves a connection through the
+    # tenant-aware pool lookup asks for the adapter again and recurses to
+    # SystemStackError — a stack dump naming no cause a reader can act on.
+    # default_connection_db_config closes the one such circle the gem had; this turns
+    # any future one into a sentence.
     def adapter
-      @adapter ||= build_adapter
+      return @adapter if @adapter
+
+      if Thread.current[BUILDING_ADAPTER]
+        raise(ConfigurationError,
+              'Apartment.adapter was re-entered while the adapter was still being ' \
+              'built, which means something in the build resolved a connection ' \
+              'through the tenant-aware pool lookup. Build the adapter before ' \
+              'switching tenants — Apartment.adapter with no tenant current, or an ' \
+              'explicit Apartment.adapter= — and report this, because the gem should ' \
+              'not need you to.')
+      end
+
+      Thread.current[BUILDING_ADAPTER] = true
+      begin
+        @adapter ||= build_adapter
+      ensure
+        Thread.current[BUILDING_ADAPTER] = nil
+      end
     end
 
     # An always-valid validator, used when config.tenant_validator is false.
@@ -484,11 +512,35 @@ module Apartment # rubocop:disable Metrics/ModuleLength
                 raise(AdapterNotFound, "Strategy #{strategy} not yet implemented")
               end
 
-      klass.new(ActiveRecord::Base.connection_db_config.configuration_hash)
+      klass.new(default_connection_db_config.configuration_hash)
     end
 
     def detect_database_adapter
-      ActiveRecord::Base.connection_db_config.adapter
+      default_connection_db_config.adapter
+    end
+
+    # The DEFAULT connection's db_config, resolved with the tenant unset.
+    #
+    # Unsetting it is what breaks a circle, not a precaution: connection_db_config is
+    # connection_pool.db_config, connection_pool goes through
+    # Patches::ConnectionHandling, and that patch asks Apartment.adapter for
+    # shared_pinned_connection?. Reading this under a live tenant therefore re-enters
+    # the very build it is part of, and @adapter is not assigned until the build
+    # returns, so it recursed until SystemStackError.
+    #
+    # The circle was reachable, not theoretical. configure clears @adapter and
+    # activate! does not rebuild it, so any process whose FIRST Apartment operation is
+    # a tenant switch — a job worker, a rake task, rails runner — took it. The request
+    # path escaped by accident: Elevators::Generic resolves the adapter per request
+    # before it switches, filling the memo while no tenant is current.
+    #
+    # The default connection is also the right answer. Which engine the app runs on is
+    # a property of the app rather than of whichever tenant happens to be current, and
+    # a tenant's config is derived from the default one anyway.
+    def default_connection_db_config
+      Apartment::Current.set(tenant: nil) do
+        ActiveRecord::Base.connection_db_config
+      end
     end
   end
 end

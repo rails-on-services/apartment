@@ -68,10 +68,17 @@ module Apartment
             # default pool (bypasses the patch), and check_pending_migrations? /
             # schema-cache load operate on the explicit `pool`, so all are safe.
             # Keep it that way if you add work to this block.
-            # Resolve base config from the current role's default pool when available.
-            # Falls back to nil (adapter uses its own base_config) when the default pool
-            # is not accessible — e.g., in worker threads during parallel migration where
-            # the ConnectionHandler may not have the pool registered for this context.
+            # Resolve base config from the current role's default pool when available,
+            # falling back to nil so the adapter uses its own base_config.
+            #
+            # The fallback is for a handler that has no pool for this role at all — in
+            # practice a CUSTOM ConnectionHandler installed on one thread only, which is
+            # this repo's own integration harness. It is NOT for parallel-migration
+            # worker threads, as this comment used to claim: workers see the same
+            # process-default handler and the same registrations, verified on 7.2.3.1,
+            # 8.0.5 and 8.1.3.1. ddl_role is excluded from it — see
+            # #guard_ddl_role_registered!.
+            #
             # NOTE: `super` must be called here (not in a helper) because it refers to
             # the original connection_pool method on AR::Base, which only resolves from
             # the prepended method scope.
@@ -79,6 +86,7 @@ module Apartment
               default_pool = super
               default_pool.db_config.configuration_hash.stringify_keys
             rescue ActiveRecord::ConnectionNotEstablished
+              guard_ddl_role_registered!(role, tenant)
               nil
             end
 
@@ -144,6 +152,35 @@ module Apartment
       end
 
       private
+
+      # Substituting the default connection's config is never a valid answer for
+      # ddl_role. Doing it silently gave every per-tenant migration ordinary application
+      # privileges under a pool key that claimed the elevated role — the failure that
+      # putting create and migrate on one role exists to prevent, arriving by typo, and
+      # invisible precisely because the label lies.
+      #
+      # Called from inside the base-config rescue, which is what makes it sound: it can
+      # only fire when the lookup actually failed, ActiveRecord's error stays as the Ruby
+      # #cause, and some future unrelated source of a nil base cannot be misread as an
+      # unregistered role.
+      #
+      # Gated on the role BEING ddl_role. An unregistered :reading role fabricates
+      # identically, and that is a separate contract with its own specs; this must not
+      # change it by accident.
+      #
+      # role_pool_registered? is deliberately conservative — it answers "registered" when
+      # it cannot answer at all — so a probe failure can never become a spurious raise.
+      def guard_ddl_role_registered!(role, tenant)
+        return unless role == Apartment.config&.ddl_role
+        return if Apartment::MigrationRole.role_pool_registered?(role)
+
+        raise(Apartment::ConfigurationError,
+              "ddl_role is set to #{role.inspect} but ActiveRecord has no connection " \
+              "registered for that role, so the pool for tenant '#{tenant}' would be built " \
+              'from the default connection — running tenant DDL on ordinary application ' \
+              'credentials under a pool key that claims the elevated role. Declare the role ' \
+              'with connects_to on your application record, or unset ddl_role.')
+      end
 
       def check_pending_migrations?(pool)
         return false unless Apartment.config.check_pending_migrations
