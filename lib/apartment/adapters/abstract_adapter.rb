@@ -648,6 +648,11 @@ module Apartment
       #
       # The release comes first because our own import_schema lease is on this pool;
       # without it the in-use check would see this thread and skip every discard.
+      #
+      # The in-use check is a narrowing, not a lock: another thread can lease between
+      # pool_in_use? and deregister_shard. Accepted, and documented with the reasoning
+      # at PoolManager#remove — leasing bypasses the manager's map entirely, so the race
+      # cannot be closed there.
       def discard_ddl_role_pool(tenant)
         role = Apartment.config.ddl_role
         return unless role
