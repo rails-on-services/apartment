@@ -33,7 +33,16 @@ module Apartment
         # method-level one also covers the four `return super` guards above, so an
         # ordinary non-tenant resolution — nil tenant, most of what a Rails app does —
         # had its own failure relabelled "Failed to resolve connection pool for tenant
-        # ''". Everything the default path does now behaves exactly like stock Rails.
+        # ''". A default-path resolution now raises what stock Rails raises.
+        #
+        # Deliberate and worth stating precisely: the boundary opens AFTER the guards,
+        # so evaluating them is outside it too — `Apartment.adapter`,
+        # `Apartment.pinned_model?(self)` and `adapter.shared_pinned_connection?`. A
+        # raise from any of those now escapes as itself where it was previously wrapped.
+        # That is the better behaviour (a broken adapter or registry is not a
+        # tenant-resolution failure and should not be described as one), but it IS a
+        # behaviour change, and the wrapped form is what a pre-boundary bug report would
+        # have quoted.
         #
         # Inline rather than extracted into a helper for the reason the NOTE below
         # gives: the block calls `super`, which resolves only from this prepended

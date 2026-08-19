@@ -51,14 +51,18 @@ module Apartment
     # is harmless: a registered role re-raises it exactly as before, and if our role is
     # missing then naming +ddl_role+ is correct advice whatever the immediate error was.
     #
-    # Nothing arrives wrapped, which is why the clause names only ActiveRecord's error.
-    # +Patches::ConnectionHandling#connection_pool+ scopes its relabelling rescue to the
-    # tenant-resolution path, and a ddl_role failure is not on that path: it surfaces from
-    # the default-path lookup the early guards hand to +super+, outside the scope. The
-    # tenant path cannot produce one either, since it establishes a pool for the role
-    # itself and so never fails on an unregistered one. The +Apartment::ApartmentError+
-    # clause and the one-layer unwrap that used to sit here existed only for the
-    # method-level rescue that covered those guards, and went with it.
+    # No wrapped error still NEEDS translating here, which is why the clause names only
+    # ActiveRecord's. Errors can still arrive wrapped in +Apartment::ApartmentError+ —
+    # +Patches::ConnectionHandling#connection_pool+ relabels failures raised while
+    # resolving a TENANT pool — but those are genuine tenant-pool failures and belong to
+    # the tenant, not to +ddl_role+; translating them would misattribute. A ddl_role
+    # failure is not among them: it surfaces from the default-path lookup the early
+    # guards hand to +super+, outside that method's rescue boundary, and the tenant path
+    # cannot produce one at all because it establishes a pool for the role itself and so
+    # never fails on an unregistered one (pinned by the base-config-fallback examples in
+    # spec/unit/patches/connection_handling_spec.rb). The +ApartmentError+ clause and the
+    # one-layer unwrap that used to sit here existed only for the method-level rescue
+    # that covered those guards, and went with it.
     def wrap(&)
       role = Apartment.config.ddl_role
       return yield unless role
