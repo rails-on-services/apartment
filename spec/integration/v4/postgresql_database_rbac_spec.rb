@@ -4,7 +4,7 @@ require 'spec_helper'
 require_relative 'support'
 require_relative 'support/rbac_helper'
 
-RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration, :postgresql_only, :rbac,
+RSpec.describe('PostgreSQL database-per-tenant custom privilege policy', :integration, :postgresql_only, :rbac,
                skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PG')) do
   include V4IntegrationHelper
 
@@ -30,14 +30,19 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
 
     force_drop_database(tenant)
 
-    # Callable app_role: logs the call, then switches into the tenant DB to
-    # issue grants. For database-per-tenant PG, grant_tenant_privileges runs
-    # on the default DB connection — the callable must Tenant.switch to reach
-    # the tenant database's public schema.
+    # A custom policy: logs the call, then switches into the tenant DB to issue
+    # grants. For database-per-tenant PG the policy runs on the default DB
+    # connection — it must Tenant.switch to reach the tenant database's public
+    # schema. Guarded to the first phase, which is where the old single call site
+    # sat; without the guard the policy would run again after the import step.
     @grant_log = []
-    callable = lambda { |t, conn|
-      @grant_log << { tenant: t, user: conn.execute('SELECT current_user AS cu').first['cu'] }
-      Apartment::Tenant.switch(t) do
+    callable = lambda { |ctx|
+      next unless ctx.before_schema_load?
+
+      # ctx.db_role, not a hand-rolled SELECT current_user: the context carries the
+      # resolved grantor, which is the whole point of the field.
+      @grant_log << { tenant: ctx.tenant, user: ctx.db_role }
+      Apartment::Tenant.switch(ctx.tenant) do
         tc = ActiveRecord::Base.connection
         role = tc.quote_table_name(RbacHelper::ROLES[:app_user])
         # Tables: DML access
@@ -55,7 +60,7 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
       c.tenant_strategy = :database_name
       c.tenants_provider = -> { [tenant] }
       c.default_tenant = @config['database']
-      c.app_role = callable
+      c.tenant_privilege_policy = callable
       c.check_pending_migrations = false
     end
 
@@ -99,7 +104,7 @@ RSpec.describe('PostgreSQL database-per-tenant callable app_role', :integration,
     Apartment::Current.reset
   end
 
-  it 'invokes the callable with tenant name and a live connection' do
+  it 'invokes the policy with the tenant name and a live connection' do
     expect(@grant_log.size).to(eq(1))
     expect(@grant_log.first[:tenant]).to(eq(tenant))
     expect(@grant_log.first[:user]).to(eq(RbacHelper::ROLES[:db_manager]))

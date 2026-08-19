@@ -409,52 +409,78 @@ RSpec.describe(Apartment::Config) do
       end
     end
 
-    context 'migration_role validation' do
+    context 'ddl_role validation' do
       before do
         config.tenant_strategy = :schema
         config.tenants_provider = -> { [] }
       end
 
-      it 'rejects a non-symbol value' do
-        config.migration_role = 'db_manager'
-        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /migration_role/))
-      end
-
       it 'accepts nil' do
-        config.migration_role = nil
+        config.ddl_role = nil
         expect { config.validate! }.not_to(raise_error)
       end
 
-      it 'accepts a symbol' do
-        config.migration_role = :db_manager
-        expect { config.validate! }.not_to(raise_error)
+      it 'accepts a Symbol ddl_role' do
+        expect do
+          Apartment.configure do |c|
+            c.tenant_strategy = :schema
+            c.tenants_provider = -> { [] }
+            c.default_tenant = 'public'
+            c.ddl_role = :db_manager
+          end
+        end.not_to(raise_error)
+
+        expect(Apartment.config.ddl_role).to(eq(:db_manager))
+      end
+
+      it 'rejects a non-Symbol ddl_role' do
+        expect do
+          Apartment.configure do |c|
+            c.tenant_strategy = :schema
+            c.tenants_provider = -> { [] }
+            c.default_tenant = 'public'
+            c.ddl_role = 'db_manager'
+          end
+        end.to(raise_error(Apartment::ConfigurationError, /ddl_role must be nil or a Symbol/))
       end
     end
 
-    context 'app_role validation' do
-      before do
+    context 'tenant_privilege_policy validation' do
+      it 'accepts a callable tenant_privilege_policy' do
+        policy = ->(_ctx) {}
+        Apartment.configure do |c|
+          c.tenant_strategy = :schema
+          c.tenants_provider = -> { [] }
+          c.default_tenant = 'public'
+          c.tenant_privilege_policy = policy
+        end
+
+        expect(Apartment.config.tenant_privilege_policy).to(be(policy))
+      end
+
+      it 'rejects a non-callable tenant_privilege_policy' do
+        expect do
+          Apartment.configure do |c|
+            c.tenant_strategy = :schema
+            c.tenants_provider = -> { [] }
+            c.default_tenant = 'public'
+            c.tenant_privilege_policy = 'app_user'
+          end
+        end.to(raise_error(Apartment::ConfigurationError, /tenant_privilege_policy must be nil or a callable/))
+      end
+
+      it 'accepts nil, which means privileges are managed outside Apartment' do
         config.tenant_strategy = :schema
         config.tenants_provider = -> { [] }
-      end
+        config.tenant_privilege_policy = nil
 
-      it 'rejects a non-string non-callable value' do
-        config.app_role = 123
-        expect { config.validate! }.to(raise_error(Apartment::ConfigurationError, /app_role/))
-      end
-
-      it 'accepts nil' do
-        config.app_role = nil
         expect { config.validate! }.not_to(raise_error)
       end
 
-      it 'accepts a string' do
-        config.app_role = 'app_user'
-        expect { config.validate! }.not_to(raise_error)
-      end
-
-      it 'accepts a callable' do
-        config.app_role = -> { 'dynamic_role' }
-        expect { config.validate! }.not_to(raise_error)
+      it 'no longer accepts app_role' do
+        expect do
+          Apartment.configure { |c| c.app_role = 'app_user' }
+        end.to(raise_error(NoMethodError))
       end
     end
 
@@ -633,41 +659,26 @@ RSpec.describe(Apartment::Config) do
     end
   end
 
-  describe 'migration_role' do
+  describe 'ddl_role' do
     it 'defaults to nil' do
-      expect(config.migration_role).to(be_nil)
-    end
-
-    it 'accepts nil' do
-      config.migration_role = nil
-      expect(config.migration_role).to(be_nil)
+      expect(config.ddl_role).to(be_nil)
     end
 
     it 'accepts a symbol' do
-      config.migration_role = :db_manager
-      expect(config.migration_role).to(eq(:db_manager))
+      config.ddl_role = :db_manager
+      expect(config.ddl_role).to(eq(:db_manager))
     end
   end
 
-  describe 'app_role' do
+  describe 'tenant_privilege_policy' do
     it 'defaults to nil' do
-      expect(config.app_role).to(be_nil)
-    end
-
-    it 'accepts nil' do
-      config.app_role = nil
-      expect(config.app_role).to(be_nil)
-    end
-
-    it 'accepts a string' do
-      config.app_role = 'app_user'
-      expect(config.app_role).to(eq('app_user'))
+      expect(config.tenant_privilege_policy).to(be_nil)
     end
 
     it 'accepts a callable' do
-      callable = -> { 'dynamic_role' }
-      config.app_role = callable
-      expect(config.app_role).to(eq(callable))
+      policy = ->(_ctx) {}
+      config.tenant_privilege_policy = policy
+      expect(config.tenant_privilege_policy).to(be(policy))
     end
   end
 

@@ -569,6 +569,29 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
+  # The verification must not fire on the branch that deliberately mutates
+  # nothing. A subclass sharing an already-pinned base's table is a no-op, and
+  # if its base has not been qualified yet (registry order), asserting on it
+  # would fail a boot for a model that is about to become correct.
+  describe '#qualify_pinned_table_name verification scope' do
+    it 'does not verify a subclass that shares the base table' do
+      allow(adapter).to(receive(:pinned_table_qualifier).and_return('public'))
+      parent = Class.new(ActiveRecord::Base) do
+        self.table_name = 'order_parents'
+        include Apartment::Model
+      end
+      stub_const('OrderParent', parent)
+      parent.pin_tenant
+      child = Class.new(parent) { include Apartment::Model }
+      stub_const('OrderChild', child)
+      child.pin_tenant
+
+      # Parent deliberately NOT qualified yet — child is processed first.
+      expect { adapter.qualify_pinned_table_name(child) }.not_to(raise_error)
+      expect(child.table_name).to(eq('order_parents'))
+    end
+  end
+
   describe '#process_pinned_models' do
     context 'when shared_pinned_connection? is false (separate pool)' do
       it 'calls establish_connection with pinned_model_config' do
@@ -827,55 +850,374 @@ RSpec.describe(Apartment::Adapters::AbstractAdapter, :isolate_pinned_models) do
     end
   end
 
-  describe '#grant_tenant_privileges (private)' do
+  describe '#standard_privilege_statements' do
+    let(:connection) { double('Connection') }
+
+    # ConfigurationError, not NotImplementedError: the latter descends from
+    # ScriptError, so an adopter's `rescue StandardError` around Tenant.create
+    # would miss it and the process would die on a misconfiguration.
+    it 'raises a rescuable error on a strategy with no standard policy', :aggregate_failures do
+      reconfigure
+      ctx = Apartment::Privileges::Context.new(
+        tenant: 'acme', container_name: 'acme', connection: connection,
+        db_role: nil, phase: :before_schema_load
+      )
+
+      raised = nil
+      begin
+        adapter.standard_privilege_statements(ctx, grant_to: 'app_user')
+      rescue StandardError => e
+        raised = e
+      end
+
+      expect(raised).to(be_a(Apartment::ConfigurationError))
+      expect(raised.message).to(include('does not support'))
+    end
+
+    it 'reports no database role by default' do
+      reconfigure
+      expect(adapter.current_db_role(connection)).to(be_nil)
+    end
+  end
+
+  # PostgreSQL scopes an ALTER DEFAULT PRIVILEGES rule with no FOR ROLE to the role
+  # that EXECUTES it, so a create-time rule covers the tables later migrations create
+  # only if create and migrate run as the same role. Two further constraints force the
+  # whole DDL sequence into one wrap rather than just the policy: the tenant container
+  # is owned by whoever created it, and a policy handing the app role USAGE plus DML
+  # but never CREATE leaves a schema import on the writing role unable to create
+  # tables in a container it does not own.
+  describe '#create under a configured ddl_role' do
+    # Records the connected_to nesting depth so each step of create can be asserted to
+    # run inside (1) or outside (0) the role wrap.
+    def role_depth_tracker
+      depth = 0
+      observed_roles = []
+      allow(ActiveRecord::Base).to(receive(:connected_to)) do |role:, &block|
+        observed_roles << role
+        depth += 1
+        begin
+          block.call
+        ensure
+          depth -= 1
+        end
+      end
+      [-> { depth }, observed_roles]
+    end
+
+    before do
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(Apartment).to(receive(:deregister_shard))
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(double('Connection')))
+    end
+
+    it 'runs create_tenant, both policy phases, and the schema import inside the DDL role' do
+      current_depth, observed_roles = role_depth_tracker
+      depths = {}
+      policy = ->(ctx) { depths[ctx.phase] = current_depth.call }
+      reconfigure(ddl_role: :db_manager, tenant_privilege_policy: policy, schema_load_strategy: :schema_rb)
+      allow(adapter).to(receive(:current_db_role).and_return('db_manager'))
+      allow(adapter).to(receive(:create_tenant) { depths[:create_tenant] = current_depth.call })
+      allow(adapter).to(receive(:import_schema) { depths[:import_schema] = current_depth.call })
+
+      adapter.create('acme')
+
+      expect(depths).to(eq(create_tenant: 1, before_schema_load: 1, import_schema: 1, after_schema_load: 1))
+      expect(observed_roles).to(eq([:db_manager]))
+    end
+
+    it 'runs seeding outside the migration role, because seeding writes data' do
+      reconfigure(ddl_role: :db_manager, seed_after_create: true)
+      current_depth, = role_depth_tracker
+      seed_depth = nil
+      allow(adapter).to(receive(:seed) { seed_depth = current_depth.call })
+
+      adapter.create('acme')
+
+      expect(seed_depth).to(eq(0))
+    end
+
+    it 'discards the DDL-role pool the schema import opened for the new tenant' do
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+
+      adapter.create('acme')
+
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+
+    it 'releases the connection the schema import leased before discarding the pool' do
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+      pool = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool, connections: [])
+      allow(pool).to(receive(:release_connection))
+      pool_manager = instance_double(Apartment::PoolManager, peek: pool)
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.create('acme')
+
+      # Without the release, the in-use check would see this thread's own lease and
+      # skip the discard on every create.
+      expect(pool).to(have_received(:release_connection))
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+
+    it 'leaves a pool another operation is using registered' do
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema))
+      busy = double('Connection', in_use?: true, open_transactions: 0)
+      pool = instance_double(ActiveRecord::ConnectionAdapters::ConnectionPool, connections: [busy])
+      allow(pool).to(receive(:release_connection))
+      pool_manager = instance_double(Apartment::PoolManager, peek: pool)
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.create('acme')
+
+      # A concurrent migration of this same tenant leases the same
+      # "<tenant>:<ddl_role>" pool. Disconnecting it under that migration is
+      # worse than leaving a pool for the reaper to collect.
+      expect(Apartment).not_to(have_received(:deregister_shard))
+    end
+
+    it 'discards that pool even when the schema import raises' do
+      reconfigure(ddl_role: :db_manager, schema_load_strategy: :schema_rb)
+      role_depth_tracker
+      allow(adapter).to(receive(:import_schema).and_raise(Apartment::SchemaLoadError, 'boom'))
+
+      expect { adapter.create('acme') }.to(raise_error(Apartment::SchemaLoadError))
+
+      expect(Apartment).to(have_received(:deregister_shard).with('acme:db_manager'))
+    end
+  end
+
+  describe '#drop and the DDL role' do
+    # Records connected_to nesting depth, so each step of drop can be asserted to run
+    # inside (1) or outside (0) the role wrap. Same shape as the create-path tracker
+    # above; asserting on a recorded depth rather than expecting inside a stub keeps
+    # the failure message at the assertion and cannot pass by never running.
+    def role_depth_tracker
+      depth = 0
+      observed_roles = []
+      allow(ActiveRecord::Base).to(receive(:connected_to)) do |role:, &block|
+        observed_roles << role
+        depth += 1
+        begin
+          block.call
+        ensure
+          depth -= 1
+        end
+      end
+      [-> { depth }, observed_roles]
+    end
+
+    before { allow(Apartment::Instrumentation).to(receive(:instrument)) }
+
+    # DROP SCHEMA requires ownership, and the container is owned by ddl_role, so a
+    # writing role generally cannot drop what the gem created.
+    it 'drops the container inside the DDL role', :aggregate_failures do
+      reconfigure(ddl_role: :db_manager)
+      current_depth, observed_roles = role_depth_tracker
+      observed = nil
+      allow(adapter).to(receive(:drop_tenant) { observed = current_depth.call })
+
+      adapter.drop('acme')
+
+      expect(observed).to(eq(1))
+      expect(observed_roles).to(eq([:db_manager]))
+    end
+
+    # Pool removal and shard deregistration are local bookkeeping. Wrapping them would
+    # hold a ddl_role connection for work that needs no database at all.
+    it 'keeps pool bookkeeping outside the wrap' do
+      reconfigure(ddl_role: :db_manager)
+      current_depth, = role_depth_tracker
+      depths = {}
+      allow(adapter).to(receive(:drop_tenant) { depths[:drop_tenant] = current_depth.call })
+      pool_manager = instance_double(Apartment::PoolManager)
+      allow(pool_manager).to(receive(:remove_tenant)) do
+        depths[:remove_tenant] = current_depth.call
+        []
+      end
+      allow(Apartment).to(receive(:pool_manager).and_return(pool_manager))
+
+      adapter.drop('acme')
+
+      expect(depths).to(eq(drop_tenant: 1, remove_tenant: 0))
+    end
+  end
+
+  describe '#create and the privilege policy' do
     let(:connection) { double('Connection') }
 
     before do
-      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
       allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(ActiveRecord::Base).to(receive(:connection).and_return(connection))
+      allow(adapter).to(receive(:current_db_role).and_return('db_manager'))
     end
 
-    context 'when app_role is a string' do
-      before { reconfigure(app_role: 'app_user') }
+    it 'invokes the policy once per phase, in order' do
+      phases = []
+      reconfigure(tenant_privilege_policy: ->(ctx) { phases << ctx.phase })
 
-      it 'calls grant_privileges with tenant, connection, and role_name' do
-        expect(adapter).to(receive(:grant_privileges).with('acme', connection, 'app_user'))
+      adapter.create('acme')
+
+      expect(phases).to(eq(%i[before_schema_load after_schema_load]))
+    end
+
+    it 'invokes both phases even when no schema is loaded' do
+      phases = []
+      reconfigure(schema_load_strategy: nil, tenant_privilege_policy: ->(ctx) { phases << ctx.phase })
+
+      adapter.create('acme')
+
+      # :after_schema_load means "after the import step", including when that step
+      # did nothing. A policy behaves the same either way.
+      expect(phases.size).to(eq(2))
+    end
+
+    it 'brackets the schema import between the phases' do
+      order = []
+      allow(adapter).to(receive(:import_schema) { order << :import })
+      reconfigure(schema_load_strategy: :schema_rb,
+                  tenant_privilege_policy: ->(ctx) { order << ctx.phase })
+
+      adapter.create('acme')
+
+      expect(order).to(eq(%i[before_schema_load import after_schema_load]))
+    end
+
+    it 'gives the policy the physical container name, not the logical tenant' do
+      names = []
+      reconfigure(environmentify_strategy: :append,
+                  tenant_privilege_policy: ->(ctx) { names << [ctx.tenant, ctx.container_name] })
+
+      adapter.create('acme')
+
+      # A policy interpolating the logical name would target the wrong object
+      # under any environmentify_strategy.
+      expect(names.first).to(eq(['acme', adapter.send(:physical_tenant_name, 'acme')]))
+    end
+
+    # One round trip per create, and the SAME role reported to both phases. The
+    # value matters as much as the count: db_role is the field that lets a policy
+    # write ALTER DEFAULT PRIVILEGES FOR ROLE and be correct by statement rather
+    # than by position, so replacing it with nil must not stay green.
+    it 'resolves the database role once and reports it to both phases', :aggregate_failures do
+      roles = []
+      reconfigure(tenant_privilege_policy: ->(ctx) { roles << ctx.db_role })
+
+      adapter.create('acme')
+
+      expect(adapter).to(have_received(:current_db_role).once)
+      expect(roles).to(eq(%w[db_manager db_manager]))
+    end
+
+    # Resolution is skipped entirely without a policy, so an adopter who manages
+    # privileges elsewhere pays no round trip.
+    it 'does not resolve the database role when no policy is configured' do
+      reconfigure
+
+      adapter.create('acme')
+
+      expect(adapter).not_to(have_received(:current_db_role))
+    end
+
+    it 'aborts the create when the policy raises, without seeding', :aggregate_failures do
+      reconfigure(seed_after_create: true,
+                  tenant_privilege_policy: ->(_ctx) { raise(ArgumentError, 'boom') })
+      allow(adapter).to(receive(:seed))
+
+      expect { adapter.create('acme') }.to(raise_error(ArgumentError, 'boom'))
+
+      expect(adapter).not_to(have_received(:seed))
+      expect(Apartment::Instrumentation).not_to(have_received(:instrument).with(:create, anything))
+    end
+
+    it 'creates the tenant without a policy configured' do
+      reconfigure
+
+      expect { adapter.create('acme') }.not_to(raise_error)
+      expect(adapter.created_tenants).to(include('acme'))
+    end
+  end
+
+  describe '#create without a ddl_role' do
+    it 'issues the DDL on the current role and discards no pool' do
+      reconfigure(schema_load_strategy: :schema_rb)
+      allow(Apartment::Instrumentation).to(receive(:instrument))
+      allow(adapter).to(receive(:import_schema))
+      expect(ActiveRecord::Base).not_to(receive(:connected_to))
+      expect(Apartment).not_to(receive(:deregister_shard))
+
+      adapter.create('acme')
+    end
+  end
+
+  describe '#create and the pending-migration check' do
+    before { allow(Apartment::Instrumentation).to(receive(:instrument)) }
+
+    after { Apartment::Current.migrating = nil }
+
+    it 'suppresses the check while the tenant is being built' do
+      reconfigure
+      observed = nil
+      allow(adapter).to(receive(:create_tenant) { observed = Apartment::Current.migrating })
+
+      adapter.create('acme')
+
+      # import_schema and seed switch into a container that has run no migration, so
+      # the check would otherwise fire against the thing being created.
+      expect(observed).to(be(true))
+    end
+
+    it 'restores the flag afterwards' do
+      reconfigure
+
+      adapter.create('acme')
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+
+    it 'restores the flag when the create raises' do
+      reconfigure
+      allow(adapter).to(receive(:create_tenant).and_raise(ArgumentError, 'boom'))
+
+      expect { adapter.create('acme') }.to(raise_error(ArgumentError))
+
+      expect(Apartment::Current.migrating).to(be_falsey)
+    end
+
+    it 'covers the :create callbacks, so one touching the new tenant is protected' do
+      reconfigure
+      observed = nil
+      TestAdapter.set_callback(:create, :after) { observed = Apartment::Current.migrating }
+
+      begin
         adapter.create('acme')
+      ensure
+        TestAdapter.reset_callbacks(:create)
       end
+
+      # Provisioning rows in the tenant just created is what a :create callback is for,
+      # and with schema_load_strategy nil that tenant has no schema_migrations, so a
+      # window narrower than the callback chain would leave the callback raising.
+      # The accepted cost is that a callback switching to an unrelated cold tenant also
+      # skips its check; see suppressing_pending_migration_check.
+      expect(observed).to(be(true))
     end
 
-    context 'when app_role is callable' do
-      it 'invokes the callable with (tenant, connection)' do
-        called_with = nil
-        reconfigure(app_role: ->(tenant, conn) { called_with = [tenant, conn] })
+    it 'leaves an enclosing migration still suppressed' do
+      reconfigure
+      Apartment::Current.migrating = true
 
-        adapter.create('acme')
+      adapter.create('acme')
 
-        expect(called_with).to(eq(['acme', connection]))
-      end
-    end
-
-    context 'when app_role is nil' do
-      it 'does not call grant_privileges and does not raise' do
-        # Default config has app_role = nil
-        expect(adapter).not_to(receive(:grant_privileges))
-        expect { adapter.create('acme') }.not_to(raise_error)
-      end
-    end
-
-    context 'ordering: grants run after create_tenant, before import_schema' do
-      it 'calls create_tenant then grant_tenant_privileges then import_schema' do
-        reconfigure(app_role: 'app_user', schema_load_strategy: :schema_rb)
-        call_order = []
-
-        allow(adapter).to(receive(:create_tenant).with('acme') { call_order << :create_tenant })
-        allow(adapter).to(receive(:grant_privileges) { call_order << :grant_privileges })
-        allow(adapter).to(receive(:import_schema).with('acme') { call_order << :import_schema })
-
-        adapter.create('acme')
-
-        expect(call_order).to(eq(%i[create_tenant grant_privileges import_schema]))
-      end
+      # A create nested inside a migration — an adopter :create callback, or a
+      # create-then-migrate helper — must not disarm the migration on its way out.
+      expect(Apartment::Current.migrating).to(be(true))
     end
   end
 

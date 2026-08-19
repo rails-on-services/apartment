@@ -127,12 +127,13 @@ Opt-in via `COVERAGE=1 bundle exec rspec spec/unit/`. Reports to `coverage/` (gi
 
 ### CI hard-fail flags for self-required deps
 
-Some specs self-require a heavy dep in a `begin/rescue LoadError` so they skip gracefully when the dep isn't loadable. The risk: if the targeted CI job's bundle silently loses the dep, the spec keeps skipping and covers nothing. Three `*_REQUIRED` env vars turn that skip into a hard failure in the job that's *supposed* to load the dep:
+Some specs self-require a heavy dep in a `begin/rescue LoadError` so they skip gracefully when the dep isn't loadable. The risk: if the targeted CI job's bundle silently loses the dep, the spec keeps skipping and covers nothing. Six `*_REQUIRED` env vars turn that skip into a hard failure in the job that's *supposed* to load the dep:
 
 - `RSPEC_RAILS_REQUIRED=1` — `spec/unit/rspec_rails_lifecycle_spec.rb` (needs rspec-rails)
 - `RAILTIE_SPEC_REQUIRED=1` — `spec/unit/railtie_spec.rb` (needs rails + apartment/railtie)
 - `REQUEST_LIFECYCLE_REQUIRED=1` — `spec/integration/v4/request_lifecycle_spec.rb` (needs the dummy app)
-- `PGBOUNCER_REQUIRED=1` — `spec/integration/v4/pgbouncer_spec.rb` (needs the two PgBouncer instances the `pgbouncer` CI job starts, via `PGBOUNCER_SAFE_PORT` / `PGBOUNCER_UNSAFE_PORT`). The stakes here are the highest of the four: this spec asserts *tenant isolation* through a transaction-mode pooler, so a silent skip reporting green is precisely the outcome it exists to prevent.
+- `PGBOUNCER_REQUIRED=1` — `spec/integration/v4/pgbouncer_spec.rb` (needs the two PgBouncer instances the `pgbouncer` CI job starts, via `PGBOUNCER_SAFE_PORT` / `PGBOUNCER_UNSAFE_PORT`). The stakes here are among the highest: this spec asserts *tenant isolation* through a transaction-mode pooler, so a silent skip reporting green is precisely the outcome it exists to prevent.
+- `CONNECTION_HANDLING_REQUIRED=1` — `spec/unit/patches/connection_handling_spec.rb` (needs real ActiveRecord plus the `sqlite3` gem; the `unit` CI job's `BUNDLE_GEMFILE` is a sqlite3 appraisal, so it has them). Every example in the file pends in the default driverless bundle, including the ones holding `#connection_pool`'s rescue boundary to the tenant path — the hottest path in the gem — so a bundle that quietly lost sqlite3 would report green while covering none of it.
 - `PG_UNIT_REQUIRED=1` — `spec/unit/transaction_taint_spec.rb` (needs the `pg` gem to name `PG::PQTRANS_*`). The taint is a PostgreSQL-only state, so these examples skip in the default driverless unit bundle and run under the PostgreSQL appraisals. Set the flag in a PG job so a bundle that quietly loses `pg` fails loudly instead of skipping green.
 
 Pattern: `begin require('<dep>'); rescue LoadError => e; raise if ENV['<FLAG>']; warn '...'; ... end`. CI's relevant job sets the flag; everywhere else the skip remains graceful. When adding a new self-required spec, mirror this idiom and add the flag here so the convention stays discoverable.
@@ -269,6 +270,22 @@ Query `information_schema.schemata` (PostgreSQL) or `SHOW DATABASES` (MySQL) to 
 
 **Always probe non-vacuity**: run the spec with the fix neutered (e.g. `rspec -I lib -r probe.rb`, where `probe.rb` no-ops the patch's `apply!`) and confirm it fails. A concurrency spec that has never been seen to fail is decoration.
 
+### Issue: A Spec Cannot Exercise Code Guarded By `Rails.env.local?`
+
+**Symptom**: A guard like `return false unless defined?(Rails) && Rails.env.local?` never lets its body run, so the behavior behind it looks untestable — or worse, looks tested because the spec passes.
+
+**Cause**: `spec/support/rails_stub.rb` returns an `ActiveSupport::StringInquirer`, which answers `foo?` with `self == 'foo'`. So `Rails.env.local?` asks "is the env named 'local'" and is always false. A real Rails app gets `ActiveSupport::EnvironmentInquirer`, whose `local?` means development-or-test.
+
+**Effect found in practice**: `ConnectionHandling#check_pending_migrations?` was inert for the whole suite. No spec proved it fires — only that it can be switched off — and most integration specs set `check_pending_migrations = false` defensively, which hid that the default path was never exercised.
+
+**Solution**: arm it per-example.
+
+```ruby
+allow(Rails).to(receive(:env).and_return(ActiveSupport::EnvironmentInquirer.new('test')))
+```
+
+See `spec/integration/v4/create_pending_migration_spec.rb`. Changing the shared stub to `EnvironmentInquirer` would arm every such guard at once across the suite; treat that as its own change, not a drive-by.
+
 ### Issue: Pinned-Model Assertions Leak Across Examples
 
 **Symptom**: A spec asserting on what `process_pinned_models` handles (the count, or which classes) passes in isolation but fails in the full suite.
@@ -290,7 +307,8 @@ Current coverage areas:
 - ⚠️ Migration scenarios (partial)
 - ✅ Fiber safety (tested in v4 via CurrentAttributes)
 - ✅ Request lifecycle (elevator->switch->response in dummy app)
-- ✅ RBAC integration (role-aware connections, privilege grants, Migrator with migration_role)
+- ✅ RBAC integration (role-aware connections, privilege grants, Migrator with ddl_role)
+- ✅ Two-phase `tenant_privilege_policy` against real roles (`integration/v4/tenant_privilege_policy_spec.rb`): a default-privileges-only policy covers schema-imported tables, and `FOR ROLE` records the rule against the role it names rather than the role executing it. Both probed by neutering the behaviour.
 
 Areas needing more coverage:
 - Concurrent tenant access patterns

@@ -29,101 +29,158 @@ module Apartment
           return super
         end
 
-        # Reject pool-key-unsafe tenant names BEFORE building pool_key or entering
-        # fetch_or_create. In the capped path, fetch_or_admit runs admit! (which
-        # may LRU-evict an idle pool) before the adapter validates inside the
-        # block, so a colon / whitespace / NUL in the raw tenant — which would
-        # also corrupt the "#{tenant}:#{role}" key and PoolManager's prefix
-        # matching — must be caught here. ConfigurationError is an ApartmentError,
-        # so the rescue below re-raises it cleanly.
-        Apartment::TenantNameValidator.validate_common!(tenant.to_s)
+        # Scoped with an explicit begin rather than a method-level rescue: a
+        # method-level one also covers the four `return super` guards above, so an
+        # ordinary non-tenant resolution — nil tenant, most of what a Rails app does —
+        # had its own failure relabelled "Failed to resolve connection pool for tenant
+        # ''". A default-path resolution now raises what stock Rails raises.
+        #
+        # Deliberate and worth stating precisely: the boundary opens AFTER the guards,
+        # so evaluating them is outside it too — `Apartment.adapter`,
+        # `Apartment.pinned_model?(self)` and `adapter.shared_pinned_connection?`. A
+        # raise from any of those now escapes as itself where it was previously wrapped.
+        # That is the better behaviour (a broken adapter or registry is not a
+        # tenant-resolution failure and should not be described as one), but it IS a
+        # behaviour change, and the wrapped form is what a pre-boundary bug report would
+        # have quoted.
+        #
+        # Inline rather than extracted into a helper for the reason the NOTE below
+        # gives: the block calls `super`, which resolves only from this prepended
+        # method's scope.
+        begin
+          # Reject pool-key-unsafe tenant names BEFORE building pool_key or entering
+          # fetch_or_create. In the capped path, fetch_or_admit runs admit! (which
+          # may LRU-evict an idle pool) before the adapter validates inside the
+          # block, so a colon / whitespace / NUL in the raw tenant — which would
+          # also corrupt the "#{tenant}:#{role}" key and PoolManager's prefix
+          # matching — must be caught here. ConfigurationError is an ApartmentError,
+          # so the rescue below re-raises it cleanly.
+          Apartment::TenantNameValidator.validate_common!(tenant.to_s)
 
-        role = ActiveRecord::Base.current_role
-        pool_key = "#{tenant}:#{role}"
+          role = ActiveRecord::Base.current_role
+          pool_key = Apartment.pool_key(tenant, role)
 
-        Apartment.pool_manager.fetch_or_create(pool_key) do
-          # RE-ENTRANCY: when max_total_connections is set, this block runs under
-          # PoolManager's @create_mutex (non-reentrant). Nothing here may resolve
-          # ActiveRecord::Base.connection_pool for the current tenant — it would
-          # re-enter fetch_or_create and self-deadlock. `super` resolves the
-          # default pool (bypasses the patch), and check_pending_migrations? /
-          # schema-cache load operate on the explicit `pool`, so all are safe.
-          # Keep it that way if you add work to this block.
-          # Resolve base config from the current role's default pool when available.
-          # Falls back to nil (adapter uses its own base_config) when the default pool
-          # is not accessible — e.g., in worker threads during parallel migration where
-          # the ConnectionHandler may not have the pool registered for this context.
-          # NOTE: `super` must be called here (not in a helper) because it refers to
-          # the original connection_pool method on AR::Base, which only resolves from
-          # the prepended method scope.
-          base = begin
-            default_pool = super
-            default_pool.db_config.configuration_hash.stringify_keys
-          rescue ActiveRecord::ConnectionNotEstablished
-            nil
+          Apartment.pool_manager.fetch_or_create(pool_key) do
+            # RE-ENTRANCY: when max_total_connections is set, this block runs under
+            # PoolManager's @create_mutex (non-reentrant). Nothing here may resolve
+            # ActiveRecord::Base.connection_pool for the current tenant — it would
+            # re-enter fetch_or_create and self-deadlock. `super` resolves the
+            # default pool (bypasses the patch), and check_pending_migrations? /
+            # schema-cache load operate on the explicit `pool`, so all are safe.
+            # Keep it that way if you add work to this block.
+            # Resolve base config from the current role's default pool when available,
+            # falling back to nil so the adapter uses its own base_config.
+            #
+            # The fallback is for a handler that has no pool for this role at all — in
+            # practice a CUSTOM ConnectionHandler installed on one thread only, which is
+            # this repo's own integration harness. It is NOT for parallel-migration
+            # worker threads, as this comment used to claim: workers see the same
+            # process-default handler and the same registrations, verified on 7.2.3.1,
+            # 8.0.5 and 8.1.3.1. ddl_role is excluded from it — see
+            # #guard_ddl_role_registered!.
+            #
+            # NOTE: `super` must be called here (not in a helper) because it refers to
+            # the original connection_pool method on AR::Base, which only resolves from
+            # the prepended method scope.
+            base = begin
+              default_pool = super
+              default_pool.db_config.configuration_hash.stringify_keys
+            rescue ActiveRecord::ConnectionNotEstablished
+              guard_ddl_role_registered!(role, tenant)
+              nil
+            end
+
+            config = Apartment.adapter.validated_connection_config(tenant, base_config_override: base)
+            prefix = cfg.shard_key_prefix
+            shard_key = :"#{prefix}_#{pool_key}"
+
+            db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
+              cfg.rails_env_name,
+              "#{prefix}_#{pool_key}",
+              config
+            )
+
+            pool = ActiveRecord::Base.connection_handler.establish_connection(
+              db_config,
+              owner_name: ActiveRecord::Base,
+              role: role,
+              shard: shard_key
+            )
+
+            # establish_connection has registered the shard in AR's ConnectionHandler.
+            # If a post-establish check raises, the pool is returned to neither the
+            # caller nor PoolManager — it would be orphaned: live in AR but invisible
+            # to the reaper and to max_total accounting (a connection leak that also
+            # undercounts the cap). Deregister it before re-raising so AR and the
+            # manager stay consistent. The next request re-establishes cleanly.
+            #
+            # deregister_ar_shard, NOT deregister_shard: we are running inside
+            # PoolManager's create block, and the full form removes from PoolManager's
+            # Concurrent::Map — whose MRI backend guards compute_if_absent and delete
+            # with the same non-reentrant mutex, so that would raise ThreadError
+            # ("deadlock; recursive locking") and skip this deregistration entirely,
+            # orphaning the very pool this rescue exists to reclaim. There is nothing
+            # to remove from the manager here regardless: the pool is not stored until
+            # this block returns.
+            #
+            # Reached with +send+ because the AR-only half is private: it is a
+            # half-operation, and leaving one publicly reachable is the exact footgun
+            # this seam exists to close. This is the one place it is correct.
+            begin
+              raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
+
+              load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
+            rescue StandardError
+              Apartment.send(:deregister_ar_shard, pool_key)
+              raise
+            end
+
+            # After the post-establish checks (a pool that fails them is discarded, so
+            # extending it would be wasted), and before the pool is handed out (so the
+            # very first checkin is already covered).
+            # See docs/designs/transaction-taint-detection.md.
+            Apartment::TransactionTaint.install(pool, tenant: tenant, pool_key: pool_key)
+
+            pool
           end
-
-          config = Apartment.adapter.validated_connection_config(tenant, base_config_override: base)
-          prefix = cfg.shard_key_prefix
-          shard_key = :"#{prefix}_#{pool_key}"
-
-          db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
-            cfg.rails_env_name,
-            "#{prefix}_#{pool_key}",
-            config
-          )
-
-          pool = ActiveRecord::Base.connection_handler.establish_connection(
-            db_config,
-            owner_name: ActiveRecord::Base,
-            role: role,
-            shard: shard_key
-          )
-
-          # establish_connection has registered the shard in AR's ConnectionHandler.
-          # If a post-establish check raises, the pool is returned to neither the
-          # caller nor PoolManager — it would be orphaned: live in AR but invisible
-          # to the reaper and to max_total accounting (a connection leak that also
-          # undercounts the cap). Deregister it before re-raising so AR and the
-          # manager stay consistent. The next request re-establishes cleanly.
-          #
-          # deregister_ar_shard, NOT deregister_shard: we are running inside
-          # PoolManager's create block, and the full form removes from PoolManager's
-          # Concurrent::Map — whose MRI backend guards compute_if_absent and delete
-          # with the same non-reentrant mutex, so that would raise ThreadError
-          # ("deadlock; recursive locking") and skip this deregistration entirely,
-          # orphaning the very pool this rescue exists to reclaim. There is nothing
-          # to remove from the manager here regardless: the pool is not stored until
-          # this block returns.
-          #
-          # Reached with +send+ because the AR-only half is private: it is a
-          # half-operation, and leaving one publicly reachable is the exact footgun
-          # this seam exists to close. This is the one place it is correct.
-          begin
-            raise(Apartment::PendingMigrationError, tenant) if check_pending_migrations?(pool)
-
-            load_tenant_schema_cache(tenant, pool) if cfg.schema_cache_per_tenant
-          rescue StandardError
-            Apartment.send(:deregister_ar_shard, pool_key)
-            raise
-          end
-
-          # After the post-establish checks (a pool that fails them is discarded, so
-          # extending it would be wasted), and before the pool is handed out (so the
-          # very first checkin is already covered).
-          # See docs/designs/transaction-taint-detection.md.
-          Apartment::TransactionTaint.install(pool, tenant: tenant, pool_key: pool_key)
-
-          pool
+        rescue Apartment::ApartmentError
+          raise
+        rescue StandardError => e
+          raise(Apartment::ApartmentError,
+                "Failed to resolve connection pool for tenant '#{tenant}': #{e.class}: #{e.message}")
         end
-      rescue Apartment::ApartmentError
-        raise
-      rescue StandardError => e
-        raise(Apartment::ApartmentError,
-              "Failed to resolve connection pool for tenant '#{tenant}': #{e.class}: #{e.message}")
       end
 
       private
+
+      # Substituting the default connection's config is never a valid answer for
+      # ddl_role. Doing it silently gave every per-tenant migration ordinary application
+      # privileges under a pool key that claimed the elevated role — the failure that
+      # putting create and migrate on one role exists to prevent, arriving by typo, and
+      # invisible precisely because the label lies.
+      #
+      # Called from inside the base-config rescue, which is what makes it sound: it can
+      # only fire when the lookup actually failed, ActiveRecord's error stays as the Ruby
+      # #cause, and some future unrelated source of a nil base cannot be misread as an
+      # unregistered role.
+      #
+      # Gated on the role BEING ddl_role. An unregistered :reading role fabricates
+      # identically, and that is a separate contract with its own specs; this must not
+      # change it by accident.
+      #
+      # role_pool_registered? is deliberately conservative — it answers "registered" when
+      # it cannot answer at all — so a probe failure can never become a spurious raise.
+      def guard_ddl_role_registered!(role, tenant)
+        return unless role == Apartment.config&.ddl_role
+        return if Apartment::MigrationRole.role_pool_registered?(role)
+
+        raise(Apartment::ConfigurationError,
+              "ddl_role is set to #{role.inspect} but ActiveRecord has no connection " \
+              "registered for that role, so the pool for tenant '#{tenant}' would be built " \
+              'from the default connection — running tenant DDL on ordinary application ' \
+              'credentials under a pool key that claims the elevated role. Declare the role ' \
+              'with connects_to on your application record, or unset ddl_role.')
+      end
 
       def check_pending_migrations?(pool)
         return false unless Apartment.config.check_pending_migrations

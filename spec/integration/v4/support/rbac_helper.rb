@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Shared RBAC test infrastructure for integration tests that verify
-# role-aware connections, privilege grants, and Migrator migration_role.
+# role-aware connections, privilege grants, and Migrator ddl_role.
 #
 # Usage: tag specs with :rbac plus :postgresql_only or :mysql_only.
 # Roles are provisioned once per :rbac describe block via before(:context, :rbac).
@@ -126,7 +126,7 @@ module RbacHelper
     db_name = connection.current_database
     connection.execute("GRANT CREATE ON DATABASE #{connection.quote_table_name(db_name)} TO #{ROLES[:db_manager]}")
     # db_manager needs full access to the public schema for migrate_primary
-    # (which runs under migration_role). PG 15+ revoked CREATE ON SCHEMA public
+    # (which runs under ddl_role). PG 15+ revoked CREATE ON SCHEMA public
     # FROM PUBLIC. We also need access to tables postgres creates (e.g.,
     # schema_migrations from non-RBAC specs that may run before or after
     # provisioning due to RSpec randomization).
@@ -148,8 +148,8 @@ module RbacHelper
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:db_manager]}'@'%'")
     connection.execute("CREATE USER IF NOT EXISTS '#{ROLES[:app_user]}'@'%'")
     connection.execute("GRANT ALL PRIVILEGES ON *.* TO '#{ROLES[:db_manager]}'@'%' WITH GRANT OPTION")
-    # No wildcard grant for app_user — tests must depend entirely on
-    # Mysql2Adapter#grant_privileges (fired during adapter.create).
+    # No wildcard grant for app_user — tests must depend entirely on the
+    # tenant_privilege_policy the specs configure (fired during adapter.create).
     connection.execute('FLUSH PRIVILEGES')
   end
 

@@ -27,6 +27,17 @@ module Apartment
         [ActiveRecord::NoDatabaseError, Apartment::ApartmentError]
       end
 
+      # The engine is the same as the schema strategy's, so the token is identical.
+      # Implemented rather than inherited because this is the strategy most likely to
+      # need it: standard_privilege_statements raises here (see below), so privileges
+      # come from a hand-written policy, and that policy is exactly the code that wants
+      # ALTER DEFAULT PRIVILEGES FOR ROLE. Inheriting the base nil would leave it
+      # resolving the grantor itself, which is correct-by-position — the coupling this
+      # design removes.
+      def current_db_role(connection)
+        connection.select_value('SELECT current_user')
+      end
+
       protected
 
       def create_tenant(tenant)
@@ -49,11 +60,12 @@ module Apartment
         )
       end
 
-      # grant_privileges: inherits no-op from AbstractAdapter.
-      # Database-per-tenant RBAC grants require cross-database ordering
-      # (GRANT CONNECT on server, table grants inside tenant DB).
-      # Use the callable app_role escape hatch for this strategy.
-      # See docs/designs/v4-phase5-rbac-roles-schema-cache.md.
+      # standard_privilege_statements: inherits the ConfigurationError raise from
+      # AbstractAdapter. Database-per-tenant RBAC grants require cross-database
+      # ordering (GRANT CONNECT on the server, table grants inside the tenant DB),
+      # which Privileges.standard does not implement. Write a
+      # tenant_privilege_policy for this strategy instead.
+      # See docs/designs/v4-rbac-contract.md.
 
       private
 

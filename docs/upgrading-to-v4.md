@@ -26,6 +26,10 @@ The block override and the configured provider accept different input shapes by 
 
 `config.use_schemas` and `config.use_sql` have been removed. Use `tenant_strategy` for the isolation model and `schema_load_strategy` (`:schema_rb` or `:sql`) for schema loading on tenant creation.
 
+`config.app_role` has been removed and `config.migration_role` is now `config.ddl_role`. Neither key existed in v3, so this affects only adopters who ran a v4 alpha. `ddl_role` is the same Symbol with a wider contract: every statement Apartment issues against a tenant runs on it, tenant drop included, and seeding still does not. Privilege policy moved to `config.tenant_privilege_policy`, a callable invoked once before the schema import and once after; `Apartment::Privileges.standard(grant_to: 'app_user')` reproduces what the old String form granted, with `ALTER DEFAULT PRIVILEGES FOR ROLE` now explicit. There is no shim: the String form silently granted nothing on two of the four adapters, and preserving that was worse than breaking it. See [RBAC](rbac.md).
+
+Dropping a tenant is a behaviour change worth checking before you upgrade. `drop_tenant` now runs on `ddl_role` like create does, because `DROP SCHEMA` requires ownership and the container is owned by `ddl_role`. If you drop tenants today from a role that happens to hold the privilege, that role is no longer the one executing the drop.
+
 Config is frozen after `Apartment.configure`. No runtime mutation; attempting to change config values after boot raises `FrozenError`.
 
 Before/after:

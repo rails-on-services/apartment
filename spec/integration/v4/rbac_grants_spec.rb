@@ -13,14 +13,14 @@ RSpec.describe('PostgreSQL RBAC privilege grants', :integration, :postgresql_onl
   before do
     config = V4IntegrationHelper.establish_default_connection!
 
-    # Create tenant as db_manager (owns the schema) with app_role grants
+    # Create tenant as db_manager (owns the schema) with the standard privilege policy
     RbacHelper.connect_as(:db_manager)
 
     Apartment.configure do |c|
       c.tenant_strategy = :schema
       c.tenants_provider = -> { [tenant] }
       c.default_tenant = 'public'
-      c.app_role = RbacHelper::ROLES[:app_user]
+      c.tenant_privilege_policy = Apartment::Privileges.standard(grant_to: RbacHelper::ROLES[:app_user])
       c.check_pending_migrations = false
     end
 

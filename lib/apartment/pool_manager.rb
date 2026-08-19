@@ -49,6 +49,24 @@ module Apartment
     # These mutators also bypass PoolReaper's in-use guard: they will drop a pool
     # with a checked-out connection or an open transaction.
     # See docs/designs/out-of-band-tenant-ddl.md.
+    #
+    # ACCEPTED LIMITATION, the check-then-act race. A caller that guards a discard with
+    # Apartment.pool_in_use? — AbstractAdapter#discard_ddl_role_pool is the one in the
+    # gem — reads "not in use" and then calls Apartment.deregister_shard, and another
+    # thread can lease a connection from that pool in between. The guard narrows the
+    # window; it does not close it.
+    #
+    # It cannot be closed here. Leasing does not go through this map: a thread that
+    # already holds the pool object leases from the object directly, so no lock this
+    # class could take would serialize the two. Closing it would need a lock inside
+    # ActiveRecord's pool, which is not ours to add.
+    #
+    # Two things bound the exposure. Migrator leases eagerly rather than lazily, which
+    # its own comment explains as closing a capture->lease window — so the pool a
+    # migration will use is already in use by the time a concurrent discard could look
+    # at it. And #evict_by_role, which Migrator calls at the end of a run, has no in-use
+    # check at all: the race class is pre-existing and strictly wider there, so a guarded
+    # discard is an improvement on the surrounding code rather than a new hazard.
     def remove(tenant_key)
       pool = @pools.delete(tenant_key)
       @timestamps.delete(tenant_key)

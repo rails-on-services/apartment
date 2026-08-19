@@ -26,7 +26,7 @@ module Apartment
                   :tenant_not_found_handler, :tenant_validator,
                   :active_record_log, :sql_query_tags,
                   :shard_key_prefix,
-                  :migration_role, :app_role, :schema_cache_per_tenant, :check_pending_migrations,
+                  :ddl_role, :tenant_privilege_policy, :schema_cache_per_tenant, :check_pending_migrations,
                   :force_separate_pinned_pool, :test_fixture_cleanup, :reap_in_test,
                   :heal_tainted_connections
 
@@ -58,8 +58,8 @@ module Apartment
       @postgres_config = nil
       @mysql_config = nil
       @shard_key_prefix = 'apartment'
-      @migration_role = nil
-      @app_role = nil
+      @ddl_role = nil
+      @tenant_privilege_policy = nil
       @schema_cache_per_tenant = false
       @check_pending_migrations = true
       @force_separate_pinned_pool = false
@@ -123,7 +123,6 @@ module Apartment
       @postgres_config&.freeze!
       @mysql_config&.freeze!
       # schema_file is a simple string, no deep freeze needed
-      @app_role.freeze if @app_role.is_a?(String)
       freeze
     end
 
@@ -233,12 +232,14 @@ module Apartment
                                   'Must be nil, :schema_rb, or :sql')
       end
 
-      if @migration_role && !@migration_role.is_a?(Symbol)
-        raise(ConfigurationError, "migration_role must be nil or a Symbol, got: #{@migration_role.inspect}")
+      if @ddl_role && !@ddl_role.is_a?(Symbol)
+        raise(ConfigurationError, "ddl_role must be nil or a Symbol, got: #{@ddl_role.inspect}")
       end
 
-      if @app_role && !@app_role.is_a?(String) && !@app_role.respond_to?(:call)
-        raise(ConfigurationError, "app_role must be nil, a String, or a callable, got: #{@app_role.inspect}")
+      if @tenant_privilege_policy && !@tenant_privilege_policy.respond_to?(:call)
+        raise(ConfigurationError,
+              'tenant_privilege_policy must be nil or a callable, ' \
+              "got: #{@tenant_privilege_policy.inspect}")
       end
 
       unless [true, false].include?(@schema_cache_per_tenant)

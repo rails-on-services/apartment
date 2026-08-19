@@ -182,9 +182,20 @@ See the [Elevators](#elevators) section for available options.
 
 ### RBAC
 
-`migration_role`: a Symbol naming the database role used for migrations (default: nil, uses the connection's default role).
+Apartment guarantees which role executes tenant DDL and leaves privilege policy to you. Full guide: [docs/rbac.md](docs/rbac.md).
 
-`app_role`: a String or callable returning the restricted role for application queries (default: nil).
+`ddl_role`: a Symbol naming an ActiveRecord `connects_to` role used for all tenant DDL (default: nil, uses the connection's default role). It covers migrations, tenant creation and tenant drop alike: the container, both privilege-policy phases, and any `schema_load_strategy` import all run on it. Seeding does not — rows carry no ownership.
+
+`tenant_privilege_policy`: a callable invoked twice per create, once before the schema import and once after, with a context carrying the tenant, the physical container name, the connection, the resolved database role and the phase (default: nil). Apartment issues no grants of its own; a policy runs only because you configured one.
+
+```ruby
+Apartment.configure do |config|
+  config.ddl_role = :db_manager
+  config.tenant_privilege_policy = Apartment::Privileges.standard(grant_to: 'app_user')
+end
+```
+
+`Apartment::Privileges.standard` ships the engine-specific grant SQL as a library rather than as implicit behaviour, including PostgreSQL's `ALTER DEFAULT PRIVILEGES FOR ROLE`, which with no `FOR ROLE` is scoped to whichever role executed it and so has to name the database principal `ddl_role` resolves to. Two phases because position is policy: a default-privileges-only model must record its rules before the schema import, and a model granting existing objects must run after. [docs/rbac.md](docs/rbac.md) covers writing your own policy, the MySQL `GRANT OPTION` prerequisite, and what happens when a policy raises.
 
 ### PostgreSQL
 

@@ -30,15 +30,19 @@ on:
 
 jobs:
   # ── Unit tests (no database required) ──────────────────────────────
-  # Also runs spec/unit/rspec_rails_lifecycle_spec.rb and spec/unit/railtie_spec.rb
-  # across the full matrix — both self-require heavy deps (rspec-rails, rails)
-  # because spec_helper.rb stays Rails-free. The appraisal gemfiles carry the
-  # deps. {RSPEC_RAILS,RAILTIE_SPEC}_REQUIRED turn a missing dep into a hard
-  # failure rather than a silent skip (railtie_spec silently pended for months
-  # without it, masking a real bug in header_trust_warning?).
+  # Also runs spec/unit/rspec_rails_lifecycle_spec.rb, spec/unit/railtie_spec.rb and
+  # spec/unit/patches/connection_handling_spec.rb across the full matrix — all three
+  # self-require heavy deps (rspec-rails, rails, real AR + sqlite3) because
+  # spec_helper.rb stays Rails-free. The appraisal gemfiles carry the deps.
+  # {RSPEC_RAILS,RAILTIE_SPEC,CONNECTION_HANDLING}_REQUIRED turn a missing dep into a
+  # hard failure rather than a silent skip (railtie_spec silently pended for months
+  # without it, masking a real bug in header_trust_warning?; connection_handling_spec
+  # pends wholesale in the default driverless bundle, and its examples guard the
+  # rescue boundary on the hottest path in the gem).
   unit:
     name: Unit · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed ~30s
     # Rails main is a canary: it tracks an unreleased edge and is allowed to
     # fail. continue-on-error keeps a red main cell from failing the `unit` job,
     # so it neither blocks the workflow nor flips needs.unit.result for ci-gate.
@@ -52,6 +56,7 @@ jobs:
       BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}_sqlite3.gemfile
       RSPEC_RAILS_REQUIRED: '1'
       RAILTIE_SPEC_REQUIRED: '1'
+      CONNECTION_HANDLING_REQUIRED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
@@ -66,6 +71,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'postgresql' }}
     name: PG ${{ matrix.pg }} · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # observed ~2m
     needs: unit
     strategy:
       fail-fast: false
@@ -162,6 +168,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'mysql' }}
     name: MySQL 8.4 · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # observed ~3.5m
     needs: unit
     strategy:
       fail-fast: false
@@ -228,6 +235,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'sqlite' }}
     name: SQLite · Ruby ${{ matrix.ruby }} · Rails ${{ matrix.rails }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed ~70s
     needs: unit
     strategy:
       fail-fast: false
@@ -264,6 +272,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.engine == 'all' || inputs.engine == 'postgresql' }}
     name: PgBouncer tx-mode · PG ${{ matrix.pg }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed ~50s
     needs: unit
     strategy:
       fail-fast: false
@@ -295,10 +304,20 @@ jobs:
           ruby-version: '3.4'
           bundler-cache: true
 
+      # A mirror stall here once hung for 18 minutes and produced an empty log, because
+      # -qq suppresses everything and the job inherited the 360-minute default. Three
+      # changes, addressing cause then symptom: apt gets its own connect timeout and
+      # retries so a bad mirror fails instead of blocking; update keeps its output so
+      # there is something to read; and the step is capped well above the ~15s the
+      # install actually takes.
       - name: Install PgBouncer
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          APT_OPTS: -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq pgbouncer
+          sudo apt-get update $APT_OPTS
+          sudo apt-get install -y -qq $APT_OPTS pgbouncer
           pgbouncer --version
           # track_extra_parameters arrived in PgBouncer 1.20. Below that the safe
           # configuration cannot even be expressed, so fail loudly rather than
@@ -395,6 +414,7 @@ jobs:
     if: always()
     needs: [unit, postgresql, mysql, sqlite, pgbouncer]
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # observed ~3s
     env:
       UNIT: ${{ needs.unit.result }}
       POSTGRESQL: ${{ needs.postgresql.result }}

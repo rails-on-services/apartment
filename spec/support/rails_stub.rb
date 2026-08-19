@@ -14,6 +14,18 @@ require 'pathname'
 # Specs that need to simulate a different env override per-example via
 # `allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('...')))`.
 #
+# StringInquirer answers `foo?` with `self == 'foo'`, so `Rails.env.local?` is FALSE
+# under this stub — it reads as "is the env named 'local'". A real Rails app gets
+# ActiveSupport::EnvironmentInquirer, whose `local?` means development-or-test. Any
+# gem code guarded by `Rails.env.local?` is therefore inert suite-wide, which is why
+# ConnectionHandling's pending-migration check needs arming per-example:
+#
+#   allow(Rails).to(receive(:env).and_return(ActiveSupport::EnvironmentInquirer.new('test')))
+#
+# See spec/integration/v4/create_pending_migration_spec.rb. Swapping this stub to
+# EnvironmentInquirer wholesale would arm that check for every spec at once, so it is
+# a deliberate separate change rather than a drive-by.
+#
 # `unless defined?(Rails)` keeps the stub out of the way when a spec
 # subsequently loads the dummy app — the real Rails framework re-opens the
 # module and its own singleton methods replace these.
