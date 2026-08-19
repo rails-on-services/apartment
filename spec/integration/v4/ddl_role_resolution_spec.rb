@@ -83,4 +83,79 @@ RSpec.describe('An unresolvable ddl_role', :integration, :postgresql_only, :rbac
     conn = ActiveRecord::Base.connection
     expect(conn.select_value("SELECT to_regnamespace(#{conn.quote(tenant)}) IS NOT NULL")).to(be(false))
   end
+
+  # The tenant path, which the create above never reaches: resolving a pool for an
+  # EXISTING tenant under the bogus role. This is where the defect hid, because nothing
+  # raised — the base-config lookup failed, the fallback substituted the adapter's own
+  # config, and the pool came up on the DEFAULT connection's credentials while its key
+  # said ":nope". Probed against live PostgreSQL before the fix:
+  #
+  #   POOL db_config name: apartment_probe_tenant:totally_unregistered
+  #   POOL username:       the default connection's user
+  #   => RAISED NOTHING
+  #
+  # Every per-tenant migration would then run with application privileges under a label
+  # claiming the elevated role, which is exactly what running create and migrate on one
+  # role exists to prevent.
+  context 'resolving a pool for an existing tenant' do
+    before do
+      # Build the tenant with a working configuration, then re-point ddl_role at the
+      # unregistered one, so the switch below is the first thing to need that role.
+      Apartment.clear_config
+      config = V4IntegrationHelper.establish_default_connection!
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [tenant] }
+        c.default_tenant = 'public'
+        c.check_pending_migrations = false
+      end
+      Apartment.adapter = V4IntegrationHelper.build_adapter(config)
+      Apartment.adapter.create(tenant)
+
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [tenant] }
+        c.default_tenant = 'public'
+        c.ddl_role = :nope
+        c.check_pending_migrations = false
+      end
+      Apartment.adapter = V4IntegrationHelper.build_adapter(config)
+    end
+
+    it 'refuses to build the pool on default credentials', :aggregate_failures do
+      raised = nil
+      begin
+        ActiveRecord::Base.connected_to(role: :nope) do
+          Apartment::Tenant.switch(tenant) { ActiveRecord::Base.connection_pool }
+        end
+      rescue StandardError => e
+        raised = e
+      end
+
+      expect(raised).to(be_a(Apartment::ConfigurationError))
+      expect(raised.message).to(match(/ddl_role.*:nope/))
+      expect(raised.cause).to(be_a(ActiveRecord::ConnectionNotEstablished))
+    end
+
+    # The gate. A registered role resolves normally through the same code path, so the
+    # raise cannot be firing on the mere presence of a ddl_role.
+    it 'still resolves a pool when ddl_role is registered' do
+      Apartment.configure do |c|
+        c.tenant_strategy = :schema
+        c.tenants_provider = -> { [tenant] }
+        c.default_tenant = 'public'
+        c.ddl_role = :db_manager
+        c.check_pending_migrations = false
+      end
+      Apartment.adapter = V4IntegrationHelper.build_adapter(
+        V4IntegrationHelper.default_connection_config
+      )
+
+      pool = ActiveRecord::Base.connected_to(role: :db_manager) do
+        Apartment::Tenant.switch(tenant) { ActiveRecord::Base.connection_pool }
+      end
+
+      expect(pool).not_to(be_nil)
+    end
+  end
 end
