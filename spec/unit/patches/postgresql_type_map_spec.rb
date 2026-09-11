@@ -23,6 +23,30 @@ rescue LoadError => e
   false
 end
 
+# Stands in for PG::Connection: the accessors the patch reads for the endpoint
+# (PQhost / PQport / PQdb) plus the catalog-identity query it runs to tell one
+# catalog from another behind the same name.
+class FakeRawConnection
+  Result = Struct.new(:value) do
+    def getvalue(_row, _col) = value
+  end
+
+  attr_reader :host, :port, :db
+
+  def initialize(host:, port:, db:, database_oid:)
+    @host = host
+    @port = port
+    @db = db
+    @database_oid = database_oid
+  end
+
+  def exec(sql)
+    raise(ArgumentError, "unexpected identity SQL: #{sql}") unless sql.include?('pg_database')
+
+    Result.new(@database_oid)
+  end
+end
+
 RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
   before do
     skip('requires the pg gem (run via a postgresql appraisal)') unless PG_TYPE_MAP_AVAILABLE
@@ -70,6 +94,8 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
 
         private
 
+        attr_reader :type_map
+
         def initialize_type_map(_store = nil); end
       end
       names.each { |name| klass.send(:remove_method, name) }
@@ -85,7 +111,10 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
       expect(klass.ancestors.first).to(be(described_class))
     end
 
-    %i[reload_type_map clear_cache! initialize_type_map].each do |seam|
+    # type_map is in this list because the build depends on it: upstream's
+    # initialize_type_map loads through the reader, not through its argument, so
+    # a rename would leave apartment_build_type_map publishing an empty map.
+    %i[reload_type_map clear_cache! initialize_type_map type_map].each do |seam|
       it "fails closed when #{seam} is gone" do
         expect { described_class.apply!(adapter_class_missing(seam)) }
           .to(raise_error(Apartment::ConfigurationError, /#{seam}/))
@@ -101,8 +130,12 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
       klass = Class.new do
         attr_reader :loads
 
-        def initialize(database:, timezone: :utc)
-          @config = { host: 'db.internal', port: 5432, database: database }
+        # The key is read off the live connection rather than @config, so the
+        # fake carries one.
+        def initialize(database:, timezone: :utc, host: 'db.internal', database_oid: '16384')
+          @raw_connection = FakeRawConnection.new(
+            host: host, port: 5432, db: database, database_oid: database_oid
+          )
           @default_timezone = timezone
           @lock = Monitor.new
           @type_map = nil
@@ -138,8 +171,10 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
       klass
     end
 
-    def connect(database: 'app', timezone: :utc)
-      adapter_class.new(database: database, timezone: timezone).tap(&:reload_type_map)
+    def connect(database: 'app', timezone: :utc, host: 'db.internal', database_oid: '16384')
+      adapter_class
+        .new(database: database, timezone: timezone, host: host, database_oid: database_oid)
+        .tap(&:reload_type_map)
     end
 
     it 'loads the catalog once per database and hands every later adapter the same map' do
@@ -153,12 +188,53 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
       expect(first.current_type_map.key?(23)).to(be(true))
     end
 
-    it 'keys the shared map by database, since OIDs are database-wide, never by tenant' do
+    it 'keys by the database the connection reached, since OIDs are database-wide, never by tenant' do
+      # The database name here comes off the live connection, not @config. Two
+      # configs that look identical can still land on different databases
+      # through libpq defaulting (dbname from the user name, a service file,
+      # PGDATABASE), so a difference visible ONLY on the connection has to split
+      # the key -- which is what this fake varies.
       app = connect(database: 'app')
       other = connect(database: 'other')
 
       expect(other.loads).to(eq(1))
       expect(other.current_type_map).not_to(be(app.current_type_map))
+    end
+
+    it 'keys by host, so the same database name on two clusters is not shared' do
+      primary = connect(host: 'primary.internal')
+      secondary = connect(host: 'other-cluster.internal')
+
+      expect(secondary.loads).to(eq(1))
+      expect(secondary.current_type_map).not_to(be(primary.current_type_map))
+    end
+
+    it 'never shares when it cannot identify the database, falling back to upstream' do
+      # Unreachable on every path Rails takes, but sharing under an identity we
+      # could not confirm is the one failure this patch must not have.
+      adapter = adapter_class.new(database: 'app')
+      adapter.instance_variable_set(:@raw_connection, nil)
+
+      adapter.reload_type_map
+
+      expect(adapter.loads).to(eq(1))
+      expect(adapter.current_type_map).not_to(be_a(described_class::SharedTypeMap))
+      expect(described_class::REGISTRY).to(be_empty)
+    end
+
+    it 'refuses to adopt across a replaced catalog behind an unchanged endpoint name' do
+      # The regression this closes. Because the patch deliberately survives
+      # clear_cache!(new_connection: true), a reconnect no longer heals a
+      # catalog that was swapped out from under the endpoint name -- an RDS
+      # blue/green cutover on logical replication, or a restore into the same
+      # name. A fresh catalog restarts type OIDs at 16384, so the stale
+      # registrations do not go unused: they describe types that no longer hold
+      # those OIDs. Identity has to come from the catalog, not the name.
+      before_cutover = connect(database_oid: '16384')
+      after_cutover = connect(database_oid: '99999')
+
+      expect(after_cutover.loads).to(eq(1))
+      expect(after_cutover.current_type_map).not_to(be(before_cutover.current_type_map))
     end
 
     it 'keys by default_timezone too, because initialize_type_map bakes it into the registrations' do
@@ -231,7 +307,9 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
       end.each(&:join)
 
       expect(adapters.map(&:current_type_map).uniq.size).to(eq(1))
-      expect(adapters.sum(&:loads)).to(be >= 1)
+      # One key, whichever build won the publish race.
+      expect(described_class::REGISTRY.size).to(eq(1))
+      expect(adapters.map(&:current_type_map).first).to(be(described_class::REGISTRY.values.first))
     end
   end
 end

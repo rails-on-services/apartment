@@ -4,7 +4,7 @@
 
 Every new PostgreSQL connection Rails opens rebuilds the OID type map from scratch: `configure_connection` ends in `reload_type_map`, which runs three `pg_type` queries. Two of the three have no usable index and sequential-scan `pg_type`, whose size grows by two rows per table per tenant schema. Pool-per-tenant turns "a handful of connects at boot" into "a connect per tenant per nightly pass", so the cost is paid thousands of times a night against a catalog that is hundreds of times larger than a single-schema app's. Measured: 3.4 ms of type-map queries per connect at 5 schemas, 65 ms at 500.
 
-The fix shares one type map per **database** across every adapter in the process. It prepends two public, `:nodoc:` methods on `PostgreSQLAdapter` (`clear_cache!` and `reload_type_map`), builds the map into a `HashLookupTypeMap` subclass whose mapping is a `Concurrent::Map`, and publishes it in a process-wide registry keyed by host, port, database and default timezone. A new physical connection adopts the shared map; only an explicit reload after enum DDL rebuilds it. No private ActiveRecord method is overridden, and the apply step fails closed if the two seams disappear.
+The fix shares one type map per **database** across every adapter in the process. It prepends two public, `:nodoc:` methods on `PostgreSQLAdapter` (`clear_cache!` and `reload_type_map`), builds the map into a `HashLookupTypeMap` subclass whose mapping is a `Concurrent::Map`, and publishes it in a process-wide registry keyed by the endpoint and the catalog the live connection actually reached. A new physical connection adopts the shared map; only an explicit reload after enum DDL rebuilds it. No private ActiveRecord method is overridden, and the apply step fails closed if any of the three seams disappears.
 
 Upstream has fixed the connect-time cost on Rails main (rails/rails#57013, merged 2026-03-28, unreleased as of 8.1.3.1): built-in OIDs ship statically and the one remaining `pg_type` scan is deferred to the first unknown type, per adapter. This patch is the bridge for 7.2 through 8.1, and on main it still turns that deferred per-adapter scan into a per-process one.
 
@@ -17,6 +17,7 @@ Upstream has fixed the connect-time cost on Rails main (rails/rails#57013, merge
 - [Concurrency](#concurrency)
 - [DDL and staleness](#ddl-and-staleness)
 - [Testing](#testing)
+- [Retention](#retention)
 - [Non-goals](#non-goals)
 - [Upstream](#upstream)
 
@@ -88,10 +89,24 @@ Build the type map once per database and hand the same instance to every adapter
 `Apartment::Patches::PostgresqlTypeMap` is a module prepended on `ActiveRecord::ConnectionAdapters::PostgreSQLAdapter`. It carries:
 
 - `SharedTypeMap < ActiveRecord::Type::HashLookupTypeMap`: same public surface, but `@mapping` is a `Concurrent::Map` instead of a plain `Hash`. See [Concurrency](#concurrency).
-- `REGISTRY`: a process-wide `Concurrent::Map` from `[host, port, database, default_timezone]` to a `SharedTypeMap`.
+- `REGISTRY`: a process-wide `Concurrent::Map` from `[host, port, database, database_oid, default_timezone]` to a `SharedTypeMap`. See [Identity](#identity-what-the-key-has-to-name).
 - Two overrides, both of public `:nodoc:` methods present unchanged on Rails 7.2, 8.0, 8.1 and main.
 - `.apply!(adapter_class)`: the shape guard and the prepend, fail-closed.
-- `.reset!`: empties the registry. For test suites that need a cold start; not a configuration knob.
+- `.reset!`: empties the registry. A test hook, and the escape hatch for the retention below; not a configuration knob.
+
+### Identity: what the key has to name
+
+The first four components come off the **live connection**, never `@config`, and the fourth costs one query.
+
+`@config` is the wrong source because libpq fills in defaults it cannot show: `dbname` defaulting to the user name, a service file, `PGHOST`/`PGPORT`/`PGDATABASE`, `hostaddr` supplied without `host`. Two adapters whose configs look identical can land on different databases through any of those. `PQhost`, `PQport` and `PQdb` report the resolved parameters, are client-side (measured ~0.06 us each), and `PQhost` reports `hostaddr` when only `hostaddr` was given.
+
+A name is still not a catalog, and that is the sharper problem. This patch deliberately survives `clear_cache!(new_connection: true)` — Rails' "the socket is being replaced, drop what you cached" signal — and that signal is exactly what heals a replaced catalog today. Put a different cluster behind an unchanged endpoint (an RDS blue/green cutover on logical replication, a restore into the same name) and every connection drops, every adapter reconnects, and each one would adopt the old catalog's map. Type OIDs in a fresh catalog restart at 16384, so a stale registration does not merely go unused: it can describe a **different** type that now holds its OID, and an enum is cast as a domain with nothing raised. So the key carries the database's OID, read with `SELECT oid FROM pg_database WHERE datname = current_database()`: `pg_database` is shared and world-readable, so no privilege is needed, unlike `pg_control_system()`, which is superuser-only by default. Measured at 0.096 ms including the round trip, against 1.9 ms for a full type-map load on a 647-row `pg_type` and ~24 ms on a 281,927-row one.
+
+Two cases deliberately need no mechanism. A promoted **physical** replica has a byte-identical catalog, so its OIDs still agree and adoption is correct. And within one cluster the OID counter is global and monotonic (verified by probe: consecutive `CREATE TYPE` calls across a database drop and recreate returned 87477904 then 87477908), so a same-cluster drop and recreate leaves dead entries rather than wrong ones.
+
+What stays open is a connection pooler whose single alias fans out across **clusters that agree on database OID**. The identity query travels to the backend, so a fan-out across databases is caught; a fan-out across clusters is not a supported topology, since tenant isolation already depends on an alias denoting one database.
+
+Role, user and `search_path` are correctly **absent** from the key. `pg_type` is database-global and world-readable, the load queries carry no namespace filter, and runtime lookup is by OID, so same-named types in hundreds of tenant schemas coexist as distinct OID entries. Adding `search_path` would defeat the optimization without fixing anything.
 
 ### The two seams
 
@@ -140,6 +155,8 @@ Partial visibility during a lazy registration is benign: `TypeMapInitializer#run
 | `DROP TYPE` | The dropped OID stays registered on connections that had it; a fresh connection would not have it. | The dropped OID stays in the shared map until the next DDL-helper reload or `reset!`. Harmless: a result row can only carry that OID if the type exists. |
 | OID reuse after drop and recreate | A warm connection with the old registration mis-types the new type until it reconnects. | Same failure surface, now shared. PostgreSQL does not reuse OIDs while the counter has not wrapped (2^32), so this is theoretical; the existing out-of-band enum-churn spec continues to exercise the recreated-enum case. |
 | Reconnect after a network error | Full rebuild. | Adopts the shared map; zero catalog queries. |
+| A different catalog behind the same endpoint name (blue/green on logical replication, restore into the same name) | The reconnect rebuilds, so it self-heals. | The database OID in the key differs, so nothing is adopted and the map is rebuilt. Without that component this would be the patch's one silent-wrong-cast regression, since fresh catalogs restart type OIDs at 16384. |
+| A promoted physical replica behind the same endpoint name | Full rebuild. | Adopts; correct, because the catalog is byte-identical. |
 
 ## Testing
 
@@ -151,11 +168,30 @@ Unit (`spec/unit/patches/postgresql_type_map_spec.rb`, PG-gated like the sequenc
 
 Integration (`spec/integration/v4/postgresql_type_map_spec.rb`, PostgreSQL only, 7.2 through main via appraisal):
 
-- The first cold connection after a registry reset loads (three statements on 7.2 to 8.1, zero on main), and the nine cold connections that follow, with every tenant pool evicted between rounds (`Apartment.reset_tenant_pools!`), load nothing; without the patch each would.
-- Each fresh connection still runs exactly one `add_pg_decoders` statement, pinning that the decoder path was not touched. Pends on main, where there is no lookup.
+- The first cold connection after a registry reset loads three statements, and the nine cold connections that follow, with every tenant pool evicted between rounds (`Apartment.reset_tenant_pools!`), load nothing; without the patch each would. Pends on main, which pays nothing at connect time, so the assertion would hold there with the patch reverted.
+- Each fresh connection still runs exactly one `add_pg_decoders` statement, pinning that the decoder path was not touched. This one passes with the patch reverted **by design** — it is a guard on what the patch does not do.
 - `create_enum` on one tenant's connection republishes: a fresh connection resolves the new type without a `WHERE t.oid IN` lazy load. Pends on main, whose rebuild registers well-known types only.
-- A type created by raw DDL is learned lazily once and then served to every later cold connection with no further query. This is the example that carries the sharing claim on main.
+- A type created by raw DDL is learned lazily once and then served to every later cold connection with no further query. This is the example that carries the sharing claim on main. It uses a **fresh model class per read**, which is load-bearing: ActiveRecord memoizes column metadata, including the resolved type object, on the model class, and that memo outlives pool eviction, so reusing one class lets the second read cast from the memo without ever consulting the new adapter's map. It asserts both that the second read issued no lazy load and that it issued no bulk load, because either alone passes for the wrong reason.
 - The real `PostgreSQLAdapter` has the module in its ancestors (the `on_load` hook fired).
+
+Every example except the decoder guard was confirmed to fail with `apply!` disabled, on Rails 8.1 and on main.
+
+## Retention
+
+An entry is never removed, so a process retains one map per database it has connected to.
+
+| | |
+|---|---|
+| Registrations in a built map | 138 |
+| RSS per map | 88.5 KB (measured, 300 maps, PostgreSQL 18, Rails 8.1) |
+| Schema-per-tenant, any tenant count | 1 entry, 88.5 KB |
+| Database-per-tenant, 570 tenants | 570 entries, ~49 MB |
+
+Schema-per-tenant — the common case, and the one this patch was written for — has exactly one key for the whole process. Only database-per-tenant grows, and it grows with the tenants a process actually serves rather than with time.
+
+No eviction policy ships. A cap tight enough to bound 49 MB meaningfully is also tight enough to evict during a nightly sweep over the same tenants, which would restore the 24 ms rebuild for exactly the deployment the patch exists to help. Eviction is semantically free if that calculus ever changes — dropping an entry costs the next cold connection one rebuild, which is the unpatched behaviour — so a bound can land later with no correctness migration. `reset!` is the escape hatch in the meantime, and a dropped tenant's entry is inert rather than dangerous: no connection to that database is made again, and if the name is recreated the database OID in the key has changed.
+
+Weak references are the wrong shape here and were rejected: the map is unreferenced precisely between a pool eviction and the next cold connect, which is the window this patch exists to optimize, so weak collection would quietly restore the rebuilds.
 
 ## Non-goals
 

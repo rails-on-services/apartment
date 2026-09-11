@@ -79,6 +79,11 @@ RSpec.describe('v4 PostgreSQL type-map sharing', :integration,
   end
 
   it 'loads the OID type map once per database across cold tenant pools' do
+    # Asserts a connect-time cost that Rails main does not pay at all, so there
+    # it would hold with the patch reverted. The raw-DDL example below is the
+    # one that carries the sharing claim on main.
+    skip('Rails main runs no connect-time catalog queries') unless connect_time_catalog_queries?
+
     Apartment.reset_tenant_pools!
     Apartment::Patches::PostgresqlTypeMap.reset!
 
@@ -92,9 +97,9 @@ RSpec.describe('v4 PostgreSQL type-map sharing', :integration,
       end
     end
 
-    # 7.2 to 8.1: the first cold connection loads (three statements) and the nine
-    # after it adopt. Without sharing every one of the ten would load: 30.
-    expect(type_map_loads(first).size).to(eq(connect_time_catalog_queries? ? 3 : 0))
+    # The first cold connection loads (three statements) and the nine after it
+    # adopt. Without sharing every one of the ten would load: 30.
+    expect(type_map_loads(first).size).to(eq(3))
     expect(type_map_loads(rest)).to(be_empty)
   end
 
@@ -146,17 +151,33 @@ RSpec.describe('v4 PostgreSQL type-map sharing', :integration,
     end
     Apartment.reset_tenant_pools!
 
-    model = Class.new(ActiveRecord::Base) do
-      self.table_name = 'tm_raw_widgets'
-      def self.name = 'TmRawWidget'
+    # A FRESH model class per read, which is load-bearing. ActiveRecord memoizes
+    # column metadata -- including the resolved type object for the enum column
+    # -- on the model CLASS, and that memo outlives pool eviction. Reusing one
+    # class lets the second read cast from the memo without ever asking the new
+    # adapter's type map, so the example would pass with the patch reverted.
+    read = lambda do |class_name|
+      model = Class.new(ActiveRecord::Base) do
+        self.table_name = 'tm_raw_widgets'
+        define_singleton_method(:name) { class_name }
+      end
+      Apartment::Tenant.switch(tenant) { model.pluck(:state) }
     end
-    read = -> { Apartment::Tenant.switch(tenant) { model.pluck(:state) } }
 
-    first = pg_type_sql_during { expect(read.call).to(eq(['live'])) }
+    first = pg_type_sql_during { expect(read.call('TmRawWidgetA')).to(eq(['live'])) }
     Apartment.reset_tenant_pools!
-    second = pg_type_sql_during { expect(read.call).to(eq(['live'])) }
+    second = pg_type_sql_during { expect(read.call('TmRawWidgetB')).to(eq(['live'])) }
 
+    # The enum was created after the shared map was built, so the first read has
+    # to learn its OID the lazy way.
     expect(lazy_oid_loads(first).size).to(eq(1))
+    # Both assertions on the second read are needed, and neither alone suffices:
+    # a fresh connection that rebuilt the whole map would also show zero lazy
+    # loads, and one that skipped the column entirely would show zero of both.
+    # Together with the fresh model above they pin the actual claim -- a cold
+    # connection resolved the lazily learned OID out of the shared map, querying
+    # nothing.
     expect(lazy_oid_loads(second)).to(be_empty)
+    expect(type_map_loads(second)).to(be_empty)
   end
 end

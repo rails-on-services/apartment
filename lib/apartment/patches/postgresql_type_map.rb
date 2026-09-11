@@ -38,8 +38,24 @@ module Apartment
     # The build writes into this adapter's own @type_map before publishing
     # because initialize_type_map loads through the private +type_map+ reader,
     # not its argument (load_additional_types constructs
-    # TypeMapInitializer.new(type_map)). That reader is the one private
-    # dependency; apply! refuses to boot without it.
+    # TypeMapInitializer.new(type_map)). Both that reader and
+    # initialize_type_map are checked by apply!, which refuses to boot without
+    # either.
+    #
+    # RETENTION, measured rather than bounded. An entry is never removed, so a
+    # process retains one map per database it has connected to. One built map
+    # holds ~138 registrations and 88.5 KB of RSS (measured against PostgreSQL
+    # 18 on Rails 8.1). Schema-per-tenant -- the common case, and the one this
+    # patch was written for -- has exactly ONE key for the whole process. Only
+    # database-per-tenant grows, and it grows with the tenants a process
+    # actually serves rather than with time: 570 tenant databases is ~49 MB. No
+    # eviction policy ships because a cap tight enough to bound that
+    # meaningfully is also tight enough to thrash the nightly sweep it exists to
+    # speed up, which is the deployment that has the problem in the first place.
+    # Eviction is semantically free if that ever changes -- dropping an entry
+    # only costs the next cold connection one rebuild, which is the unpatched
+    # behaviour -- so a bound can land later with no correctness migration.
+    # +reset!+ is the escape hatch in the meantime.
     module PostgresqlTypeMap
       # HashLookupTypeMap whose mapping is a Concurrent::Map.
       #
@@ -61,13 +77,23 @@ module Apartment
         end
       end
 
-      # [host, port, database, default_timezone] => SharedTypeMap. Timezone is
-      # part of the key because initialize_type_map bakes @default_timezone into
-      # the time and timestamp registrations.
+      # [host, port, database, database_oid, default_timezone] => SharedTypeMap.
+      # Everything but the timezone is read off the live connection rather than
+      # @config -- see #apartment_type_map_key. Timezone is part of the key
+      # because initialize_type_map bakes @default_timezone into the time and
+      # timestamp registrations (verified on 7.2, 8.0, 8.1 and main).
       REGISTRY = Concurrent::Map.new
 
+      # Cluster-unique identity of the catalog behind the endpoint name. Reads
+      # pg_database, which is shared and world-readable, so it needs no
+      # privilege (unlike pg_control_system(), which is superuser-only by
+      # default). Measured at 0.096 ms including the round trip, against 1.9 ms
+      # for a full type-map load on a 647-row pg_type and ~24 ms on a
+      # 281,927-row one.
+      DATABASE_IDENTITY_SQL = 'SELECT oid FROM pg_database WHERE datname = current_database()'
+
       PUBLIC_SEAMS = %i[reload_type_map clear_cache!].freeze
-      PRIVATE_SEAMS = %i[initialize_type_map].freeze
+      PRIVATE_SEAMS = %i[initialize_type_map type_map].freeze
 
       class << self
         # FAILS CLOSED on a shape we cannot patch, for the same reason
@@ -94,7 +120,9 @@ module Apartment
         end
 
         # Forget every shared map. The next connection to each database rebuilds.
-        # A test hook for suites that need a cold start, not a configuration knob.
+        # A test hook for suites that need a cold start, and the escape hatch for
+        # an adopter who wants the retention described above reclaimed. Not a
+        # configuration knob.
         def reset!
           REGISTRY.clear
         end
@@ -109,6 +137,13 @@ module Apartment
         @lock.synchronize do
           key = apartment_type_map_key
 
+          # No live connection to identify the database from, so no key we can
+          # trust: fall back to upstream's per-connection map. Every path Rails
+          # actually takes has one (each caller either just executed a statement
+          # or is inside configure_connection), but sharing a map under an
+          # identity we could not confirm is the one thing this must never do.
+          return super if key.nil?
+
           if @type_map.nil?
             @type_map = REGISTRY[key] || apartment_publish_type_map(key)
           else
@@ -119,13 +154,66 @@ module Apartment
 
       private
 
+      # Ask the live connection, never @config, and ask the server which catalog
+      # it actually is.
+      #
+      # Two different failures make @config alone the wrong source. First, libpq
+      # fills in defaults the configuration hash cannot show -- dbname
+      # defaulting to the user name, a service file, PGHOST/PGPORT/PGDATABASE,
+      # hostaddr given without host -- so two adapters whose configs look
+      # identical can land on different databases. PQhost, PQport and PQdb are
+      # client-side reads of the RESOLVED parameters (measured ~0.06 us each)
+      # and close all of that; PQhost reports hostaddr when only hostaddr was
+      # given.
+      #
+      # Second, and the reason for the query: a name is not a catalog. This
+      # patch deliberately survives +clear_cache!(new_connection: true)+, which
+      # is Rails' "the socket is being replaced, drop what you cached" signal,
+      # and that signal is exactly what heals a replaced catalog today. Put a
+      # different cluster behind an unchanged endpoint -- an RDS blue/green
+      # cutover on logical replication, a restore into the same name -- and
+      # every connection drops, every adapter reconnects, and without this each
+      # one would adopt the old catalog's map. Type OIDs in a fresh catalog
+      # restart at 16384, so a stale registration does not merely go unused: it
+      # can describe a DIFFERENT type that now holds its OID, and an enum gets
+      # cast as a domain with nothing raised. (A promoted physical replica is
+      # not affected either way -- its catalog is byte-identical, so the OIDs
+      # still agree.) Within one cluster the OID counter is global and
+      # monotonic, verified by probe, so a same-cluster drop and recreate leaves
+      # dead entries rather than wrong ones; it is the cross-cluster case this
+      # closes.
+      #
+      # The identity read runs on the raw connection rather than through the
+      # adapter: it must not recurse into the type map it is about to resolve,
+      # and PQexec's arity does not drift across the Rails versions this gem
+      # supports. Any PG error means we could not establish identity, so we do
+      # not share.
+      #
+      # It does NOT close a connection pooler whose single alias fans out to
+      # several physical databases, because every resolved parameter then names
+      # the pooler -- but the identity query travels to the backend, so even
+      # there a fan-out across databases is caught. What stays open is one alias
+      # fanning out across clusters that agree on database OID, which is not a
+      # supported topology: tenant isolation already depends on an alias
+      # denoting one database.
       def apartment_type_map_key
-        [@config[:host], @config[:port], @config[:database], @default_timezone]
+        raw = @raw_connection
+        return nil unless raw
+
+        [raw.host, raw.port, raw.db, apartment_database_identity(raw), @default_timezone]
+      rescue PG::Error
+        nil
+      end
+
+      def apartment_database_identity(raw)
+        raw.exec(DATABASE_IDENTITY_SQL).getvalue(0, 0)
       end
 
       # put_if_absent rather than compute_if_absent: the build runs catalog
       # queries on this connection, and no registry lock is held across that
       # I/O. A lost race costs one redundant build, which is today's cost once.
+      # Returning the WINNER is load-bearing -- the loser adopts it and drops its
+      # own build, so every adapter converges on one instance.
       def apartment_publish_type_map(key)
         built = apartment_build_type_map
         REGISTRY.put_if_absent(key, built) || built
@@ -133,6 +221,14 @@ module Apartment
 
       def apartment_build_type_map
         @type_map = SharedTypeMap.new
+        # Parity with upstream's own reload, which clears this before
+        # reinitialising. It exists only on Rails main, where it records whether
+        # this adapter has run the deferred bulk pg_type query; the assignment is
+        # inert on 7.2 through 8.1, where nothing reads it. Without it a rebuilt
+        # map would skip the bulk half of the next deferred load -- still
+        # correct, since the specific OID is always requested, but less than
+        # upstream promises.
+        @type_map_queried = false
         initialize_type_map
         @type_map
       end
