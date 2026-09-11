@@ -281,11 +281,16 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
       # Upstream's reload_type_map CLEARS a live @type_map in place. An adapter
       # that had already adopted the shared instance and then lost its identity
       # probe would blank the map every other holder is resolving against.
+      #
+      # Both adapters ADOPT the map the ordinary way rather than having it
+      # assigned, so the example exercises the real path: two healthy holders,
+      # then one of them loses its probe mid-life (its connection drops after a
+      # successful enum DDL, say) and reloads with the shared instance attached.
       holder = connect
+      failing = connect
       shared = holder.current_type_map
 
-      failing = adapter_class.new(database: 'app')
-      failing.instance_variable_set(:@type_map, shared)
+      expect(failing.current_type_map).to(be(shared))
       failing.raw_connection.raise_on_identity!(PG::Error.new('probe failed'))
       # It warns rather than raising: a probe failure should not break a
       # connection that is otherwise fine, but sharing quietly switching itself
