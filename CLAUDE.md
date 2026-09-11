@@ -71,7 +71,7 @@ DATABASE_ENGINE=postgresql bundle exec appraisal rails-8.1-postgresql rspec spec
 DATABASE_ENGINE=mysql bundle exec appraisal rails-8.1-mysql2 rspec spec/integration/v4/ --tag rbac
 ```
 
-**CI matrix**: Ruby 3.3/3.4/4.0 × Rails 7.2/8.0/8.1/main × PG 16+18, MySQL 8.4, SQLite3. Rails main is a canary (`continue-on-error`). See `.github/workflows/ci.yml`.
+**CI matrix**: Ruby 3.3/3.4/4.0 × Rails 8.1/main × PG 16+18, MySQL 8.4, SQLite3. Rails main is a canary (`continue-on-error`). See `.github/workflows/ci.yml`.
 
 ## Core Concepts
 
