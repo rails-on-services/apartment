@@ -9,6 +9,7 @@ gem "rspec-rails", "~> 8.0", require: false
 gem "async", "~> 2.0", require: false
 gem "rails", "~> 8.0.0"
 gem "mysql2", "~> 0.5"
+gem "json", "< 3"
 
 group :development do
   gem "rubocop", require: false
