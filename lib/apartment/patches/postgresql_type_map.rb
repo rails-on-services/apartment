@@ -29,7 +29,8 @@ module Apartment
     # * reload_type_map with a nil map ADOPTS the shared instance (building and
     #   publishing it if this is the first connection to that database); with a
     #   live map it REBUILDS into a fresh instance and republishes. The live-map
-    #   callers upstream are the enum DDL helpers only. A published map is
+    #   callers upstream are the enum DDL helpers and disable_extension. A
+    #   published map is
     #   never cleared in place: other holders keep resolving against it and pick
     #   up the rebuilt one on their next physical reconnect, learning any new
     #   OID lazily through get_oid_type meanwhile, exactly as a stale
@@ -42,8 +43,10 @@ module Apartment
     # initialize_type_map are checked by apply!, which refuses to boot without
     # either.
     #
-    # RETENTION, measured rather than bounded. An entry is never removed, so a
-    # process retains one map per database it has connected to. One built map
+    # RETENTION, measured rather than bounded. An entry is removed only when a
+    # later publish supersedes it (see #apartment_supersede_stale_identities),
+    # so a process retains one map per database it has connected to, times the
+    # timezone variants live against it. One built map
     # holds ~138 registrations and 88.5 KB of RSS (measured against PostgreSQL
     # 18 on Rails 8.1). Schema-per-tenant -- the common case, and the one this
     # patch was written for -- has exactly ONE key for the whole process. Only
@@ -106,8 +109,16 @@ module Apartment
       # Measured at 0.049 ms of execution, 0.096 ms including the round trip,
       # against 1.9 ms for a full type-map load on a 647-row pg_type and ~24 ms
       # on a 281,927-row one.
+      # EXTRACT(EPOCH FROM ...) rather than the timestamptz itself, because the
+      # value is read as text and a timestamptz renders through the session's
+      # TimeZone and DateStyle. Two connection classes to the SAME catalog that
+      # differ in those (a per-role `ALTER ROLE ... SET TimeZone` with no
+      # explicit `variables` entry, say) would produce different identity
+      # strings, split the key, and set the supersede rule below ping-ponging --
+      # sharing quietly switching itself off, with no wrong data and no warning
+      # to explain it. A numeric epoch depends on neither GUC.
       DATABASE_IDENTITY_SQL = <<~SQL.squish
-        SELECT d.oid, pg_catalog.pg_postmaster_start_time()
+        SELECT d.oid, EXTRACT(EPOCH FROM pg_catalog.pg_postmaster_start_time())
         FROM pg_catalog.pg_database d
         WHERE d.datname = pg_catalog.current_database()
       SQL
@@ -214,13 +225,11 @@ module Apartment
       # supports. Any PG error means we could not establish identity, so we do
       # not share.
       #
-      # It does NOT close a connection pooler whose single alias fans out to
-      # several physical databases, because every resolved parameter then names
-      # the pooler -- but the identity query travels to the backend, so even
-      # there a fan-out across databases is caught. What stays open is one alias
-      # fanning out across clusters that agree on database OID, which is not a
-      # supported topology: tenant isolation already depends on an alias
-      # denoting one database.
+      # A pooler whose single alias fans out across several databases, or across
+      # clusters, IS caught: every resolved libpq parameter names the pooler, but
+      # the identity query travels to the backend. What no connect-time check of
+      # any kind can see is a pooler that moves a live client connection onto a
+      # different cluster without configure_connection running again.
       def apartment_type_map_key
         raw = @raw_connection
         return nil unless raw
@@ -265,6 +274,15 @@ module Apartment
       # AND an identity, so they survive; only the identity slice discriminates.
       #
       # Keys are collected before deleting rather than deleted mid-iteration.
+      #
+      # Two publishers for the same endpoint under DIFFERENT identities can each
+      # delete the other's entry, leaving the registry empty for that endpoint.
+      # Harmless, and deliberately uncoordinated: it takes both incarnations
+      # reachable at once (a cutover window), every live adapter holds its map by
+      # reference, adoption is keyed by the identity the adopting connection
+      # measured on its own socket, and losing costs one rebuild -- the unpatched
+      # behaviour. Superseding before the publish has the symmetric race, so
+      # there is nothing to buy.
       def apartment_supersede_stale_identities(key)
         endpoint, identity = key
         stale = REGISTRY.keys.select { |other| other[0] == endpoint && other[1] != identity }

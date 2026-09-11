@@ -105,18 +105,20 @@ A name is still not a catalog, and that is the sharper problem. This patch delib
 So the key carries a catalog identity, fetched in one round trip:
 
 ```sql
-SELECT d.oid, pg_catalog.pg_postmaster_start_time()
+SELECT d.oid, EXTRACT(EPOCH FROM pg_catalog.pg_postmaster_start_time())
 FROM pg_catalog.pg_database d
 WHERE d.datname = pg_catalog.current_database()
 ```
 
-The database OID alone is **not** identity, which a probe settles rather than an argument: `template1`, `template0` and `postgres` hold OIDs 1, 4 and 5 on every cluster ever `initdb`'d, so an application whose database is `postgres` — the RDS default — would have an identity check that evaluates to a constant. Identical provisioning also gives the first user database 16384 on both sides of a cutover. Neither case needs a pooler or any exotic topology; a plain endpoint swap is enough. `pg_postmaster_start_time()` closes both, because two live clusters disagree on it with near-certainty. Both values are world-readable and need no privilege, unlike `pg_control_system()` and `pg_control_checkpoint()`, which are superuser-only by default. Everything is schema-qualified, since an unqualified name can resolve to a temporary relation or an earlier entry in `search_path`. Cost: 0.049 ms of execution and 0.096 ms including the round trip, against 1.9 ms for a full type-map load on a 647-row `pg_type` and ~24 ms on a 281,927-row one.
+The database OID alone is **not** identity, which a probe settles rather than an argument: `template1`, `template0` and `postgres` hold OIDs 1, 4 and 5 on every cluster ever `initdb`'d, so an application whose database is `postgres` — the RDS default — would have an identity check that evaluates to a constant. Identical provisioning also gives the first user database 16384 on both sides of a cutover. Neither case needs a pooler or any exotic topology; a plain endpoint swap is enough. `pg_postmaster_start_time()` closes both, because two live clusters disagree on it with near-certainty. Both values are world-readable and need no privilege, unlike `pg_control_system()` and `pg_control_checkpoint()`, which are superuser-only by default. Everything is schema-qualified, since an unqualified name can resolve to a temporary relation or an earlier entry in `search_path`. The epoch is extracted rather than read as a timestamptz because the value arrives as text and a timestamptz renders through the session's `TimeZone` and `DateStyle`. Two connection classes reaching the same catalog under different settings would otherwise produce different identity strings, split the key, and set the supersede rule ping-ponging — sharing quietly switching itself off, with no wrong data and no warning to explain it. Cost: 0.049 ms of execution locally and 0.026 ms on the production catalog, 0.096 ms including the round trip, against 1.9 ms for a full type-map load on a 647-row `pg_type` and ~24 ms on a 281,927-row one.
 
 Putting the start time in the key would trade growth in tenants for growth in **time** — one stranded entry per database per restart — so publishing also supersedes entries for the same endpoint under a different identity. A superseded entry can never be adopted again, so removing it costs nothing; the worst case, an endpoint flipped back, is one rebuild, which is the unpatched behaviour. Timezone variants of one live catalog share both endpoint and identity, so they survive; only the identity discriminates.
 
 One case deliberately needs no mechanism: within a single cluster the OID counter is global and monotonic (verified by probe — consecutive `CREATE TYPE` calls across a database drop and recreate returned 87477904 then 87477908), so a same-cluster drop and recreate leaves dead entries rather than wrong ones. The trade accepted in exchange is that a promoted **physical** replica, whose catalog is byte-identical and could safely have been adopted, now rebuilds once because its postmaster differs. That is a rare event costing one build, and fail-closed is the right default here.
 
-A connection pooler whose single alias fans out across several physical databases is caught, because the identity query travels to the backend. What remains open is a pooler that swaps a live client connection onto a different cluster without `configure_connection` running again; no connect-time identity check of any kind can see that.
+A connection pooler whose single alias fans out across several physical databases, or across clusters, is caught, because the identity query travels to the backend. What remains open is a pooler that swaps a live client connection onto a different cluster without `configure_connection` running again; no connect-time identity check of any kind can see that.
+
+Two publishers for one endpoint under different identities can each supersede the other, leaving the registry briefly empty for it. That is left uncoordinated on purpose: it takes both incarnations reachable at once, every live adapter holds its map by reference, adoption is keyed by the identity the adopting connection measured on its own socket, and losing the race costs one rebuild, which is the unpatched behaviour. Superseding before the publish has the symmetric race, so there is nothing to buy.
 
 Role, user and `search_path` are correctly **absent** from the key. `pg_type` is database-global and world-readable, the load queries carry no namespace filter, and runtime lookup is by OID, so same-named types in hundreds of tenant schemas coexist as distinct OID entries. Adding `search_path` would defeat the optimization without fixing anything.
 
@@ -192,7 +194,7 @@ Every example except the decoder guard was confirmed to fail with `apply!` disab
 
 ## Retention
 
-An entry is never removed, so a process retains one map per database it has connected to.
+An entry is removed only when a later publish supersedes it, so a process retains one map per database it has connected to, times the timezone variants live against it.
 
 | | |
 |---|---|
