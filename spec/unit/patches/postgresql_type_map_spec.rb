@@ -27,24 +27,29 @@ end
 # (PQhost / PQport / PQdb) plus the catalog-identity query it runs to tell one
 # catalog from another behind the same name.
 class FakeRawConnection
-  Result = Struct.new(:value) do
-    def getvalue(_row, _col) = value
+  Result = Struct.new(:columns) do
+    def getvalue(_row, col) = columns[col]
   end
 
   attr_reader :host, :port, :db
 
-  def initialize(host:, port:, db:, database_oid:)
+  def initialize(host:, port:, db:, database_oid:, started_at: '2026-09-11 00:00:00')
     @host = host
     @port = port
     @db = db
-    @database_oid = database_oid
+    @identity = [database_oid, started_at]
   end
 
+  # Block form, because that is how the patch calls it.
   def exec(sql)
     raise(ArgumentError, "unexpected identity SQL: #{sql}") unless sql.include?('pg_database')
+    raise(@raise_with) if @raise_with
 
-    Result.new(@database_oid)
+    result = Result.new(@identity)
+    block_given? ? yield(result) : result
   end
+
+  def raise_on_identity!(error) = @raise_with = error
 end
 
 RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
@@ -132,9 +137,10 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
 
         # The key is read off the live connection rather than @config, so the
         # fake carries one.
-        def initialize(database:, timezone: :utc, host: 'db.internal', database_oid: '16384')
+        def initialize(database:, timezone: :utc, host: 'db.internal', database_oid: '16384',
+                       started_at: '2026-09-11 00:00:00')
           @raw_connection = FakeRawConnection.new(
-            host: host, port: 5432, db: database, database_oid: database_oid
+            host: host, port: 5432, db: database, database_oid: database_oid, started_at: started_at
           )
           @default_timezone = timezone
           @lock = Monitor.new
@@ -156,6 +162,8 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
           end
         end
 
+        attr_reader :raw_connection
+
         def current_type_map = @type_map
 
         private
@@ -171,9 +179,11 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
       klass
     end
 
-    def connect(database: 'app', timezone: :utc, host: 'db.internal', database_oid: '16384')
+    def connect(database: 'app', timezone: :utc, host: 'db.internal', database_oid: '16384',
+                started_at: '2026-09-11 00:00:00')
       adapter_class
-        .new(database: database, timezone: timezone, host: host, database_oid: database_oid)
+        .new(database: database, timezone: timezone, host: host, database_oid: database_oid,
+             started_at: started_at)
         .tap(&:reload_type_map)
     end
 
@@ -235,6 +245,56 @@ RSpec.describe(Apartment::Patches::PostgresqlTypeMap) do
 
       expect(after_cutover.loads).to(eq(1))
       expect(after_cutover.current_type_map).not_to(be(before_cutover.current_type_map))
+    end
+
+    it 'still refuses when the replacement cluster reuses the database OID' do
+      # Why the OID alone is not identity, and this is the common shape rather
+      # than the exotic one: template1, template0 and postgres hold OIDs 1, 4
+      # and 5 on every cluster ever initdb'd, and identical provisioning gives
+      # the first user database 16384 on both sides. Only the postmaster start
+      # time separates two live clusters here.
+      before_cutover = connect(database_oid: '5', started_at: '2026-01-01 00:00:00')
+      after_cutover = connect(database_oid: '5', started_at: '2026-09-11 12:00:00')
+
+      expect(after_cutover.loads).to(eq(1))
+      expect(after_cutover.current_type_map).not_to(be(before_cutover.current_type_map))
+    end
+
+    it 'supersedes the superseded entry, so restarts do not accumulate maps forever' do
+      # Putting the start time in the key would otherwise trade growth in
+      # tenants for growth in TIME: one stranded entry per database per restart.
+      connect(started_at: '2026-01-01 00:00:00')
+      connect(started_at: '2026-09-11 12:00:00')
+
+      expect(described_class::REGISTRY.size).to(eq(1))
+    end
+
+    it 'keeps timezone variants of one live catalog, which share an endpoint and an identity' do
+      utc = connect(timezone: :utc)
+      local = connect(timezone: :local)
+
+      expect(described_class::REGISTRY.size).to(eq(2))
+      expect(local.current_type_map).not_to(be(utc.current_type_map))
+    end
+
+    it 'detaches before falling back, so a probe failure cannot clear a map others hold' do
+      # Upstream's reload_type_map CLEARS a live @type_map in place. An adapter
+      # that had already adopted the shared instance and then lost its identity
+      # probe would blank the map every other holder is resolving against.
+      holder = connect
+      shared = holder.current_type_map
+
+      failing = adapter_class.new(database: 'app')
+      failing.instance_variable_set(:@type_map, shared)
+      failing.raw_connection.raise_on_identity!(PG::Error.new('probe failed'))
+      # It warns rather than raising: a probe failure should not break a
+      # connection that is otherwise fine, but sharing quietly switching itself
+      # off has no symptom beyond a slow nightly, so it must leave evidence.
+      expect { failing.reload_type_map }.to(output(/could not identify the database/).to_stderr)
+
+      expect(shared.key?(23)).to(be(true))
+      expect(failing.current_type_map).not_to(be(shared))
+      expect(holder.current_type_map).to(be(shared))
     end
 
     it 'keys by default_timezone too, because initialize_type_map bakes it into the registrations' do

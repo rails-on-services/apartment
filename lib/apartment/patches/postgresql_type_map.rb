@@ -77,20 +77,40 @@ module Apartment
         end
       end
 
-      # [host, port, database, database_oid, default_timezone] => SharedTypeMap.
-      # Everything but the timezone is read off the live connection rather than
-      # @config -- see #apartment_type_map_key. Timezone is part of the key
-      # because initialize_type_map bakes @default_timezone into the time and
-      # timestamp registrations (verified on 7.2, 8.0, 8.1 and main).
+      # [[host, port, database], [database_oid, postmaster_start_time],
+      # default_timezone] => SharedTypeMap. Nested so the endpoint and the
+      # catalog incarnation stay separable: #apartment_supersede_stale_identities
+      # needs exactly that distinction. Everything but the timezone is read off
+      # the live connection rather than @config -- see #apartment_type_map_key.
+      # Timezone is part of the key because initialize_type_map bakes
+      # @default_timezone into the time and timestamp registrations (verified on
+      # 7.2, 8.0, 8.1 and main).
       REGISTRY = Concurrent::Map.new
 
-      # Cluster-unique identity of the catalog behind the endpoint name. Reads
-      # pg_database, which is shared and world-readable, so it needs no
-      # privilege (unlike pg_control_system(), which is superuser-only by
-      # default). Measured at 0.096 ms including the round trip, against 1.9 ms
-      # for a full type-map load on a 647-row pg_type and ~24 ms on a
-      # 281,927-row one.
-      DATABASE_IDENTITY_SQL = 'SELECT oid FROM pg_database WHERE datname = current_database()'
+      # Identity of the catalog behind the endpoint name, in one round trip.
+      #
+      # The database OID alone is NOT enough, which a probe settles rather than
+      # an argument: template1, template0 and postgres hold OIDs 1, 4 and 5 on
+      # every cluster ever initdb'd, so an app whose database is `postgres` --
+      # the RDS default -- would have an identity check that evaluates to a
+      # constant. Freshly provisioned clusters also hand the first user database
+      # the same OID, 16384, so identical provisioning collides too. Neither
+      # needs a pooler or any exotic topology; a plain endpoint swap is enough.
+      # pg_postmaster_start_time() closes both: two live clusters disagree on it
+      # with near-certainty.
+      #
+      # Both are world-readable and need no privilege, unlike
+      # pg_control_system() and pg_control_checkpoint(), which are superuser-only
+      # by default. Everything is schema-qualified because an unqualified name
+      # can resolve to a temporary relation or an earlier entry in search_path.
+      # Measured at 0.049 ms of execution, 0.096 ms including the round trip,
+      # against 1.9 ms for a full type-map load on a 647-row pg_type and ~24 ms
+      # on a 281,927-row one.
+      DATABASE_IDENTITY_SQL = <<~SQL.squish
+        SELECT d.oid, pg_catalog.pg_postmaster_start_time()
+        FROM pg_catalog.pg_database d
+        WHERE d.datname = pg_catalog.current_database()
+      SQL
 
       PUBLIC_SEAMS = %i[reload_type_map clear_cache!].freeze
       PRIVATE_SEAMS = %i[initialize_type_map type_map].freeze
@@ -137,12 +157,17 @@ module Apartment
         @lock.synchronize do
           key = apartment_type_map_key
 
-          # No live connection to identify the database from, so no key we can
-          # trust: fall back to upstream's per-connection map. Every path Rails
-          # actually takes has one (each caller either just executed a statement
-          # or is inside configure_connection), but sharing a map under an
-          # identity we could not confirm is the one thing this must never do.
-          return super if key.nil?
+          # No identity we can trust, so fall back to upstream's per-connection
+          # map: sharing under an identity we could not confirm is the one thing
+          # this must never do. Detaching first is load-bearing rather than
+          # tidy -- upstream's reload_type_map CLEARS a live @type_map in place,
+          # and if this adapter had already adopted the shared instance that
+          # would blank the map every other holder is resolving against, which
+          # is the invariant the whole design rests on.
+          if key.nil?
+            @type_map = nil
+            return super
+          end
 
           if @type_map.nil?
             @type_map = REGISTRY[key] || apartment_publish_type_map(key)
@@ -200,13 +225,20 @@ module Apartment
         raw = @raw_connection
         return nil unless raw
 
-        [raw.host, raw.port, raw.db, apartment_database_identity(raw), @default_timezone]
-      rescue PG::Error
+        [[raw.host, raw.port, raw.db], apartment_database_identity(raw), @default_timezone]
+      rescue PG::Error => e
+        # Sharing silently switching itself off has no symptom beyond "the
+        # nightly got slow again", so leave evidence. Rescuing rather than
+        # raising keeps a probe failure from breaking a connection that is
+        # otherwise fine; the cost is one rebuilt map.
+        warn('[Apartment] could not identify the database for type-map sharing ' \
+             "(#{e.class}: #{e.message.lines.first&.strip}); this connection builds its own map.")
         nil
       end
 
+      # Block form so the PG::Result is freed at once instead of waiting for GC.
       def apartment_database_identity(raw)
-        raw.exec(DATABASE_IDENTITY_SQL).getvalue(0, 0)
+        raw.exec(DATABASE_IDENTITY_SQL) { |result| [result.getvalue(0, 0), result.getvalue(0, 1)] }
       end
 
       # put_if_absent rather than compute_if_absent: the build runs catalog
@@ -216,7 +248,27 @@ module Apartment
       # own build, so every adapter converges on one instance.
       def apartment_publish_type_map(key)
         built = apartment_build_type_map
-        REGISTRY.put_if_absent(key, built) || built
+        published = REGISTRY.put_if_absent(key, built) || built
+        apartment_supersede_stale_identities(key)
+        published
+      end
+
+      # Drop entries for the same endpoint under a DIFFERENT catalog incarnation.
+      #
+      # Without this, putting the postmaster's start time in the key would trade
+      # one unbounded growth for another: every database restart would strand an
+      # entry per database, forever, which is growth in TIME rather than in
+      # tenants. A superseded entry can never be adopted again -- its identity
+      # will not recur -- so removing it costs nothing, and the worst case if an
+      # endpoint is flipped back is one rebuild, which is the unpatched
+      # behaviour. Timezone variants of the same live catalog share an endpoint
+      # AND an identity, so they survive; only the identity slice discriminates.
+      #
+      # Keys are collected before deleting rather than deleted mid-iteration.
+      def apartment_supersede_stale_identities(key)
+        endpoint, identity = key
+        stale = REGISTRY.keys.select { |other| other[0] == endpoint && other[1] != identity }
+        stale.each { |other| REGISTRY.delete(other) }
       end
 
       def apartment_build_type_map
