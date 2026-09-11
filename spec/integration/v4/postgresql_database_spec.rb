@@ -24,14 +24,13 @@ RSpec.describe('v4 PostgreSQL database-per-tenant integration', :integration,
   end
 
   # All database names this spec may create (including environmentified variants).
-  # rubocop:disable Lint/ConstantDefinitionInBlock
+  # rubocop:disable-next Lint/ConstantDefinitionInBlock
   ALL_TEST_DBS = %w[
     apt_db_tenant apt_db_drop_test apt_db_dup
     apt_db_iso_a apt_db_iso_b
     test_apt_env_tenant
     apt_db_fs_live apt_db_fs_gone apt_db_fs_req
   ].freeze
-  # rubocop:enable Lint/ConstantDefinitionInBlock
 
   let(:created_tenants) { [] }
 
