@@ -60,9 +60,10 @@ RSpec.describe('An unresolvable ddl_role', :integration, :postgresql_only, :rbac
   # ever comes back, #cause is the wrapper and this example fails.
   #
   # Asserted against ConnectionNotEstablished rather than the ConnectionNotDefined
-  # subclass Rails 8 raises here, because that subclass does not exist before Rails 8.0
-  # and this lane runs on the Rails floor too. The superclass is what both versions
-  # satisfy.
+  # subclass Rails actually raises here. The example pins the one-link cause chain,
+  # not the leaf class, and be_a already matches the subclass — so tightening it adds
+  # no coverage and adds a way to break. (It was also the only option while 7.2 was
+  # supported, where the subclass did not exist.)
   it 'names ddl_role when a create cannot enter the role', :aggregate_failures do
     raised = nil
     begin

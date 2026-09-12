@@ -32,9 +32,10 @@ RSpec.describe(Apartment::MigrationRole) do
   # the earlier version of this spec — which stubbed connected_to to raise without
   # yielding — could not fail, because Rails never does that.
   #
-  # Every example raises ActiveRecord::ConnectionNotEstablished and never the
-  # ConnectionNotDefined subclass, which does not exist before Rails 8.0: an example
-  # naming it would pass on 8.1 and die of NameError on the Rails floor. The verdict
+  # Every example raises ActiveRecord::ConnectionNotEstablished rather than the
+  # ConnectionNotDefined subclass, because nothing here turns on the leaf class and
+  # the superclass is what MigrationRole.wrap rescues. (Naming the subclass was also
+  # impossible while 7.2 was supported, where it did not exist.) The verdict
   # under test never comes from the error class anyway — it comes from the probe, which
   # is stubbed at ActiveRecord's own seam rather than simulated. Nil is what a missing
   # role looks like there, a pool is what a present one looks like, and the same pair
@@ -81,7 +82,7 @@ RSpec.describe(Apartment::MigrationRole) do
   # one above is what the probe answers. That is the point: our role resolves, so the
   # failure is about some other connection the caller asked for, and blaming ddl_role
   # would send the reader to the wrong config key. Nothing here depends on the error
-  # class, which is what makes the pair meaningful on Rails 7.2 as well as 8.1.
+  # class, which is what keeps the pair meaningful whatever AR raises.
   it 'does not blame ddl_role when our role resolves and the block still fails', :aggregate_failures do
     configure(:db_manager)
     allow(ActiveRecord::Base).to(receive(:connected_to).and_yield)

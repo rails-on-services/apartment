@@ -360,8 +360,9 @@ RSpec.describe(Apartment::Patches::ConnectionRegistry) do
     false
   end
 
-  # AR >= 8.0 keys the handler's manager cache by a ConnectionDescriptor; 7.2
-  # keys it by the connection-name String. The patch never reads the argument,
+  # AR keys the handler's manager cache by a ConnectionDescriptor on both supported
+  # versions (8.1 and main); 7.2 used the connection-name String, which is why the
+  # patch forwards rather than names it. The patch never reads the argument,
   # but the spec has to pass something the real method accepts.
   def pool_manager_descriptor
     if defined?(ActiveRecord::ConnectionAdapters::ConnectionHandler::ConnectionDescriptor)

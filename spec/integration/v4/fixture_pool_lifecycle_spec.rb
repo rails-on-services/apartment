@@ -47,7 +47,7 @@ require 'apartment/test_fixtures'
 # distinct, independently-pinned object. See those examples' comments for the
 # read-visibility gap that is explicitly out of scope.
 #
-# Covers Rails 7.2 / 8.0 / 8.1 via the existing appraisal matrix.
+# Covers Rails 8.1 and main via the existing appraisal matrix.
 # :schema strategy is PG-only; `pin_connection!` semantics are crispest there.
 RSpec.describe('v4 fixture pool lifecycle guards', :integration, # rubocop:disable RSpec/MultipleMemoizedHelpers
                skip: (V4_INTEGRATION_AVAILABLE && V4IntegrationHelper.postgresql? ? false : 'requires PostgreSQL')) do

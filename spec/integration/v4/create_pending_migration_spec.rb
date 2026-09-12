@@ -43,7 +43,8 @@ RSpec.describe('Tenant create with the pending-migration check enabled', :integr
     File.write(File.join(tmp_dir, 'seeds.rb'), "ActiveRecord::Base.connection.select_value('SELECT 1')\n")
 
     # An unrun migration, so needs_migration? has something to be true about.
-    # [7.2] is the floor of the supported matrix.
+    # [7.2] is a migration COMPATIBILITY version, not the support floor; the example
+    # only needs a migration that exists and has not run.
     File.write(File.join(migration_dir, '20260401000001_create_pending_probe.rb'), <<~RUBY)
       class CreatePendingProbe < ActiveRecord::Migration[7.2]
         def change
