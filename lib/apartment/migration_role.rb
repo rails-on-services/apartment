@@ -38,13 +38,20 @@ module Apartment
     # explain. Non-nil means the role is fine and the error belongs to something the
     # caller did inside the block, so it re-raises untouched.
     #
-    # The probe is the discriminator; the class is only a pre-filter, and on the Rails
-    # floor it cannot filter at all. +ActiveRecord::ConnectionNotDefined+ does not exist
-    # before Rails 8.0 (absent on 7.2.3.1, present on 8.0.5 and 8.1.3), and Ruby
-    # resolves a rescue clause's constants at raise time — so naming it here raised
-    # NameError on 7.2 and destroyed the error it was meant to classify. 7.2 raises
-    # +ConnectionNotEstablished+ for an unregistered role and 8.0+ raises the subclass,
-    # so the superclass alone covers the whole matrix. Do not narrow it back.
+    # The probe is the discriminator; the class is only a pre-filter. The clause names
+    # the +ConnectionNotEstablished+ superclass even though every supported Rails now
+    # raises the +ActiveRecord::ConnectionNotDefined+ subclass here, and that is
+    # deliberate rather than leftover. Narrowing to the subclass would buy nothing —
+    # the probe, not the class, decides — and would cost the case below: a bare
+    # +ConnectionNotEstablished+ raised inside the caller's block while +ddl_role+ is
+    # genuinely unregistered would stop getting the message that names +ddl_role+,
+    # which is the one situation this method exists to explain. Do not narrow it.
+    #
+    # (History, no longer binding: the subclass did not exist before Rails 8.0 — absent
+    # on 7.2.3.1, present on 8.0.5 and 8.1.3 — and Ruby resolves a rescue clause's
+    # constants at raise time, so while 7.2 was supported naming it raised NameError
+    # and destroyed the error it was meant to classify. The 8.1 floor removed that
+    # constraint; it did not change the conclusion.)
     #
     # The cost of the wider clause is that a bare ConnectionNotEstablished from the
     # caller's own code now reaches the probe instead of passing straight through. That

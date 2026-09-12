@@ -29,7 +29,7 @@ Gem::Specification.new do |s|
 
   s.required_ruby_version = '>= 3.3'
 
-  s.add_dependency('activerecord',    '>= 7.2.0', '< 8.2')
+  s.add_dependency('activerecord',    '>= 8.1.0', '< 8.2')
   s.add_dependency('activesupport',   '>= 7.2.0', '< 8.2')
   s.add_dependency('concurrent-ruby', '>= 1.3.0')
   s.add_dependency('parallel',        '>= 1.26.0')

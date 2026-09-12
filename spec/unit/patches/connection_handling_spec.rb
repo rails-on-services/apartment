@@ -93,9 +93,11 @@ RSpec.describe(Apartment::Patches::ConnectionHandling) do
     # tenant-resolution failure, on the path most of a Rails app takes.
     #
     # `connected_to(role: :nope)` is how the defect was reported: the role resolves no
-    # pool, so AR's own lookup raises. Asserted against ConnectionNotEstablished, not
-    # the ConnectionNotDefined subclass Rails 8 raises, because that subclass does not
-    # exist before Rails 8.0 and this spec runs on the Rails floor too.
+    # pool, so AR's own lookup raises. Asserted against ConnectionNotEstablished, the
+    # superclass, rather than the ConnectionNotDefined subclass Rails actually raises:
+    # the example pins that the default path is not relabelled, not which leaf class
+    # arrives, and be_a already matches the subclass. (It also had to be the
+    # superclass when 7.2 was supported, where the subclass did not exist.)
     context 'when the default path raises' do
       it 'surfaces the error unwrapped for a nil tenant' do
         Apartment::Current.tenant = nil

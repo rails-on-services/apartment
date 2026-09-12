@@ -3,6 +3,22 @@
 require 'spec_helper'
 require_relative '../../lib/apartment/schema_dumper_patch'
 
+# `ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper` is defined by the
+# PG adapter file, which AR only requires when something opens a PostgreSQL
+# connection. The unit suite never does, so the constant is absent even under a
+# postgresql appraisal that has the pg gem — requiring the adapter eagerly is
+# what makes `.apply!` observable here at all. PG_UNIT_REQUIRED=1 turns the skip
+# into a hard failure in the job that IS supposed to load pg. See spec/CLAUDE.md.
+PG_SCHEMA_DUMPER_AVAILABLE = begin
+  require('active_record/connection_adapters/postgresql_adapter')
+  true
+rescue LoadError => e
+  raise if ENV['PG_UNIT_REQUIRED']
+
+  warn "[schema_dumper_patch_spec] Skipping .apply! example: #{e.message}"
+  false
+end
+
 RSpec.describe(Apartment::SchemaDumperPatch) do
   describe '.strip_public_prefix' do
     it 'strips public. prefix from table name' do
@@ -42,14 +58,13 @@ RSpec.describe(Apartment::SchemaDumperPatch) do
 
   describe '.apply!' do
     it 'prepends DumperOverride on the PG-specific SchemaDumper for Rails >= 8.1' do
+      skip('requires the pg gem (run via a postgresql appraisal)') unless PG_SCHEMA_DUMPER_AVAILABLE
+
       allow(described_class).to(receive(:should_patch?).and_return(true))
 
-      # Verify the PG SchemaDumper exists (it does in our test matrix)
-      if defined?(ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper)
-        described_class.apply!
-        expect(ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper.ancestors)
-          .to(include(Apartment::SchemaDumperPatch::DumperOverride))
-      end
+      described_class.apply!
+      expect(ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaDumper.ancestors)
+        .to(include(Apartment::SchemaDumperPatch::DumperOverride))
     end
 
     it 'is a no-op when should_patch? is false' do

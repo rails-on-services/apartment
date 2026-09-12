@@ -270,9 +270,12 @@ its Gemfile should not pay for a lock it does not need. (Contrast
 `PostgresqlSequenceName`, which must load early because memoization can fire during
 boot.)
 
-**Wrapped with argument forwarding for `set_pool_manager`.** Its signature is
-version-dependent — Rails ≥ 8.0 passes a `ConnectionDescriptor` where 7.2 passed
-the connection-name String — and the key derivation is upstream's business.
+**Wrapped with argument forwarding for `set_pool_manager`.** The key derivation is
+upstream's business, not ours. Across the supported matrix the signature is
+currently stable — 8.1.3 and rails main both take a `ConnectionDescriptor`
+(verified) — so forwarding buys nothing today. It is kept because upstream has
+already changed this argument once: 7.2 passed the connection-name String and 8.0
+replaced it with the descriptor. Forwarding costs a token and survives the next one.
 
 ## Not covered
 

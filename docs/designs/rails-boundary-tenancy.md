@@ -94,10 +94,8 @@ The rubric exists in part to forbid these. They appear when it is bypassed.
 Per Rails' [maintenance policy](https://rubyonrails.org/maintenance):
 
 - 8.1.x bug fixes through 2026-10-10 — backport request for #56902 is realistic.
-- 8.0.x bug-fix window already closed (2026-05-07).
-- 7.2.x is security-only.
 
-Apartment v4 supports Rails 7.2+. The patch is required across the full supported matrix, not just as a wait-for-upstream stopgap.
+Apartment v4 supports Rails 8.1+, and 8.1.x is affected, so the patch is required across the whole supported matrix rather than being a wait-for-upstream stopgap. (When this was written the floor was 7.2 and the same conclusion held for a wider range; 8.0's bug-fix window had already closed on 2026-05-07 and 7.2 was security-only, so neither could have received the backport in any case.)
 
 ### Backport, not invention
 
@@ -181,7 +179,7 @@ This is a property of `share_with` itself, not introduced by the patch. djmb's c
 
 | Rails | Native `share_with` propagates under `:fiber`? | Apartment's patch |
 |---|---|---|
-| 7.2 / 8.0 / 8.1.x (incl. 8.1.3) — every currently-released stable | No (reads `Thread.current`, empty under `:fiber`) | Mirrors Fiber's state onto Thread's accessor; share_with finds it |
+| 8.1.x (incl. 8.1.3) — the only supported stable series, and every earlier one back to 7.2 | No (reads `Thread.current`, empty under `:fiber`) | Mirrors Fiber's state onto Thread's accessor; share_with finds it |
 | main (future stable, when `share_with(context)` ships) | Yes (reads `Fiber.current` under `:fiber`) | Mirror is still applied; `share_with` reads from the Fiber's accessor and the Thread mirror is unused. Redundant; harmless |
 
 The patch is also a no-op under `:thread` isolation (early return on `isolation_level == :fiber`).
