@@ -25,7 +25,12 @@ gem 'rspec-rails', '~> 8.0', require: false
 gem 'async', '~> 2.0', require: false
 
 group :development do
-  gem 'rubocop', require: false
+  # >= 1.90 is a hard floor, not a preference: 1.90 introduced both the
+  # Style/DirectiveScope cop and the `rubocop:disable-next` directive it
+  # autocorrects to. Older RuboCop does not interpret that directive, so the
+  # cops it suppresses in .pryrc, spec/dummy/config/initializers/secret_token.rb
+  # and spec/integration/v4/postgresql_database_spec.rb fire as real offenses.
+  gem 'rubocop', '>= 1.90', require: false
   gem 'rubocop-performance', require: false
   gem 'rubocop-rails', require: false
   gem 'rubocop-rake', require: false

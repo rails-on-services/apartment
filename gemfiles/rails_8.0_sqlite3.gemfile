@@ -9,9 +9,10 @@ gem "rspec-rails", "~> 8.0", require: false
 gem "async", "~> 2.0", require: false
 gem "rails", "~> 8.0.0"
 gem "sqlite3", "~> 2.1"
+gem "json", "< 3"
 
 group :development do
-  gem "rubocop", require: false
+  gem "rubocop", ">= 1.90", require: false
   gem "rubocop-performance", require: false
   gem "rubocop-rails", require: false
   gem "rubocop-rake", require: false
