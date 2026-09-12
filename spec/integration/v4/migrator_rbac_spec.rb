@@ -33,8 +33,10 @@ RSpec.describe('Migrator with ddl_role', :integration, :postgresql_only, :rbac,
       tenants.each { |t| Apartment.adapter.create(t) }
     end
 
-    # Write a real migration file. [7.2] is the minimum supported Rails version
-    # in the CI matrix; stable across 7.2/8.0/8.1.
+    # Write a real migration file. [7.2] is a migration COMPATIBILITY version, not
+    # the support floor — Rails keeps the shims for old ones, and this repo also
+    # writes [4.2] and [7.0] elsewhere. Nothing here turns on which one is used, so
+    # it does not move when the supported Rails floor does.
     timestamp = '20260401000001'
     File.write(File.join(migration_dir, "#{timestamp}_create_rbac_test_widgets.rb"), <<~RUBY)
       class CreateRbacTestWidgets < ActiveRecord::Migration[7.2]

@@ -1,5 +1,7 @@
 # Phase 8: Documentation & Upgrade Guide
 
+**Status**: shipped. The outlines below record what each document was specified to contain at the time, not what it contains now — the shipped documents are the source of truth, and the Rails floor they name here has since moved with the support matrix. Read this for the plan, `README.md` and [`../upgrading-to-v4.md`](../upgrading-to-v4.md) for the current requirements.
+
 ## Goal
 
 Make v4 shippable by rewriting user-facing documentation to reflect the v4 API, providing a self-sufficient upgrade guide for external users, and updating maintainer docs for dual-release support (v4 + v3 maintenance).

@@ -38,7 +38,7 @@ This gem is a maintained fork of the original [Apartment gem](https://github.com
 ### Requirements
 
 - Ruby 3.3+
-- Rails 7.2+
+- Rails 8.1+
 - PostgreSQL 14+, MySQL 8.4+, or SQLite3
 
 ### Ruby version manager

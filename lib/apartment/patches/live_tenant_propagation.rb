@@ -7,7 +7,7 @@ module Apartment
     # Backports rails/rails#56902 ("Pass IsolatedExecutionState.context to
     # share_with") to Rails versions where the fix has not landed.
     #
-    # On Rails 7.2 / 8.0 / 8.1.x stable, ActionController::Live#process calls
+    # On Rails 8.1.x stable, ActionController::Live#process calls
     # ActiveSupport::IsolatedExecutionState.share_with(Thread.current, ...)
     # which reads from Thread.current.active_support_execution_state. Under
     # :fiber isolation that's empty — the data lives on Fiber.current's

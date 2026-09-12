@@ -264,10 +264,13 @@ module Apartment
       # silently taking any shard already registered in it with it. Serializing
       # the whole method makes the upsert atomic.
       #
-      # Wrapped with argument forwarding rather than a reimplementation because
-      # the signature is version-dependent (AR >= 8.0 passes a ConnectionDescriptor
-      # where 7.2 passed the connection-name String) and the key derivation is
-      # upstream's business, not ours.
+      # Wrapped with argument forwarding rather than a reimplementation because the
+      # key derivation is upstream's business, not ours. Across the supported matrix
+      # the signature is currently stable — 8.1 and main both take a
+      # ConnectionDescriptor (verified) — so forwarding buys nothing today. It is
+      # kept because upstream has already changed this argument once: 7.2 passed the
+      # connection-name String and 8.0 replaced it with the descriptor. Forwarding
+      # costs a token and survives the next one.
       #
       # Declared private to match upstream. A prepended method is public by
       # default, and leaving it so would widen a Rails internal into public API

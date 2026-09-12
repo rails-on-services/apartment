@@ -8,7 +8,7 @@ Apartment v4 is a ground-up rewrite of the `ros-apartment` gem, replacing v3's t
 - Eliminate tenant context leakage via immutable per-tenant connection pools
 - Full thread and fiber safety via `ActiveSupport::CurrentAttributes`
 - ~~PgBouncer/RDS Proxy compatibility (reduced session pinning via connection-level config)~~ — **partially unreachable; see the honest statement below.** v4 removes the *per-switch* `SET search_path`, which is what makes a connection ceiling and session-mode pooling practical. It does **not** make transaction-mode pooling work by itself: PgBouncer needs PG 18+ and `track_extra_parameters`, and RDS Proxy pins Rails regardless of Apartment. (W4 spike, 2026-07-12.)
-- Rails 7.2, 8.0, 8.1 support; Ruby 3.3+
+- Rails 8.1 support; Ruby 3.3+
 - Sub-millisecond tenant switching for cached pools
 
 **Build approach:** Fresh branch off `development`. The v4 alpha branch (`man/spec-restart`) serves as reference architecture. Production-hardened v3.3-3.4 features (parallel migrations, multi-db rake tasks, Rails 8.x compatibility) are ported and adapted.
@@ -46,7 +46,7 @@ Apartment v4 is a ground-up rewrite of the `ros-apartment` gem, replacing v3's t
 | Dependency | Minimum | Rationale |
 |-----------|---------|-----------|
 | Ruby | 3.3+ | 3.2 EOL April 2026 |
-| Rails | 7.2+ | Aligns with Rails support policy; `migration_context` on `connection_pool` (not `connection`); no legacy connection handling shims |
+| Rails | 8.1+ | Aligns with Rails support policy — 7.2 reached end-of-life 2026-08-09 and 8.0 stopped receiving bug fixes 2026-05-07; `migration_context` on `connection_pool` (not `connection`); no legacy connection handling shims |
 | Sidekiq | No constraint | Auto-detected at boot; works on 7+ and 8+ via `CurrentAttributes` |
 | PostgreSQL | 14+ | 13 and below EOL; schema-based tenancy baseline |
 | MySQL | 8.4+ | 8.0 EOL April 2026; 8.4 LTS supported through 2032 |
@@ -868,11 +868,9 @@ spec/
 ### CI Matrix
 
 **Appraisals:**
-- Rails 7.2 + PostgreSQL
-- Rails 7.2 + MySQL
-- Rails 8.0 + PostgreSQL
-- Rails 8.0 + MySQL
-- Rails 8.0 + SQLite3
+- Rails 8.1 + PostgreSQL
+- Rails 8.1 + MySQL
+- Rails 8.1 + SQLite3
 - Rails 8.1 + PostgreSQL
 - Rails 8.1 + MySQL
 - Rails 8.1 + SQLite3
@@ -907,7 +905,7 @@ Apartment::Tenant.reset!
 
 Checklist format in `docs/upgrading-to-v4.md`:
 
-1. **Prerequisites**: Ruby 3.3+, Rails 7.2+
+1. **Prerequisites**: Ruby 3.3+, Rails 8.1+
 2. **Configuration migration**: v3 -> v4 config key mapping table
 3. **API changes**: `current_tenant` -> `current`, `reset!` -> `reset`, `tenant_names` -> `tenants_provider`
 4. **Initializer rewrite**: example v3 initializer -> equivalent v4 initializer
@@ -928,7 +926,7 @@ No compatibility shims in v4 — clean break.
 | #302 PgBouncer/RDS Proxy session pinning | Improved: the per-*switch* `SET` is eliminated — v4 sets `schema_search_path` once per pooled connection at establishment, not on every request switch. Full unpinning via the libpq `options` path is documented but **not yet implemented** (the adapter still sets `schema_search_path`, which Rails applies as a `SET`), so a connection that runs that `SET` can still pin once. See PgBouncer section. |
 | #239 Concurrency in specs | Solved: `CurrentAttributes` provides fiber isolation; per-tenant pools eliminate the shared `Thread.current` slot the v3 design depended on |
 | #199 `load_async` ignores tenant | Improved: when the user opts into `async_query_executor`, `FutureResult` captures the tenant pool at schedule time. Default config runs `load_async` synchronously. Consumer-fiber access (preload, `after_find` callbacks, lazy assoc, nested-async) must stay inside the same `Tenant.switch`. `eager_load` is worker-safe (folds into main query). See "Async query correctness" |
-| #304 ActionController::Live | Resolved via Bucket 1 (prepend `Live#process` with `Apartment::Patches::LiveTenantPropagation`, backporting rails/rails#56902). See `docs/designs/rails-boundary-tenancy.md` § Worked example: ActionController::Live. Works on Rails 7.2 / 8.0 / 8.1.x under both `:thread` and `:fiber` isolation. |
+| #304 ActionController::Live | Resolved via Bucket 1 (prepend `Live#process` with `Apartment::Patches::LiveTenantPropagation`, backporting rails/rails#56902). See `docs/designs/rails-boundary-tenancy.md` § Worked example: ActionController::Live. Works on Rails 8.1.x under both `:thread` and `:fiber` isolation. |
 | #323 Connection leaks under load | Solved: pools cached in `Concurrent::Map`, lazy creation, eviction |
 | #341 Rails 8.1 `public.` prefix | Solved: schema dumper patch strips prefix for tenant loading |
 | #303 Missing `create_schema` in schema.rb | Addressed: v4 drops the v3 suppression patch (#276), so Rails' native `create_schema` dumping for non-tenant schemas applies unmodified. `include_schemas_in_dump` is an *additional* Rails 8.1+ knob that keeps listed schemas' tables schema-qualified in the dump. |

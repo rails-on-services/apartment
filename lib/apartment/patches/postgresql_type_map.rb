@@ -20,7 +20,7 @@ module Apartment
     # 220 tables. The map is database-scoped (OIDs are), so one instance can
     # serve every tenant pool. Design: docs/designs/postgresql-type-map-sharing.md.
     #
-    # Two public :nodoc: seams, identical on Rails 7.2 through main:
+    # Two public :nodoc: seams, identical on Rails 8.1 and main:
     #
     # * clear_cache!(new_connection: true) is Rails' own "the socket is being
     #   replaced, drop connection-derived caches" signal, called from reconnect!,
@@ -72,8 +72,9 @@ module Apartment
       # store ([]=, fetch(key, default), key?, keys, clear) exists on it with the
       # same semantics.
       class SharedTypeMap < ActiveRecord::Type::HashLookupTypeMap
-        # Forwards whatever it is given: 7.2 through 8.1 take an optional parent,
-        # Rails main takes nothing, and the adapter passes nothing on either.
+        # Forwards whatever it is given: 8.1 takes an optional parent, Rails main
+        # takes nothing, and the adapter passes nothing on either. The forwarding is
+        # what spans the two SUPPORTED lanes -- not a shim for a dropped Rails.
         def initialize(...)
           super
           @mapping = Concurrent::Map.new
@@ -87,7 +88,7 @@ module Apartment
       # the live connection rather than @config -- see #apartment_type_map_key.
       # Timezone is part of the key because initialize_type_map bakes
       # @default_timezone into the time and timestamp registrations (verified on
-      # 7.2, 8.0, 8.1 and main).
+      # 8.1 and main).
       REGISTRY = Concurrent::Map.new
 
       # Identity of the catalog behind the endpoint name, in one round trip.
@@ -294,7 +295,7 @@ module Apartment
         # Parity with upstream's own reload, which clears this before
         # reinitialising. It exists only on Rails main, where it records whether
         # this adapter has run the deferred bulk pg_type query; the assignment is
-        # inert on 7.2 through 8.1, where nothing reads it. Without it a rebuilt
+        # inert on 8.1, where nothing reads it. Without it a rebuilt
         # map would skip the bulk half of the next deferred load -- still
         # correct, since the specific OID is always requested, but less than
         # upstream promises.

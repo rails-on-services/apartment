@@ -6,7 +6,7 @@ Every new PostgreSQL connection Rails opens rebuilds the OID type map from scrat
 
 The fix shares one type map per **database** across every adapter in the process. It prepends two public, `:nodoc:` methods on `PostgreSQLAdapter` (`clear_cache!` and `reload_type_map`), builds the map into a `HashLookupTypeMap` subclass whose mapping is a `Concurrent::Map`, and publishes it in a process-wide registry keyed by the endpoint and the catalog the live connection actually reached. A new physical connection adopts the shared map; only an explicit reload after enum DDL rebuilds it. No private ActiveRecord method is overridden, and the apply step fails closed if any of the three seams disappears.
 
-Upstream has fixed the connect-time cost on Rails main (rails/rails#57013, merged 2026-03-28, unreleased as of 8.1.3.1): built-in OIDs ship statically and the one remaining `pg_type` scan is deferred to the first unknown type, per adapter. This patch is the bridge for 7.2 through 8.1, and on main it still turns that deferred per-adapter scan into a per-process one.
+Upstream has fixed the connect-time cost on Rails main (rails/rails#57013, merged 2026-03-28, unreleased as of 8.1.3.1): built-in OIDs ship statically and the one remaining `pg_type` scan is deferred to the first unknown type, per adapter. This patch is the bridge for 8.1, and on main it still turns that deferred per-adapter scan into a per-process one.
 
 ## Contents
 
@@ -90,7 +90,7 @@ Build the type map once per database and hand the same instance to every adapter
 
 - `SharedTypeMap < ActiveRecord::Type::HashLookupTypeMap`: same public surface, but `@mapping` is a `Concurrent::Map` instead of a plain `Hash`. See [Concurrency](#concurrency).
 - `REGISTRY`: a process-wide `Concurrent::Map` from `[host, port, database, database_oid, default_timezone]` to a `SharedTypeMap`. See [Identity](#identity-what-the-key-has-to-name).
-- Two overrides, both of public `:nodoc:` methods present unchanged on Rails 7.2, 8.0, 8.1 and main.
+- Two overrides, both of public `:nodoc:` methods present unchanged on Rails 8.1 and main.
 - `.apply!(adapter_class)`: the shape guard and the prepend, fail-closed.
 - `.reset!`: empties the registry. A test hook, and the escape hatch for the retention below; not a configuration knob.
 
@@ -182,7 +182,7 @@ Unit (`spec/unit/patches/postgresql_type_map_spec.rb`, PG-gated like the sequenc
 - `apply!` raises `ConfigurationError` for each missing seam and is idempotent.
 - Against a fake adapter with upstream's `reload_type_map` shape: one build per database key shared across adapters; distinct keys for distinct databases and timezones; a live-map reload rebuilds and republishes while other holders keep their instance; `clear_cache!(new_connection: true)` makes the next reload adopt; `new_connection: false` does not; `reset!` forces a rebuild; concurrent first connections converge on one instance.
 
-Integration (`spec/integration/v4/postgresql_type_map_spec.rb`, PostgreSQL only, 7.2 through main via appraisal):
+Integration (`spec/integration/v4/postgresql_type_map_spec.rb`, PostgreSQL only, 8.1 and main via appraisal):
 
 - The first cold connection after a registry reset loads three statements, and the nine cold connections that follow, with every tenant pool evicted between rounds (`Apartment.reset_tenant_pools!`), load nothing; without the patch each would. Pends on main, which pays nothing at connect time, so the assertion would hold there with the patch reverted.
 - Each fresh connection still runs exactly one `add_pg_decoders` statement, pinning that the decoder path was not touched. This one passes with the patch reverted **by design** — it is a guard on what the patch does not do.
