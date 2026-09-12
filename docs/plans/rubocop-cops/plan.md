@@ -6,7 +6,7 @@
 
 **Architecture:** Cops live under `lib/rubocop/cop/apartment/` and ship via the gem (`s.files` extended to include `config/`). A `lib/rubocop/apartment.rb` entry point requires both; `config/default.yml` carries their defaults. `lib/rubocop` is Zeitwerk-ignored (it would map to the wrong-cased `Rubocop` constant). The cops are generic (match the qualified `Apartment::Current` / `Apartment::Tenant` receiver only); both exemptions (`lib/apartment/`, `spec/`) live in apartment's own `.rubocop.yml`, not in cop logic.
 
-**Tech Stack:** Ruby, RuboCop 1.86 + rubocop-ast (node-pattern matchers, `RuboCop::Cop::Base`), RSpec with `RuboCop::RSpec::ExpectOffense`. Cop specs need no database.
+**Tech Stack:** Ruby, RuboCop + rubocop-ast (node-pattern matchers, `RuboCop::Cop::Base`), RSpec with `RuboCop::RSpec::ExpectOffense`. Cop specs need no database. The cops were authored against RuboCop 1.86; that records what this work used, not an installable floor. Linting the repo now needs **>= 1.90** (the `Gemfile` enforces it) because 1.90 added the `rubocop:disable-next` directive used in a few files. The shipped cops themselves carry no such requirement — downstream apps are unaffected.
 
 **Design spec:** `docs/designs/rubocop-cops.md`
 
