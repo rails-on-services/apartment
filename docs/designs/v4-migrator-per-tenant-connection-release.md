@@ -11,10 +11,18 @@
   release on request end), each worker thread's connection to the just-migrated
   tenant's pool stays `in_use?` until end of run.
 - **That leak is the deploy-flood amplifier.** A leased pool is non-evictable:
-  `PoolReaper#pool_in_use?` → `protected_pool?` skips it (`:skip_evict`), and
-  admission can't meet the cap (`:cap_unmet`). Finished-but-leased pools are
-  re-scanned on every cold admission — 34,879 `skip_evict` + 314 `cap_unmet` in
-  ~2 min during the 2026-07-20 deploy.
+  `PoolReaper#pool_in_use?` reports it busy, so admission can't meet the cap
+  (`:cap_unmet`). Finished-but-leased pools are re-scanned on every cold
+  admission — 34,879 `skip_evict` + 314 `cap_unmet` in ~2 min during the
+  2026-07-20 deploy.
+
+  > **Since superseded (2026-09).** The admission scan no longer emits a
+  > per-candidate `:skip_evict`; the tally arrives once per admission as
+  > `:cap_unmet`'s `skipped:` payload. The `skip_evict` counts quoted here are
+  > historical, and the same shape recurred at larger scale in a Sidekiq fan-out
+  > — see the correction in [`pool-admission-control.md`](pool-admission-control.md).
+  > The rescan itself is unchanged, and so is everything this document argues:
+  > releasing the lease is still the fix.
 - **Fix: release the worker's own lease after each tenant.** In `migrate_tenant`'s
   existing `ensure`, best-effort `tenant_pool&.release_connection` on the pool
   captured inside the `switch` block. Execution-context scoped — releases only the
@@ -63,8 +71,10 @@ The amplifier, in `PoolReaper`:
 def pool_in_use?(pool)
   pool.connections.any? { |c| c.in_use? || c.open_transactions.positive? }
 end
-# true => protected_pool? emits :skip_evict and refuses eviction;
-#         cap can't be met => :cap_unmet, re-evaluated on every cold admission.
+# true => the pool is protected and eviction refuses it; the cap can't be met
+#         => :cap_unmet, re-evaluated on every cold admission. (The timer paths
+#         also emit a per-candidate :skip_evict here; the admission scan stopped
+#         doing so in 2026-09 — see pool-admission-control.md.)
 ```
 
 ## Design

@@ -438,18 +438,20 @@ routed-vs-pinned model and the two-store recipe.
 
 ## Iterating across tenants
 
-v4 keys a connection pool per `"tenant:role"`, so *switching* into a tenant creates a pool. Pick the lightest primitive for the work — the question is **does the block touch per-tenant-schema data?**
+v4 keys a connection pool per `"tenant:role"`, and the pool is created when a query resolves a connection — **not** when `Tenant.switch` sets the tenant. So a switch whose block never touches the tenant database costs nothing, and the question for picking a primitive is **does the block query per-tenant-schema data?**
 
 | Need | Use | v4 cost |
 |---|---|---|
 | Names only (enqueue a job, build a list) | `Apartment.tenant_names.each { ... }` | No switch, no pool created |
-| Per-tenant-schema work (read/write tenant tables) | `Apartment::Tenant.each(release_connection: true) { ... }` | One pool per tenant; released between iterations |
+| Per-tenant-schema work, every tenant | `Apartment::Tenant.each(release_connection: true) { ... }` | One pool per tenant; released between iterations |
+| Per-tenant-schema work, a **subset** | `Apartment::Tenant.each(names, release_connection: true) { ... }` | Same, over the list you pass — no need to hand-roll the `ensure` |
 | Global/pinned data only | Don't switch — read it in the default context | Under shared pinned connections (PG schema, MySQL default), a switch routes pinned/global models *through* the tenant pool |
 
 Rules of thumb:
 
-- **Enqueueing jobs?** Don't switch — pass the tenant as a job argument (`Job.perform_async(tenant: name)`) and let your worker middleware switch when the job runs. Switching only to enqueue spins up a pool for nothing.
+- **Enqueueing jobs?** Pass the tenant as a job argument (`Job.perform_async(tenant: name)`) and let your worker middleware switch when the job runs — the worker needs the name anyway, and the enqueue side stays independent of tenant routing. A switch that only enqueues is *not* itself expensive: the block touches the queue, never the tenant database, so no pool is created.
 - **Only need global/pinned data?** Don't switch. Under shared pinned connections a `switch` resolves pinned and excluded models through the *current tenant's* pool, so reading global data inside a switch still creates a tenant pool.
+- **Iterating some tenants, not all?** `Tenant.each` takes the list as its first argument — `Tenant.each(Account.active.pluck(:tenant_name), release_connection: true) { ... }`. Reach for this instead of writing `names.each { |n| Tenant.switch(n) { ... } }`: when the block queries, a bare switch loop leaves one leased connection per visited tenant, which keeps every pool it touches un-evictable and can drive the pool count far past `max_tenant_pools` (see [Pool admission control](docs/designs/pool-admission-control.md)). The subset form and `release_connection:` are **v4 API** — v3's `Tenant.each` forwards to the adapter and accepts neither. `Tenant.with_tenants(*names) { ... }` scopes the provider instead, if you want nested calls to see the same subset.
 - **Large fan-out doing real per-tenant work?** Pass `release_connection: true` to `Tenant.each` — it releases connections after each tenant so the reaper can evict finished tenants' pools mid-run. It matters for blocks that hold a connection (raw `ActiveRecord::Base.connection`, an open transaction, a long operation); modern query methods (`create!`, `where`, …) check the connection back in themselves (Rails 7.2+), so a fan-out of only those needs no release. **It releases *every* connection leased to the current thread (`clear_active_connections!(:all)`), so don't use it inside an outer transaction or while holding a connection for non-tenant work.**
 
 ## Convenience Methods
