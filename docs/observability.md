@@ -20,8 +20,8 @@ All events are namespaced `<name>.apartment` and published through
 | `create.apartment` | After a tenant schema/database is created | `tenant:` |
 | `drop.apartment` | After a tenant schema/database is dropped | `tenant:` |
 | `evict.apartment` | After a tenant pool is removed from the pool manager | `tenant:`, `reason:` (`:idle`, `:lru`, `:admission`) |
-| `cap_unmet.apartment` | When the pool cap cannot be met by eviction (soft-cap breach) | `max_total:`, `current:`, `unevicted:` |
-| `skip_evict.apartment` | When a candidate pool is skipped during eviction | `tenant:`, `reason:` (`:pinned`, `:in_use`), `eviction_reason:` (`:idle`, `:lru`, `:admission`); plus `busy_connections:` and `open_transactions:` when `reason: :in_use` |
+| `cap_unmet.apartment` | When the pool cap cannot be met by eviction (soft-cap breach) | `max_total:`, `current:`, `unevicted:`; plus `skipped:` (`{ pinned:, in_use: }`) on the admission path |
+| `skip_evict.apartment` | When a candidate pool is skipped during a **timer** eviction pass | `tenant:`, `reason:` (`:pinned`, `:in_use`), `eviction_reason:` (`:idle`, `:lru`); plus `busy_connections:` and `open_transactions:` when `reason: :in_use` |
 | `reaper_stopped.apartment` | When the background reaper is deactivated in the test environment | `reason:` (`:test_env`) |
 | `transaction_taint.apartment` | When a tenant connection is checked in while in an aborted transaction (PostgreSQL `PQTRANS_INERROR`) and is reset | `tenant:`, `pool_key:`, `open_transactions:`, `healed:` |
 | `migrate_tenant.apartment` | After migrations run for one tenant (or the primary) | `tenant:`, `versions:` (array of migration version integers) |
@@ -72,14 +72,29 @@ PostgreSQL-only in effect; MySQL and SQLite have no equivalent state.
 
 **`cap_unmet` fires on two paths:** from the synchronous admission path (when a
 new pool would breach the cap and no idle pool can be freed) and from the
-background LRU reaper (when excess pools remain after a reap cycle). The payload
-is identical on both paths.
+background LRU reaper (when excess pools remain after a reap cycle). The
+admission path additionally carries `skipped:` — `{ pinned: n, in_use: n }`,
+the tally of candidates the scan rejected before giving up. A breach reporting
+`in_use:` far above the process's thread count is a **leased-connection leak**,
+not saturation: `in_use` means "leased to an execution context", not "running a
+query", so a fan-out that never releases between tenants shows every pool it has
+visited as busy. See "Iterating tenants" in the README.
 
 **`skip_evict` reason detail:** `:pinned` means Rails' transactional-fixture
 machinery has pinned the pool (`@pinned_connection` is set). `:in_use` means at
 least one connection is leased or holds an open transaction; `busy_connections`
 and `open_transactions` are included in the payload only for `:in_use` so the
 skip is diagnosable from instrumentation without inspecting the pool.
+
+**`skip_evict` is a timer-path event only.** The synchronous admission scan walks
+every pool on every cold create, so a per-candidate event there is quadratic in
+the pool count — a measured breach that reached 477 pools emitted ~218k of them
+in a single job, each eagerly walking that pool's connection array twice to build
+a payload nobody reads individually. Admission reports the same fact once, as
+`cap_unmet`'s `skipped:` tally. The timer paths keep per-candidate events, where
+the scan runs once per reap cycle and "this tenant has been skipped for N cycles"
+is the signal. Adopters graphing `skip_evict` by `eviction_reason: :admission`
+should move to `cap_unmet`.
 
 ## `PoolManager#stats`
 

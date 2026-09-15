@@ -61,13 +61,18 @@ module Apartment
     def admit!(incoming_tenant_key)
       return unless @max_total
 
+      # Reset per scan: the tally that matters is the one from the pass that
+      # gave up, not a sum over passes that each evicted something.
+      skipped = nil
       loop do
-        break if @pool_manager.stats[:total_pools] < @max_total
-        break unless evict_one_for_admission(incoming_tenant_key)
-      end
-      return if @pool_manager.stats[:total_pools] < @max_total
+        break if @pool_manager.total_pools < @max_total
 
-      apply_overflow_policy
+        skipped = { pinned: 0, in_use: 0 }
+        break unless evict_one_for_admission(incoming_tenant_key, skipped)
+      end
+      return if @pool_manager.total_pools < @max_total
+
+      apply_overflow_policy(skipped)
     end
 
     def start
@@ -156,11 +161,24 @@ module Apartment
     # Evict the single LRU evictable pool to make room for an incoming one,
     # skipping the incoming key, the default tenant, and pinned/in-use pools.
     # Returns the evicted tenant key, or nil if nothing is evictable.
-    def evict_one_for_admission(incoming_tenant_key)
-      @pool_manager.lru_tenants(count: @pool_manager.stats[:total_pools]).each do |tenant|
+    #
+    # Tallies protected candidates into +skipped+ instead of emitting a
+    # per-candidate :skip_evict. This scan walks every pool and runs on every
+    # cold create, so a per-candidate event is quadratic in the pool count: a
+    # measured breach that reached 477 pools emitted ~218k of them, each one
+    # eagerly walking that pool's connection array twice to build a payload.
+    # The aggregate lands on :cap_unmet once per admission instead. The timer
+    # paths keep their per-candidate events — there the scan is once per reap
+    # cycle, and "this tenant has been skipped for N cycles" is the signal.
+    def evict_one_for_admission(incoming_tenant_key, skipped)
+      @pool_manager.lru_tenants(count: @pool_manager.total_pools).each do |tenant|
         next if tenant == incoming_tenant_key
         next if default_tenant_pool?(tenant)
-        next if protected_pool?(tenant, eviction_reason: :admission)
+
+        if (reason = protection_reason(@pool_manager.peek(tenant)))
+          skipped[reason] += 1
+          next
+        end
 
         evict_tenant(tenant, reason: :admission)
         return tenant
@@ -174,13 +192,15 @@ module Apartment
     # or in use). :evict_idle degrades to a soft cap — allow the new pool, surface
     # the breach via :cap_unmet. :raise fails the admission so the caller sheds
     # load. See docs/designs/pool-admission-control.md.
-    def apply_overflow_policy
-      current = @pool_manager.stats[:total_pools]
+    def apply_overflow_policy(skipped = nil)
+      current = @pool_manager.total_pools
       case @overflow_policy
       when :raise
         raise(Apartment::PoolCapacityReached.new(max_total: @max_total, current: current))
       else
-        Instrumentation.instrument(:cap_unmet, max_total: @max_total, current: current, unevicted: 1)
+        payload = { max_total: @max_total, current: current, unevicted: 1 }
+        payload[:skipped] = skipped if skipped
+        Instrumentation.instrument(:cap_unmet, payload)
       end
     end
 
@@ -231,15 +251,20 @@ module Apartment
     # protected. Used as a single guard for both eviction paths.
     def protected_pool?(tenant, eviction_reason:)
       pool = @pool_manager.peek(tenant)
-      if pool_pinned?(pool)
-        instrument_skip(reason: :pinned, tenant: tenant, eviction_reason: eviction_reason, pool: pool)
-        return true
-      end
-      if pool_in_use?(pool)
-        instrument_skip(reason: :in_use, tenant: tenant, eviction_reason: eviction_reason, pool: pool)
-        return true
-      end
-      false
+      return false unless (reason = protection_reason(pool))
+
+      instrument_skip(reason: reason, tenant: tenant, eviction_reason: eviction_reason, pool: pool)
+      true
+    end
+
+    # Why this pool cannot be evicted right now (:pinned / :in_use), or nil when
+    # it can. Split out of protected_pool? so the admission scan can classify a
+    # candidate without paying for instrumentation — see evict_one_for_admission.
+    def protection_reason(pool)
+      return :pinned if pool_pinned?(pool)
+      return :in_use if pool_in_use?(pool)
+
+      nil
     end
 
     # Instance-side wrapper around the class predicate; kept for callers

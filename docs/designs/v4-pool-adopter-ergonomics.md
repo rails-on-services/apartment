@@ -88,6 +88,7 @@ block do per-tenant-schema work?*:
 |---|---|---|
 | Names only (enqueue, list) | `Apartment.tenant_names.each { ... }` | No switch, no pool created |
 | Per-tenant-schema work | `Apartment::Tenant.each(release_connection: true) { ... }` | One pool per tenant; released between iterations |
+| Per-tenant-schema work, a subset | `Apartment::Tenant.each(names, release_connection: true) { ... }` | Same, over the passed list — the shape adopters otherwise hand-roll |
 | Global/pinned data only | Don't switch — read it in the default context | A switch would resolve pinned models through the tenant pool |
 
 The third row is the non-obvious one: under shared-pinned-connections a `switch` routes pinned
