@@ -89,6 +89,10 @@ block do per-tenant-schema work?*:
 | Names only (enqueue, list) | `Apartment.tenant_names.each { ... }` | No switch, no pool created |
 | Per-tenant-schema work | `Apartment::Tenant.each(release_connection: true) { ... }` | One pool per tenant; released between iterations |
 | Per-tenant-schema work, a subset | `Apartment::Tenant.each(names, release_connection: true) { ... }` | Same, over the passed list — the shape adopters otherwise hand-roll |
+
+Both forms are **v4 API**. v3's `Apartment::Tenant.each` forwards to the adapter and takes neither a tenant list nor `release_connection:`, so an adopter running both majors from one source tree (a staged migration) cannot delegate to this and still needs its own helper. Worth stating because the table above otherwise reads as available everywhere.
+
+A switch only costs a pool when the block **queries** — pools are lazy on first connection resolution, not on `Tenant.switch`. A fan-out whose block only enqueues jobs creates nothing (`spec/integration/v4/switch_pool_laziness_spec.rb`).
 | Global/pinned data only | Don't switch — read it in the default context | A switch would resolve pinned models through the tenant pool |
 
 The third row is the non-obvious one: under shared-pinned-connections a `switch` routes pinned
