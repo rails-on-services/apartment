@@ -709,7 +709,13 @@ RSpec.describe(Apartment::PoolReaper) do
 
         reaper.admit!('incoming')
 
-        expect(events.last.payload[:skipped]).to(eq({ pinned: 1, in_use: 2, default: 0 }))
+        payload = events.last.payload
+        expect(payload[:skipped]).to(eq({ pinned: 1, in_use: 2, default: 0 }))
+        # The invariant docs/observability.md documents for dashboard authors:
+        # every candidate the failed scan saw lands in exactly one bucket, and
+        # `current` is read before the incoming pool is inserted, so the three
+        # sum to `current` with nothing subtracted for the incoming key.
+        expect(payload[:skipped].values.sum).to(eq(payload[:current]))
       ensure
         ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
       end

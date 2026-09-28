@@ -77,9 +77,10 @@ admission path additionally carries `skipped:` — `{ pinned: n, in_use: n,
 default: n }`, the tally of candidates the scan rejected before giving up,
 broken out by why. `default:` counts the default tenant's own pools, which are
 never evictable; it exists so a breach caused entirely by them cannot report
-"nothing was protected" beside a cap that could not be met. The three buckets
-plus the incoming tenant account for every candidate the scan saw, so
-`pinned + in_use + default` should equal `current` less the incoming key.
+"nothing was protected" beside a cap that could not be met. The three buckets account for
+every candidate the scan saw, so `pinned + in_use + default` should equal
+`current`. Note `current` is read before the incoming pool is inserted, so it
+does not include it and nothing needs subtracting.
 
 The tally is the **final** scan's, not a sum over passes. A single `admit!` may
 evict several pools and still end short of the cap; each eviction fires its own
