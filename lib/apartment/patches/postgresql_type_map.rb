@@ -52,16 +52,18 @@ module Apartment
     # number of roles. (Timezone splits nothing in practice: tenant configs
     # derive from one base config.) One built map holds ~138 registrations and
     # 88.5 KB of RSS (measured against PostgreSQL 18 on Rails 8.1) against a
-    # catalog carrying only built-in enums, domains and ranges; the second load
-    # query has no namespace filter, so tenant-defined types add
-    # tenants x types-per-schema registrations and the size scales with them.
-    # Schema-per-tenant -- the common case, and the one this patch was written
-    # for -- has one key per endpoint however many tenants there are, though
-    # that one map still grows in SIZE with tenant-defined types. Entry COUNT
-    # grows only under database-per-tenant, and cumulatively: supersede fires
-    # only for one endpoint under a different identity, so a dropped database
-    # leaves its entry for the life of the process. 570 tenant databases is
-    # ~49 MB per endpoint. See docs/designs/postgresql-type-map-sharing.md. No
+    # catalog carrying only built-in enums, domains and ranges. The two
+    # strategies then move opposite axes, because pg_type is a per-DATABASE
+    # catalog. Schema-per-tenant -- the common case, and the one this patch was
+    # written for -- has one key per endpoint however many tenants there are,
+    # but every tenant schema shares the one catalog, so tenant-defined types
+    # add tenants x types-per-schema registrations to that single map and its
+    # size scales with them (the second load query has no namespace filter).
+    # Database-per-tenant is the mirror: each map sees only its own tenant's
+    # catalog and stays near the floor, while entry COUNT grows with tenants,
+    # and cumulatively -- supersede fires only for one endpoint under a
+    # different identity, so a dropped database leaves its entry for the life
+    # of the process. 570 tenant databases is ~49 MB per endpoint. See docs/designs/postgresql-type-map-sharing.md. No
     # eviction policy ships because a cap tight enough to bound that
     # meaningfully is also tight enough to thrash the nightly sweep it exists to
     # speed up, which is the deployment that has the problem in the first place.

@@ -202,12 +202,17 @@ Two consequences the earlier wording missed. **A role on a different endpoint is
 |---|---|
 | Registrations in a built map | 138 |
 | RSS per map | 88.5 KB (measured, 300 maps, PostgreSQL 18, Rails 8.1) |
-| Schema-per-tenant, any tenant count | 1 entry per endpoint; 88.5 KB **plus tenant-defined types** |
+| Schema-per-tenant, any tenant count | 1 entry per endpoint; 88.5 KB **plus tenant-defined types in the shared catalog** |
 | Database-per-tenant, 570 tenants | 570 entries per endpoint, ~49 MB |
 
-Schema-per-tenant — the common case, and the one this patch was written for — has one key per endpoint however many tenants there are. Entry *count* grows with tenants only under database-per-tenant. Entry *size* is a separate axis and grows with tenants under either strategy, whenever tenant schemas define their own types — see below.
+Schema-per-tenant — the common case, and the one this patch was written for — has one key per endpoint however many tenants there are. Size and count are separate axes, and the two strategies move opposite ones — `pg_type` is a per-*database* catalog, so schema-per-tenant shares one and database-per-tenant does not. Schema-per-tenant: count fixed, **size** grows with tenants that define their own types. Database-per-tenant: per-map size stays near the floor, **count** grows with tenants. See below.
 
-**The registration count is not a constant.** 138 is what a map holds against a catalog carrying only PostgreSQL's built-in enums, domains and range types. The second load query filters `typtype IN ('r','e','d')` with no namespace filter, so an adopter whose *tenant* migrations run `CREATE TYPE ... AS ENUM` (or define domains or ranges) carries `tenants × types-per-schema` extra registrations, and the per-map figure scales with it. At roughly 640 B per registration this reaches single-digit MB before it is worth thinking about, but "88.5 KB, any tenant count" is a floor rather than a universal. Check your own catalog with:
+**The registration count is not a constant, and which axis it moves depends on the strategy.** 138 is what a map holds against a catalog carrying only PostgreSQL's built-in enums, domains and range types. The second load query filters `typtype IN ('r','e','d')` with no namespace filter — and because `pg_type` lives in each database rather than cluster-wide, that means different things either side:
+
+- **Schema-per-tenant.** Every tenant schema shares one catalog, so the one map absorbs all of them. An adopter whose *tenant* migrations run `CREATE TYPE ... AS ENUM` (or define domains or ranges) carries `tenants × types-per-schema` extra registrations **in that single map**, and its 88.5 KB scales with them. This is the same property the patch exists for: a shared catalog is what makes the load queries expensive in the first place.
+- **Database-per-tenant.** Each tenant database carries its own catalog, so each map sees only its own tenant's types and stays near the floor. Adding tenants adds maps, not registrations to existing ones.
+
+At roughly 640 B per registration the schema-per-tenant case reaches single-digit MB before it is worth thinking about, but "88.5 KB, any tenant count" is a floor rather than a universal. Check your own catalog with:
 
 ```sql
 SELECT n.nspname, t.typtype, count(*)
