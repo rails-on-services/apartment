@@ -45,13 +45,26 @@ module Apartment
     #
     # RETENTION, measured rather than bounded. An entry is removed only when a
     # later publish supersedes it (see #apartment_supersede_stale_identities),
-    # so a process retains one map per database it has connected to, times the
-    # timezone variants live against it. One built map
-    # holds ~138 registrations and 88.5 KB of RSS (measured against PostgreSQL
-    # 18 on Rails 8.1). Schema-per-tenant -- the common case, and the one this
-    # patch was written for -- has exactly ONE key for the whole process. Only
-    # database-per-tenant grows, and it grows with the tenants a process
-    # actually serves rather than with time: 570 tenant databases is ~49 MB. No
+    # so a process retains one map per KEY it has built against, and the key is
+    # [[host, port, database], identity, timezone] -- not the database alone. A
+    # :reading role on a replica is a different endpoint and carries its own
+    # map for the same catalog, so multiply by distinct endpoints, usually the
+    # number of roles. (Timezone splits nothing in practice: tenant configs
+    # derive from one base config.) One built map holds ~138 registrations and
+    # 88.5 KB of RSS (measured against PostgreSQL 18 on Rails 8.1) against a
+    # catalog carrying only built-in enums, domains and ranges -- a BASELINE,
+    # not a constant. The second load query has no namespace filter, so a map
+    # holds the built-ins plus every such type in the catalog it was built
+    # against, and pg_type is per-DATABASE, so the strategy decides only how
+    # tenant-defined types distribute. Schema-per-tenant -- the common case,
+    # and the one this patch was written for -- has one key per endpoint
+    # however many tenants there are, and that single map carries every
+    # tenant's types (138 + tenants x types-per-schema). Database-per-tenant
+    # splits the same types across maps: each carries 138 + its own tenant's,
+    # so COUNT grows with tenants, cumulatively -- supersede fires only for one
+    # endpoint under a different identity, so a dropped database leaves its
+    # entry for the life of the process. 570 tenant databases is ~49 MB of
+    # baseline per endpoint, plus whatever those tenants define. See docs/designs/postgresql-type-map-sharing.md. No
     # eviction policy ships because a cap tight enough to bound that
     # meaningfully is also tight enough to thrash the nightly sweep it exists to
     # speed up, which is the deployment that has the problem in the first place.
