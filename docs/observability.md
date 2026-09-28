@@ -78,9 +78,18 @@ default: n }`, the tally of candidates the scan rejected before giving up,
 broken out by why. `default:` counts the default tenant's own pools, which are
 never evictable; it exists so a breach caused entirely by them cannot report
 "nothing was protected" beside a cap that could not be met. The three buckets account for
-every candidate the scan saw, so `pinned + in_use + default` should equal
-`current`. Note `current` is read before the incoming pool is inserted, so it
-does not include it and nothing needs subtracting.
+every candidate the scan saw, so in an uninterrupted scan `pinned + in_use +
+default` equals `current` — and `current` is read before the incoming pool is
+inserted, so it does not include it and nothing needs subtracting.
+
+**Do not alert on that equality.** It is what a clean scan produces, not an
+invariant the gem enforces, and it can legitimately miss two ways. A candidate
+whose protection check raises (a pool torn down mid-classification) is rescued,
+warned to stderr, and left out of the tally while still counted in `current`.
+And the background reaper does not take the creation lock, so it can evict a
+pool between the scan and the moment `current` is read, leaving the tally
+higher. Treat a persistent, large gap as worth investigating; treat an
+occasional one-off as normal.
 
 The tally is the **final** scan's, not a sum over passes. A single `admit!` may
 evict several pools and still end short of the cap; each eviction fires its own
