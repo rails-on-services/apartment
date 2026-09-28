@@ -194,16 +194,32 @@ Every example except the decoder guard was confirmed to fail with `apply!` disab
 
 ## Retention
 
-An entry is removed only when a later publish supersedes it, so a process retains one map per database it has connected to, times the timezone variants live against it.
+An entry is removed only when a later publish supersedes it, so a process retains one map per **key** it has built against — and the key is `[[host, port, database], catalog identity, default_timezone]`, not the database alone.
+
+Two consequences the earlier wording missed. **A role on a different host is a different key**: a `:reading` role pointed at a replica has its own `host`, so it carries its own map even though the catalog behind it holds the same OIDs. Multiply the counts below by the number of distinct hosts the process connects to, which is usually the number of roles. And the **timezone** component, which this section used to lead with, has cardinality 1 in practice: `@default_timezone` comes from the connection config or `ActiveRecord.default_timezone`, and tenant configs derive from one base config, so it splits nothing in a normal deployment. The section hedged on the dimension that cannot vary and omitted the one that does.
 
 | | |
 |---|---|
 | Registrations in a built map | 138 |
 | RSS per map | 88.5 KB (measured, 300 maps, PostgreSQL 18, Rails 8.1) |
-| Schema-per-tenant, any tenant count | 1 entry, 88.5 KB |
-| Database-per-tenant, 570 tenants | 570 entries, ~49 MB |
+| Schema-per-tenant, any tenant count | 1 entry per host, 88.5 KB |
+| Database-per-tenant, 570 tenants | 570 entries per host, ~49 MB |
 
-Schema-per-tenant — the common case, and the one this patch was written for — has exactly one key for the whole process. Only database-per-tenant grows, and it grows with the tenants a process actually serves rather than with time.
+Schema-per-tenant — the common case, and the one this patch was written for — has one key per host for the whole process, regardless of tenant count. Only database-per-tenant grows with tenants.
+
+**The registration count is not a constant.** 138 is what a map holds against a catalog carrying only PostgreSQL's built-in enums, domains and range types. The second load query filters `typtype IN ('r','e','d')` with no namespace filter, so an adopter whose *tenant* migrations run `CREATE TYPE ... AS ENUM` (or define domains or ranges) carries `tenants × types-per-schema` extra registrations, and the per-map figure scales with it. At roughly 640 B per registration this reaches single-digit MB before it is worth thinking about, but "88.5 KB, any tenant count" is a floor rather than a universal. Check your own catalog with:
+
+```sql
+SELECT n.nspname, t.typtype, count(*)
+FROM pg_catalog.pg_type t
+JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+WHERE t.typtype IN ('r','e','d')
+GROUP BY n.nspname, t.typtype;
+```
+
+Anything outside `pg_catalog` and `information_schema` is yours, and multiplies.
+
+**Growth is cumulative, not steady-state.** The table reads as though a process holds one entry per tenant it currently serves, but supersede only fires for the *same endpoint under a different catalog identity*. A tenant database that is dropped and never recreated leaves its entry in place for the life of the process. Under database-per-tenant with real churn, entries track databases *ever* connected to rather than databases currently live, so a long-lived process on a churning fleet drifts above the row above. `REGISTRY.size` against live tenant count is the measurement that would say whether that matters in a given deployment; nothing in the gem samples it today.
 
 No eviction policy ships. A cap tight enough to bound 49 MB meaningfully is also tight enough to evict during a nightly sweep over the same tenants, which would restore the 24 ms rebuild for exactly the deployment the patch exists to help. Eviction is semantically free if that calculus ever changes — dropping an entry costs the next cold connection one rebuild, which is the unpatched behaviour — so a bound can land later with no correctness migration. `reset!` is the escape hatch in the meantime, and a dropped tenant's entry is inert rather than dangerous: no connection to that database is made again, and if the name is recreated the database OID in the key has changed.
 
