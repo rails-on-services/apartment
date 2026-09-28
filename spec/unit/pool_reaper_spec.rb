@@ -616,6 +616,27 @@ RSpec.describe(Apartment::PoolReaper) do
       expect(pool_manager.stats[:total_pools]).to(be < 2)
     end
 
+    # Default-tenant pools are skipped before the protection check, so without
+    # their own bucket a cap breach caused entirely by them reports
+    # `{ pinned: 0, in_use: 0 }` — "nothing was protected" alongside a cap that
+    # could not be met, which is the one case where the aggregate misleads
+    # rather than merely coarsens.
+    it 'tallies default-tenant pools it refuses to consider' do
+      pool_manager.fetch_or_create('public') { 'pool_public' }
+      pool_manager.fetch_or_create('public:reading') { 'pool_public_reading' }
+      stamp('public', 900)
+      stamp('public:reading', 800)
+
+      events = Concurrent::Array.new
+      ActiveSupport::Notifications.subscribe('cap_unmet.apartment') { |e| events << e }
+
+      reaper.admit!('incoming')
+
+      expect(events.last.payload[:skipped]).to(eq({ pinned: 0, in_use: 0, default: 2 }))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
+    end
+
     it 'never evicts the default tenant to make room' do
       pool_manager.fetch_or_create('public') { 'pool_public' }
       stamp('public', 9999)
@@ -672,7 +693,7 @@ RSpec.describe(Apartment::PoolReaper) do
 
         reaper.admit!('incoming')
 
-        expect(events.last.payload[:skipped]).to(eq({ pinned: 0, in_use: 2 }))
+        expect(events.last.payload[:skipped]).to(eq({ pinned: 0, in_use: 2, default: 0 }))
       ensure
         ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
       end
@@ -688,7 +709,31 @@ RSpec.describe(Apartment::PoolReaper) do
 
         reaper.admit!('incoming')
 
-        expect(events.last.payload[:skipped]).to(eq({ pinned: 1, in_use: 2 }))
+        expect(events.last.payload[:skipped]).to(eq({ pinned: 1, in_use: 2, default: 0 }))
+      ensure
+        ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
+      end
+
+      # Pins the reset. `skipped ||= {}` (accumulating across passes) leaves
+      # every other example in this file green, so without this one the
+      # semantics are free to drift. Accumulating would count each protected
+      # pool once per pass and report in_use: 6 on a process with two busy
+      # pools, tripping the leak diagnostic in docs/observability.md.
+      it 'reports the final scan only, not the sum over passes' do
+        # in-use pools oldest, so every pass walks both before reaching a victim
+        pool_manager.fetch_or_create('idle_c') { 'pool_idle_c' }
+        pool_manager.fetch_or_create('idle_d') { 'pool_idle_d' }
+        stamp('busy_a', 900)
+        stamp('busy_b', 800)
+        stamp('idle_c', 700)
+        stamp('idle_d', 600)
+
+        events = Concurrent::Array.new
+        ActiveSupport::Notifications.subscribe('cap_unmet.apartment') { |e| events << e }
+
+        reaper.admit!('incoming')
+
+        expect(events.last.payload[:skipped]).to(eq({ pinned: 0, in_use: 2, default: 0 }))
       ensure
         ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
       end

@@ -20,7 +20,7 @@ All events are namespaced `<name>.apartment` and published through
 | `create.apartment` | After a tenant schema/database is created | `tenant:` |
 | `drop.apartment` | After a tenant schema/database is dropped | `tenant:` |
 | `evict.apartment` | After a tenant pool is removed from the pool manager | `tenant:`, `reason:` (`:idle`, `:lru`, `:admission`) |
-| `cap_unmet.apartment` | When the pool cap cannot be met by eviction (soft-cap breach) | `max_total:`, `current:`, `unevicted:`; plus `skipped:` (`{ pinned:, in_use: }`) on the admission path |
+| `cap_unmet.apartment` | When the pool cap cannot be met by eviction (soft-cap breach) | `max_total:`, `current:`, `unevicted:`; plus `skipped:` (`{ pinned:, in_use:, default: }`) on the admission path |
 | `skip_evict.apartment` | When a candidate pool is skipped during a **timer** eviction pass | `tenant:`, `reason:` (`:pinned`, `:in_use`), `eviction_reason:` (`:idle`, `:lru`); plus `busy_connections:` and `open_transactions:` when `reason: :in_use` |
 | `reaper_stopped.apartment` | When the background reaper is deactivated in the test environment | `reason:` (`:test_env`) |
 | `transaction_taint.apartment` | When a tenant connection is checked in while in an aborted transaction (PostgreSQL `PQTRANS_INERROR`) and is reset | `tenant:`, `pool_key:`, `open_transactions:`, `healed:` |
@@ -73,8 +73,19 @@ PostgreSQL-only in effect; MySQL and SQLite have no equivalent state.
 **`cap_unmet` fires on two paths:** from the synchronous admission path (when a
 new pool would breach the cap and no idle pool can be freed) and from the
 background LRU reaper (when excess pools remain after a reap cycle). The
-admission path additionally carries `skipped:` — `{ pinned: n, in_use: n }`,
-the tally of candidates the scan rejected before giving up. A breach reporting
+admission path additionally carries `skipped:` — `{ pinned: n, in_use: n,
+default: n }`, the tally of candidates the scan rejected before giving up,
+broken out by why. `default:` counts the default tenant's own pools, which are
+never evictable; it exists so a breach caused entirely by them cannot report
+"nothing was protected" beside a cap that could not be met. The three buckets
+plus the incoming tenant account for every candidate the scan saw, so
+`pinned + in_use + default` should equal `current` less the incoming key.
+
+The tally is the **final** scan's, not a sum over passes. A single `admit!` may
+evict several pools and still end short of the cap; each eviction fires its own
+`:evict` event, and `skipped:` describes only the pass that gave up. Summing
+across passes would count each protected pool once per pass and inflate
+`in_use:` well past the number of pools actually busy. A breach reporting
 `in_use:` far above the process's thread count is a **leased-connection leak**,
 not saturation: `in_use` means "leased to an execution context", not "running a
 query", so a fan-out that never releases between tenants shows every pool it has

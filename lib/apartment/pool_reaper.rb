@@ -67,7 +67,7 @@ module Apartment
       loop do
         break if @pool_manager.total_pools < @max_total
 
-        skipped = { pinned: 0, in_use: 0 }
+        skipped = { pinned: 0, in_use: 0, default: 0 }
         break unless evict_one_for_admission(incoming_tenant_key, skipped)
       end
       return if @pool_manager.total_pools < @max_total
@@ -173,7 +173,15 @@ module Apartment
     def evict_one_for_admission(incoming_tenant_key, skipped)
       @pool_manager.lru_tenants(count: @pool_manager.total_pools).each do |tenant|
         next if tenant == incoming_tenant_key
-        next if default_tenant_pool?(tenant)
+
+        # Tallied, not silently skipped: a breach caused entirely by default
+        # pools would otherwise report "nothing protected" beside a cap that
+        # could not be met. The three buckets plus the incoming key account
+        # for every candidate the scan saw.
+        if default_tenant_pool?(tenant)
+          skipped[:default] += 1
+          next
+        end
 
         if (reason = protection_reason(@pool_manager.peek(tenant)))
           skipped[reason] += 1
@@ -205,7 +213,7 @@ module Apartment
     end
 
     def evict_lru
-      total = @pool_manager.stats[:total_pools]
+      total = @pool_manager.total_pools
       excess = total - @max_total
       return 0 if excess <= 0
 
