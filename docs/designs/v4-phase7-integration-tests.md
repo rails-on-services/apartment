@@ -1,5 +1,7 @@
 # Phase 7: Integration & Stress Tests
 
+**Status**: shipped. All three new spec files landed (`fiber_safety_spec.rb`, `memory_stability_spec.rb`, `cli_integration_spec.rb`) along with the hardening items. The gap analysis below records the state of the suite when the phase was planned rather than now; `spec/integration/v4/` and [`../../spec/CLAUDE.md`](../../spec/CLAUDE.md) are the source of truth. Note in particular that the CI matrix named in that table has since moved with the support floor. Read this document for why each gap was worth closing.
+
 **Branch:** `man/v4-phase7-integration-tests`
 **Depends on:** Phases 1-6 (all merged to `development`)
 **Approach:** Single PR, all deliverables

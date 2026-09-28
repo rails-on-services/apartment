@@ -124,11 +124,19 @@ module Apartment
         .map(&:first)
     end
 
+    # O(1) pool count. Separate from #stats because the admission path asks for
+    # the count on every cold create, and #stats answers by materializing the
+    # full key array — garbage proportional to the pool count, at exactly the
+    # moment the pool count is the problem.
+    def total_pools
+      @pools.size
+    end
+
     # Basic stats. Full observability (per-tenant breakdown, connection
     # counts, eviction counters) deferred to Phase 3.
     def stats
       {
-        total_pools: @pools.size,
+        total_pools: total_pools,
         tenants: @pools.keys,
       }
     end

@@ -185,6 +185,15 @@ RSpec.describe(Apartment::PoolManager) do
     end
   end
 
+  describe '#total_pools' do
+    it 'returns the pool count' do
+      manager.fetch_or_create('a') { 'pool_a' }
+      manager.fetch_or_create('b') { 'pool_b' }
+
+      expect(manager.total_pools).to(eq(2))
+    end
+  end
+
   describe '#clear' do
     it 'removes all tracked pools' do
       manager.fetch_or_create('a') { 'pool_a' }

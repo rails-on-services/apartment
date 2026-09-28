@@ -1,5 +1,7 @@
 # Phase 6: CLI & Generator Design
 
+**Status**: shipped, both sub-phases. The file structure and command surface below record what Phase 6 was specified to build rather than what exists now. The source of truth is the code: [`../../lib/apartment/cli.rb`](../../lib/apartment/cli.rb) with its subcommands under `lib/apartment/cli/`, the generator and its templates under `lib/generators/apartment/install/`, and `apartment --help`. Read this document for the design rationale.
+
 > **Parent spec:** [`apartment-v4.md`](apartment-v4.md)
 > **Depends on:** Phase 4 (Railtie & Migrations)
 

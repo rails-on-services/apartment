@@ -81,9 +81,26 @@ policy-dependent — it always happens; the policy only governs saturation.
 
 **Prioritize request availability; make the hard ceiling opt-in.** `:evict_idle` never
 blocks or fails a request: it bounds steady-state growth (every admission evicts before
-it adds) and only exceeds the cap transiently when *every* pool is genuinely busy — a
-self-correcting condition the reaper trims as soon as work finishes. This matches the
+it adds) and exceeds the cap only when *every* pool reads as busy. This matches the
 existing reaper, which already emits `:cap_unmet` rather than killing in-use pools.
+
+> **Correction (measured, 2026-09).** This section originally called the overshoot
+> "transient" and "a self-correcting condition the reaper trims as soon as work
+> finishes." That holds for **request-shaped** leases, which are returned when the
+> executor completes. It is false for a fan-out that switches tenants in a loop without
+> releasing between iterations: every visited pool stays leased for the life of the job,
+> `protected_pool?` skips all of them, and the overshoot is bounded only by the number of
+> tenants the job touches. A Sidekiq process configured `max_tenant_pools: 8` reached 477
+> live pools and held them for the job's duration, taking backend connections from a ~340
+> baseline to 623-656. The cap was not breached by saturation — with `RAILS_MAX_THREADS: 5`
+> at most five of those pools could have been doing work. It was breached by ~472 leaked
+> leases.
+>
+> The policy behaved as specified and `:cap_unmet` fired 1,005 times saying so; the caller
+> was wrong. No bound was added, because any ceiling above `max_tenant_pools` is a number
+> nobody can derive — adopters who need a hard ceiling have `:raise`, which is what it is
+> for. What changed is this rationale, the `in_use`-versus-leak diagnostic in
+> `docs/observability.md`, and the scan cost below.
 
 Adopters who must not exceed a backend connection budget under any condition (a fixed
 PgBouncer ceiling) opt into `:raise` and shed load at the edge. The cost of `:raise` is
@@ -138,12 +155,22 @@ silent drop. `:evict_idle` (default) never fails a request.
 
 ## Known limitations & shared races
 
-- **`:evict_idle` is a tight soft cap, not a hard ceiling.** It bounds steady-state
-  growth (every admission evicts before it adds) but, when *every* pool is pinned or
-  in use, it admits the new pool and emits `:cap_unmet` rather than blocking or
-  failing. The count can therefore transiently exceed `max_total` under genuine
-  saturation. Adopters who need a hard ceiling (a fixed PgBouncer / RDS Proxy budget)
-  must set `pool_overflow_policy: :raise`.
+- **`:evict_idle` is a soft cap with no upper bound.** It bounds steady-state growth
+  (every admission evicts before it adds) but, when *every* pool is pinned or in use, it
+  admits the new pool and emits `:cap_unmet` rather than blocking or failing. Nothing
+  caps how far past `max_total` that can go: under a non-releasing fan-out it reached
+  **60x the configured cap** in production (see the correction above). Adopters who need
+  a hard ceiling (a fixed PgBouncer / RDS Proxy budget) must set
+  `pool_overflow_policy: :raise`. Adopters staying on `:evict_idle` should iterate with
+  `Apartment::Tenant.each(tenants, release_connection: true)` rather than a bare
+  `switch` loop, and should alarm on `cap_unmet`.
+- **The admission scan is O(n) per cold create, so O(n²) across a create-heavy fan-out.**
+  Finding the LRU evictable pool means walking every pool, and there is no cheap signal
+  that would let a later admission skip a scan an earlier one already failed. The
+  instrumentation amplifier was removed (per-candidate `:skip_evict` on this path became
+  one `skipped:` tally on `:cap_unmet`, and the count now comes from `PoolManager#total_pools`
+  rather than `#stats`, which materialized the whole key array), which is what made the
+  measured breach expensive rather than merely visible. The residual walk stays.
 - **Eviction is best-effort (TOCTOU).** `admit!` reuses the reaper's `protected_pool?`
   → `evict_tenant` sequence, which checks pinned/in-use then removes as separate steps.
   A pool can become in-use in the sub-millisecond window between. This is the same

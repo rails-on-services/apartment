@@ -572,6 +572,18 @@ RSpec.describe(Apartment::PoolReaper) do
       expect(pool_manager.tracked?('a')).to(be(true))
     end
 
+    # #stats materializes the full key array to answer a question #total_pools
+    # answers in O(1). Admission asks it on every cold create, so reverting to
+    # stats[:total_pools] here is garbage proportional to the pool count.
+    it 'reads the pool count without materializing the tenant list' do
+      3.times { |i| pool_manager.fetch_or_create("t#{i}") { "p#{i}" } }
+      allow(pool_manager).to(receive(:stats).and_call_original)
+
+      reaper.admit!('incoming')
+
+      expect(pool_manager).not_to(have_received(:stats))
+    end
+
     it 'is a no-op when no cap is configured' do
       uncapped = described_class.new(
         pool_manager: pool_manager, interval: 0.05, idle_timeout: 999, on_evict: on_evict
@@ -602,6 +614,27 @@ RSpec.describe(Apartment::PoolReaper) do
       end
       reaper.admit!('incoming')
       expect(pool_manager.stats[:total_pools]).to(be < 2)
+    end
+
+    # Default-tenant pools are skipped before the protection check, so without
+    # their own bucket a cap breach caused entirely by them reports
+    # `{ pinned: 0, in_use: 0 }` — "nothing was protected" alongside a cap that
+    # could not be met, which is the one case where the aggregate misleads
+    # rather than merely coarsens.
+    it 'tallies default-tenant pools it refuses to consider' do
+      pool_manager.fetch_or_create('public') { 'pool_public' }
+      pool_manager.fetch_or_create('public:reading') { 'pool_public_reading' }
+      stamp('public', 900)
+      stamp('public:reading', 800)
+
+      events = Concurrent::Array.new
+      ActiveSupport::Notifications.subscribe('cap_unmet.apartment') { |e| events << e }
+
+      reaper.admit!('incoming')
+
+      expect(events.last.payload[:skipped]).to(eq({ pinned: 0, in_use: 0, default: 2 }))
+    ensure
+      ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
     end
 
     it 'never evicts the default tenant to make room' do
@@ -635,6 +668,81 @@ RSpec.describe(Apartment::PoolReaper) do
         cap_event = events.last
         expect(cap_event).not_to(be_nil)
         expect(cap_event.payload).to(include(max_total: 2))
+      ensure
+        ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
+      end
+
+      # The admission scan walks every pool on every cold create. Emitting a
+      # per-candidate skip_evict there makes the pass O(n^2) in events: a
+      # measured 477-pool breach produced ~218k of them. The aggregate
+      # cap_unmet below carries the same fact once per admission.
+      it 'emits no per-candidate skip_evict while scanning for a victim' do
+        events = Concurrent::Array.new
+        ActiveSupport::Notifications.subscribe('skip_evict.apartment') { |e| events << e }
+
+        reaper.admit!('incoming')
+
+        expect(events).to(be_empty)
+      ensure
+        ActiveSupport::Notifications.unsubscribe('skip_evict.apartment')
+      end
+
+      it 'reports why the scan found no victim in the cap_unmet payload' do
+        events = Concurrent::Array.new
+        ActiveSupport::Notifications.subscribe('cap_unmet.apartment') { |e| events << e }
+
+        reaper.admit!('incoming')
+
+        expect(events.last.payload[:skipped]).to(eq({ pinned: 0, in_use: 2, default: 0 }))
+      ensure
+        ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
+      end
+
+      it 'counts a pinned pool separately from an in-use one' do
+        pinned = Object.new
+        pinned.instance_variable_set(:@pinned_connection, Object.new)
+        pool_manager.fetch_or_create('pinned_c') { pinned }
+        stamp('pinned_c', 400)
+
+        events = Concurrent::Array.new
+        ActiveSupport::Notifications.subscribe('cap_unmet.apartment') { |e| events << e }
+
+        reaper.admit!('incoming')
+
+        payload = events.last.payload
+        expect(payload[:skipped]).to(eq({ pinned: 1, in_use: 2, default: 0 }))
+        # The invariant docs/observability.md documents for dashboard authors:
+        # every candidate the failed scan saw lands in exactly one bucket, and
+        # `current` is read before the incoming pool is inserted, so the three
+        # sum to `current` with nothing subtracted for the incoming key. This
+        # pins the UNINTERRUPTED scan, which is what the doc claims — a raising
+        # candidate is rescued untallied, and the reaper can evict between the
+        # scan and the count, so neither is a violation in a live process.
+        expect(payload[:skipped].values.sum).to(eq(payload[:current]))
+      ensure
+        ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
+      end
+
+      # Pins the reset. `skipped ||= {}` (accumulating across passes) leaves
+      # every other example in this file green, so without this one the
+      # semantics are free to drift. Accumulating would count each protected
+      # pool once per pass and report in_use: 6 on a process with two busy
+      # pools, tripping the leak diagnostic in docs/observability.md.
+      it 'reports the final scan only, not the sum over passes' do
+        # in-use pools oldest, so every pass walks both before reaching a victim
+        pool_manager.fetch_or_create('idle_c') { 'pool_idle_c' }
+        pool_manager.fetch_or_create('idle_d') { 'pool_idle_d' }
+        stamp('busy_a', 900)
+        stamp('busy_b', 800)
+        stamp('idle_c', 700)
+        stamp('idle_d', 600)
+
+        events = Concurrent::Array.new
+        ActiveSupport::Notifications.subscribe('cap_unmet.apartment') { |e| events << e }
+
+        reaper.admit!('incoming')
+
+        expect(events.last.payload[:skipped]).to(eq({ pinned: 0, in_use: 2, default: 0 }))
       ensure
         ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
       end
