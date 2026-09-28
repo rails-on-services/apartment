@@ -714,7 +714,10 @@ RSpec.describe(Apartment::PoolReaper) do
         # The invariant docs/observability.md documents for dashboard authors:
         # every candidate the failed scan saw lands in exactly one bucket, and
         # `current` is read before the incoming pool is inserted, so the three
-        # sum to `current` with nothing subtracted for the incoming key.
+        # sum to `current` with nothing subtracted for the incoming key. This
+        # pins the UNINTERRUPTED scan, which is what the doc claims — a raising
+        # candidate is rescued untallied, and the reaper can evict between the
+        # scan and the count, so neither is a violation in a live process.
         expect(payload[:skipped].values.sum).to(eq(payload[:current]))
       ensure
         ActiveSupport::Notifications.unsubscribe('cap_unmet.apartment')
