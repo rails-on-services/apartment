@@ -326,6 +326,8 @@ Apartment::Adapters::AbstractAdapter.set_callback :switch, :before do |adapter|
 end
 ```
 
+`:switch` callbacks run wherever the tenant changes: on entering and on leaving a `switch` block, on `switch!` and `reset`, and on entering and leaving `with_default_tenant`. A `:before` callback sees the tenant being left (`Apartment::Tenant.current`), an `:after` callback the tenant entered, so an `:after` callback is the place to load per-tenant context such as the current account or time zone. A switch issues no SQL, so neither do the callbacks unless they query. When no `:switch` callback is set, a switch does not touch the adapter at all.
+
 ## Migrations
 
 Rake tasks:

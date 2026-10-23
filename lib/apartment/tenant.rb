@@ -16,23 +16,26 @@ module Apartment
 
         previous = Current.tenant
         begin
-          Current.tenant = tenant
-          Current.previous_tenant = previous
+          run_switch_callbacks do
+            Current.tenant = tenant
+            Current.previous_tenant = previous
+          end
           if tagged_logging?
             Rails.logger.tagged("tenant=#{tenant}", &block)
           else
             yield
           end
         ensure
-          Current.tenant = previous
-          Current.previous_tenant = nil
+          restore_tenant(previous)
         end
       end
 
       # Direct switch without block. Discouraged — prefer switch with block.
       def switch!(tenant)
-        Current.previous_tenant = Current.tenant
-        Current.tenant = tenant
+        run_switch_callbacks do
+          Current.previous_tenant = Current.tenant
+          Current.tenant = tenant
+        end
       end
 
       # Current tenant name.
@@ -149,12 +152,13 @@ module Apartment
 
         previous = Current.tenant
         begin
-          Current.tenant = default
-          Current.previous_tenant = previous
+          run_switch_callbacks do
+            Current.tenant = default
+            Current.previous_tenant = previous
+          end
           yield
         ensure
-          Current.tenant = previous
-          Current.previous_tenant = nil
+          restore_tenant(previous)
         end
       end
 
@@ -390,6 +394,43 @@ module Apartment
         raise(ArgumentError,
               'Apartment::Tenant.with_tenants_provider Array entries must be ' \
               'String or Symbol')
+      end
+
+      # Runs the adapter's :switch callbacks around a change of tenant, as v3's
+      # adapter switch! did, so `AbstractAdapter.set_callback(:switch, ...)` fires
+      # on entering a tenant and on leaving it: a :before callback sees the tenant
+      # being left, an :after callback the tenant entered. The adapter is resolved
+      # only when a :switch callback is set, so a switch without any stays a plain
+      # CurrentAttributes assignment.
+      def run_switch_callbacks(&)
+        return yield unless switch_callbacks?
+
+        adapter.run_callbacks(:switch, &)
+      end
+
+      # Scans the adapter classes first, so a switch never resolves the adapter
+      # when no :switch callback is set anywhere (a callback set on
+      # AbstractAdapter reaches every subclass, one set on a concrete adapter
+      # lives on that class only), then answers for the adapter in use.
+      def switch_callbacks?
+        base = Apartment::Adapters::AbstractAdapter
+        return false if [base, *base.descendants].all? { |klass| klass.__callbacks[:switch].empty? }
+
+        current = adapter
+        current.is_a?(base) && !current.class.__callbacks[:switch].empty?
+      end
+
+      # Leaves the tenant on the way out of a block switch. The assignment is
+      # repeated after the callbacks so a raising callback cannot leave the
+      # block's tenant in place.
+      def restore_tenant(previous)
+        run_switch_callbacks do
+          Current.tenant = previous
+          Current.previous_tenant = nil
+        end
+      ensure
+        Current.tenant = previous
+        Current.previous_tenant = nil
       end
 
       def adapter

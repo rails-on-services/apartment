@@ -67,6 +67,81 @@ RSpec.describe(Apartment::Tenant) do
     end
   end
 
+  # README documents AbstractAdapter.set_callback(:switch, ...); v3 ran them in
+  # the adapter's switch!, v4 runs them wherever the tenant changes.
+  describe ':switch callbacks' do
+    let(:log) { [] }
+    let(:callback_adapter_class) { stub_const('SwitchCallbackAdapter', Class.new(Apartment::Adapters::AbstractAdapter)) }
+
+    # Callbacks are instance_exec'd on the adapter, so they reach the log through a local.
+    before do
+      entries = log
+      Apartment.adapter = callback_adapter_class.new({})
+      callback_adapter_class.set_callback(:switch, :before) { entries << [:before, Apartment::Current.tenant] }
+      callback_adapter_class.set_callback(:switch, :after) { entries << [:after, Apartment::Current.tenant] }
+      Apartment::Current.tenant = 'base'
+    end
+
+    # The stubbed class outlives the example among AbstractAdapter.descendants.
+    after { callback_adapter_class.reset_callbacks(:switch) }
+
+    it 'run on entering the block and on leaving it, before and after the tenant changes' do
+      described_class.switch('tenant1') { log << [:inside, Apartment::Current.tenant] }
+
+      expect(log).to(eq([[:before, 'base'], [:after, 'tenant1'], [:inside, 'tenant1'],
+                         [:before, 'tenant1'], [:after, 'base']]))
+    end
+
+    it 'run on switch! and reset' do
+      described_class.switch!('tenant1')
+      described_class.reset
+
+      expect(log).to(eq([[:before, 'base'], [:after, 'tenant1'], [:before, 'tenant1'], [:after, 'public']]))
+    end
+
+    it 'run on entering and leaving with_default_tenant' do
+      described_class.with_default_tenant { nil }
+
+      expect(log).to(eq([[:before, 'base'], [:after, 'public'], [:before, 'public'], [:after, 'base']]))
+    end
+
+    it 'do not run for with_default_tenant in the default tenant, which changes nothing' do
+      described_class.switch!('public')
+      log.clear
+      described_class.with_default_tenant { nil }
+
+      expect(log).to(be_empty)
+    end
+
+    it 'restores the tenant when a callback raises on the way out' do
+      raising = false
+      callback_adapter_class.set_callback(:switch, :before) { raise('callback failed') if raising }
+
+      expect { described_class.switch('tenant1') { raising = true } }.to(raise_error(RuntimeError, 'callback failed'))
+      expect(Apartment::Current.tenant).to(eq('base'))
+      expect(Apartment::Current.previous_tenant).to(be_nil)
+    end
+
+    it 'run callbacks set on AbstractAdapter itself' do
+      entries = log
+      # README's registration, on the base class itself; reset in the ensure below.
+      base = Apartment::Adapters::AbstractAdapter
+      base.set_callback(:switch, :after) { entries << :base_callback }
+      described_class.switch!('tenant1')
+
+      expect(log).to(include(:base_callback))
+    ensure
+      Apartment::Adapters::AbstractAdapter.reset_callbacks(:switch)
+    end
+
+    it 'leave the adapter alone when no :switch callback is set' do
+      callback_adapter_class.reset_callbacks(:switch)
+      Apartment.adapter = mock_adapter
+
+      expect { described_class.switch('tenant1') { nil } }.not_to(raise_error)
+    end
+  end
+
   describe '.reload_schema_cache!' do
     let(:acme_cache)    { double('schema_cache', clear!: nil) }
     let(:widgets_cache) { double('schema_cache', clear!: nil) }
