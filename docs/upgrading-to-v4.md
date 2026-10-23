@@ -72,6 +72,16 @@ end
 
 `Apartment::Tenant.current` is unchanged between v3 and v4.
 
+**A switch no longer checks that the tenant exists.** v3's switch changed the connection (`SET search_path`, or a connect to the tenant's database) and raised `Apartment::TenantNotFound` when the schema or database was missing. A v4 switch only sets `Apartment::Current.tenant`; the tenant's pool is built by the first query, so a missing tenant fails there instead, with the engine's own error. On PostgreSQL schema-per-tenant that is an undefined-table error, because PostgreSQL skips a missing schema in `search_path` and the query falls through to the persistent schemas. Requests are covered by the elevator's tenant validation (see [Elevator Tenant Validation](#elevator-tenant-validation)). Code outside a request that rescued `TenantNotFound` around a switch (jobs, rake tasks, admin tools) gets no exception to rescue; check first:
+
+```ruby
+raise(Apartment::TenantNotFound, tenant) unless Apartment.tenant_validator.call(tenant)
+
+Apartment::Tenant.switch(tenant) { ... }
+```
+
+`tenant_validator` answers from `tenants_provider`, not from the database. The same laziness affects code that switches into a tenant and then creates it: it works while nothing queries before `Tenant.create`, but a query there builds the tenant's pool against a schema with no tables, and in development `check_pending_migrations` rejects that pool. Create the tenant first, or switch only around work that runs after the create.
+
 ### New v4 predicates and guard (optional)
 
 Two new predicates and a config flag landed in 4.0.0.alpha3 to support strict tenant discipline. All are opt-in; defaults preserve existing behavior.
@@ -176,7 +186,7 @@ config.active_support.isolation_level = :fiber
 
 The Railtie emits a boot-time warning when `isolation_level` is `:thread`.
 
-Two caveats apply at `:fiber`:
+Three caveats apply at `:fiber`:
 
 - **`ActionController::Live`**: works out of the box under both `:thread` and `:fiber` isolation. Apartment v4 prepends `ActionController::Live#process` with `Apartment::Patches::LiveTenantPropagation`, which mirrors `Fiber.current.active_support_execution_state` onto `Thread.current`'s accessor for the duration of the request. Rails' own `share_with` then finds the right data and propagates *all* `CurrentAttributes` (apartment's tenant plus any app-defined ones) into the spawned streaming thread. No user code changes required for the standard case. This is a backport of [rails/rails#56902](https://github.com/rails/rails/pull/56902) and will become a redundant no-op once that change reaches a stable Rails release. Caveats:
   - **User-spawned threads or fibers inside a Live action** (`Thread.new { ... }`, `Async {}`, raw `Fiber.new`) are not covered and still need explicit `Apartment::Tenant.switch` wrapping — same contract `:fiber` isolation imposes everywhere else.
@@ -184,6 +194,7 @@ Two caveats apply at `:fiber`:
 
   See [`docs/designs/rails-boundary-tenancy.md`](designs/rails-boundary-tenancy.md).
 - Child fibers spawned inside a request (`Fiber.new { ... }.resume`) get their own attribute store and do not inherit the parent fiber's `CurrentAttributes` — see [rails/rails#48279](https://github.com/rails/rails/issues/48279) (closed as "not planned"). Use `Apartment::Tenant.switch` inside the child fiber, not before it.
+- **External enumeration runs on a fiber too.** `Enumerator#next` and `#peek` run the enumerator's block on a fiber of its own, so under `:fiber` isolation that block sees no tenant and its queries go to the default tenant. That covers an `Enumerator.new` or `Enumerator::Lazy` consumed with `next`, and library code that pulls rows that way (some streaming and CSV export helpers do); internal iteration (`each`, `find_each`, `in_batches`) is unaffected. Switch inside the enumerator's block, or stay on `:thread` isolation if such code is hard to find.
 
 ### Pinned Model Connections
 
@@ -229,6 +240,12 @@ Key config options for pool tuning:
 | `max_total_connections` | nil | **Deprecated** (removed in v5); aliases `max_tenant_pools` |
 | `pool_overflow_policy` | `:evict_idle` | At-capacity-with-no-idle-pool behavior: `:evict_idle` (soft) or `:raise` (hard) |
 | `reap_in_test` | `false` | Keep the reaper running under `Rails.env.test?`; `true` avoids a boot guard for deployments that run test-env semantics |
+
+### Raw SQL that names a pinned table
+
+On PostgreSQL schema-per-tenant with `force_separate_pinned_pool`, a pinned model keeps its **unqualified** table name, `accounts` rather than `public.accounts`. The model is unaffected: its own pool's `search_path` is the default tenant. SQL that names the table without going through the model is not. A tenant connection resolves `accounts` through the tenant's `search_path`, and with `schema_load_strategy: :schema_rb` (or `:sql`) every tenant schema has its own copy of every table in the schema file, pinned ones included, empty and ahead of the default tenant. A raw query, a string `joins`, or a database view created in a tenant schema then reads the empty copy and returns no rows, with nothing raised.
+
+v3's `excluded_models` set the table name to `public.accounts`, so SQL written against v3, or built from `Account.table_name`, could use the bare name. Name the default tenant's table explicitly (`"public.#{Account.table_name}"` when building SQL), or read it through the model. Without `force_separate_pinned_pool` the table name is qualified, as in v3.
 
 ## Migration Steps
 

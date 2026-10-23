@@ -69,6 +69,30 @@ rspec-rails runs the reset (`before_setup`) inside a *group-level* `around` hook
 
 **The rule: establish tenant context in `before(:each)`, on every example.**
 
+### Inside Rails' executor
+
+The same reset happens again wherever Rails wraps work in its executor, which clears every `CurrentAttributes` when it starts — after your `before(:each)`:
+
+- **Controller specs** (`ActionController::TestCase`) run each `get`/`post` inside the executor, so the action runs with no tenant. A real request gets its tenant from the elevator, inside the executor; a controller spec has no elevator. Prefer request specs, which go through the elevator, or switch inside the executor:
+
+  ```ruby
+  # spec/support/controller_tenant.rb
+  module ControllerTenant
+    private
+
+    # Reads the example's tenant before the executor resets it, then switches inside.
+    def wrap_execution(&)
+      tenant = Apartment::Current.tenant
+      return super unless tenant
+
+      super { Apartment::Tenant.switch(tenant, &) }
+    end
+  end
+  ActionController::TestCase::Behavior.prepend(ControllerTenant)
+  ```
+
+- **Jobs performed by the test adapter** (`perform_enqueued_jobs`, `perform_now`) run through `ActiveJob::Base.execute`, inside the executor, so the job runs with no tenant even when it was enqueued inside one. In production a job backend's middleware usually carries the tenant (apartment-sidekiq stamps it on the job and switches around `perform`); under the test adapter nothing does. Carry it the same way: add the tenant in `serialize`, keep it in `deserialize`, and switch around `perform_now`. An `around_perform` callback is too late for code that reads the tenant while the job is deserialized (GlobalID arguments are located then).
+
 ## Cross-pool transaction visibility
 
 v4 uses pool-per-tenant connection routing. Each tenant gets its own connection pool, and a transaction held on one pool's connection is invisible to another pool's connection — even within the same test example.
@@ -113,6 +137,47 @@ end
 ```
 
 Apartment intentionally does not provide a "shared connection across all pools in test mode" option. That would diverge test behavior from production pool semantics in a way that hides real bugs.
+
+### DatabaseCleaner `:transaction` covers one connection
+
+Rails' transactional fixtures pin **every** writing pool, and pin pools created later in the example as they appear (a `!connection.active_record` subscriber). DatabaseCleaner's `:transaction` strategy opens its transaction on the one connection it leases when the example starts. Under pool-per-tenant, every pool the example reaches afterwards — the tenant's, after a switch, or a pinned model's separate pool — has no transaction, so its writes commit and leak into later examples. DatabaseCleaner suites need the fixtures' behaviour:
+
+```ruby
+# spec/support/pinned_transaction.rb
+class PinnedTransaction < DatabaseCleaner::ActiveRecord::Transaction
+  def start
+    @pinned = []
+    ActiveRecord::Base.connection_handler.connection_pool_list(:writing).each { |pool| pin(pool) }
+    @subscriber = ActiveSupport::Notifications.subscribe('!connection.active_record') do |*, payload|
+      pool = ActiveRecord::Base.connection_handler.retrieve_connection_pool(
+        payload[:connection_name], role: payload[:role], shard: payload[:shard]
+      )
+      pin(pool) if pool
+    end
+  end
+
+  def clean
+    return unless @pinned
+
+    ActiveSupport::Notifications.unsubscribe(@subscriber)
+    @pinned.each(&:unpin_connection!)
+    @pinned = nil
+  end
+
+  private
+
+  def pin(pool)
+    return if @pinned.include?(pool)
+
+    pool.pin_connection!(true)
+    @pinned << pool
+  end
+end
+
+DatabaseCleaner[:active_record].strategy = PinnedTransaction.new
+```
+
+Each pool still has its own transaction, so the cross-pool visibility rule above applies unchanged.
 
 ## Cleaning shared (default) tenant data between specs
 
@@ -228,6 +293,23 @@ What to do instead, depending on the call site:
 - **Cleanup hook in a cross-tenant spec** (the most common cause): the spec needs to cycle pools mid-suite. See ["Cycling pools mid-suite"](#cycling-pools-mid-suite) below for the documented opt-out recipe.
 - **Suite bootstrap or teardown**: move the call out of any `before(:each)` / `after(:each)` that runs under transactional fixtures. `before(:suite)` and `after(:suite)` are safe; `before(:all)` and `after(:all)` are safe if `use_transactional_tests` is the default (Rails enrols the fixture tx per-example, not per-group).
 - **Production cleanup script that imports Rails**: not a real call site, but if it shows up, ensure the script runs outside `Rails.env.test?` or call the pool-manager's `clear` directly.
+
+### Pools of tenants created inside an example
+
+A tenant created inside an example's transaction (`create(:account)`, a `Tenant.create` under test) is rolled back with it, but the pool its first query built is not: Apartment keeps it, and with the reaper stopped in tests (below) nothing ever removes it. Each holds a connection open, so a large suite that creates tenants climbs towards the database's `max_connections` and fails late with PostgreSQL's `FATAL: sorry, too many clients already`. After the example's cleanup has run, deregister every pool except the suite's standing tenants':
+
+```ruby
+RSpec.configure do |config|
+  config.append_after do
+    standing = %w[app tenant1]
+    keys = []
+    Apartment.pool_manager.each_pair { |key, _pool| keys << key }
+    keys.each { |key| Apartment.deregister_shard(key) unless standing.include?(key.rpartition(':').first) }
+  end
+end
+```
+
+It has to run after the cleaning strategy has unpinned the pools (`append_after` runs after the hooks declared before it), for the reason [the invariant](#the-invariant) gives.
 
 ### Pool reaper
 
