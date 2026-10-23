@@ -514,7 +514,7 @@ module Apartment
         if shared_pinned_connection?
           qualify_pinned_table_name(klass)
         else
-          klass.establish_connection(pinned_model_config)
+          establish_pinned_connections(klass)
           klass.apartment_mark_processed!
         end
       end
@@ -769,13 +769,45 @@ module Apartment
         config.merge('pool' => size)
       end
 
-      # Connection config for pinned models on the separate-pool path.
+      # Separate-pool path. The model keeps the pool it always got, for the
+      # current (:writing) role, and gets one more for every other role its
+      # inherited connection has a pool for, such as the :reading role of an app
+      # that routes reads with connects_to. Rails looks a model's pool up by
+      # role, so without these a pinned read inside connected_to(role: :reading)
+      # raised ActiveRecord::ConnectionNotDefined. Each one is built from that
+      # role's own config (the replica, for :reading), pinned to the default
+      # tenant like the :writing pool.
+      def establish_pinned_connections(klass)
+        handler = ActiveRecord::Base.connection_handler
+        inherited = klass.connection_specification_name
+        established_role = ActiveRecord::Base.current_role
+        klass.establish_connection(pinned_model_config)
+
+        other_roles = handler.connection_pool_list(:all).map(&:role).uniq - [established_role]
+        other_roles.each do |role|
+          pool = handler.retrieve_connection_pool(inherited, role: role, shard: ActiveRecord::Base.default_shard)
+          establish_pinned_role_connection(klass, role, pool.db_config) if pool
+        end
+      end
+
+      def establish_pinned_role_connection(klass, role, role_db_config)
+        db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(
+          role_db_config.env_name,
+          role_db_config.name,
+          pinned_model_config(role_db_config.configuration_hash.transform_keys(&:to_s))
+        )
+        ActiveRecord::Base.connection_handler.establish_connection(
+          db_config, owner_name: klass, role: role, shard: ActiveRecord::Base.default_shard
+        )
+      end
+
+      # Connection config for pinned models on the separate-pool path, built
+      # from +config+ (the adapter's base config, or another role's).
       # For schema strategy, pins schema_search_path to the default tenant
       # (plus persistent schemas) so the connection resolves tables and FK
       # constraints in the correct schema.
-      # For database strategies, returns base_config unchanged.
-      def pinned_model_config
-        config = base_config
+      # For database strategies, returns the config unchanged.
+      def pinned_model_config(config = base_config)
         return config unless Apartment.config.tenant_strategy == :schema
 
         persistent = Apartment.config.postgres_config&.persistent_schemas || []

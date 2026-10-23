@@ -215,6 +215,8 @@ end
 
 For PG database-per-tenant and SQLite, pinned model behavior is unchanged from v3. For MySQL multi-server setups where tenant databases are on different hosts, set `force_separate_pinned_pool: true`.
 
+On the separate-pool path a pinned model gets a pool for each role its connection has: the `:writing` one, plus one for every other role the app connects with, such as the `:reading` role of `connects_to database: { writing: :primary, reading: :replica }`. Each is built from that role's own configuration with the default tenant's search path, so a pinned model read inside `connected_to(role: :reading)` goes to the replica's default tenant.
+
 `pin_tenant` defers processing until the class body closes (when called after `Apartment.activate!`), so `self.table_name`, `table_name_prefix`, and `table_name_suffix` can appear anywhere in the class body. No ordering requirement between `pin_tenant` and table name configuration. For readability, declare table name configuration first thing in the class body, even before `include`/`prepend` statements. This works for standard `class MyModel < ApplicationRecord` definitions (source-parsed files loaded by Zeitwerk). For `MyModel = Class.new(ApplicationRecord) { ... }` style, the deferral cannot fire; call `Apartment.process_pinned_model(MyModel)` explicitly after assigning the constant.
 
 Key config options for pool tuning:
