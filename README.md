@@ -336,7 +336,7 @@ Rake tasks:
 - `apartment:seed`: seed all tenants
 - `apartment:rollback`: rollback last migration on all tenants
 
-The Railtie hooks the primary `db:migrate` task (when defined) so that tenant migrations run after the primary database migrates.
+The Railtie hooks `db:migrate`, and the primary database's `db:migrate:NAME` in a multi-database app, so that tenant migrations run after the primary database migrates. The primary is the database named `primary`, or else the first one configured.
 
 ### Parallel Migrations
 

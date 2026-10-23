@@ -131,19 +131,35 @@ module Apartment
     rake_tasks do
       load File.expand_path('tasks/v4.rake', __dir__)
 
-      # Enhance db:migrate:DBNAME to also run apartment:migrate.
-      # configs_for and task_defined? are pure config/rake lookups — no DB
-      # connection is made, so no rescue is needed.
-      primary_db_name = ActiveRecord::Base.configurations
-        .configs_for(env_name: Rails.env)
-        .find { |c| c.name == 'primary' }
-        &.name || 'primary'
+      Apartment::Railtie.enhance_migrate_tasks!
+    end
 
-      if Rake::Task.task_defined?("db:migrate:#{primary_db_name}")
-        Rake::Task["db:migrate:#{primary_db_name}"].enhance do
+    # Run apartment:migrate after the primary database migrates: after
+    # db:migrate, and after db:migrate:NAME for the primary database.
+    #
+    # Rails defines db:migrate:NAME only when the environment has more than one
+    # database, so a single-database app has db:migrate alone and needs that
+    # hook. The primary is the configuration named "primary" or, failing that,
+    # the first one (Rails' own rule), so a database named anything else is
+    # still found. Rake invokes apartment:migrate once per process, so running
+    # both tasks migrates the tenants once.
+    #
+    # configs_for and task_defined? are pure config/rake lookups — no DB
+    # connection is made, so no rescue is needed. Class method for testability.
+    def self.enhance_migrate_tasks!
+      ['db:migrate', primary_migrate_task_name].compact.each do |task_name|
+        next unless Rake::Task.task_defined?(task_name)
+
+        Rake::Task[task_name].enhance do
           Rake::Task['apartment:migrate'].invoke if Rake::Task.task_defined?('apartment:migrate')
         end
       end
+    end
+
+    def self.primary_migrate_task_name
+      configs = ActiveRecord::Base.configurations.configs_for(env_name: Rails.env)
+      primary = configs.find { |c| c.name == 'primary' } || configs.first
+      "db:migrate:#{primary.name}" if primary
     end
 
     # Insert elevator middleware after ActionDispatch::Callbacks.

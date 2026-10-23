@@ -139,7 +139,7 @@ Sink-agnostic subscriber for the pool events (`create`/`evict`/`cap_unmet`/`skip
 Three hooks in Rails boot order:
 1. `config.after_initialize` — Guards on `Apartment.config.nil?`, warns if isolation_level is `:thread`, calls `activate!` and `Tenant.init`
 2. `initializer 'apartment.middleware'` — Inserts elevator if `config.elevator` set, resolves via `resolve_elevator_class` (symbols, strings, or classes), passes `elevator_options` as keyword args, emits boot-time trust warning for Header elevator without `trusted: true`
-3. `rake_tasks` — Loads `tasks/v4.rake` (apartment:create, :drop, :migrate, :seed, :rollback)
+3. `rake_tasks` — Loads `tasks/v4.rake` (apartment:create, :drop, :migrate, :seed, :rollback), then `enhance_migrate_tasks!` runs `apartment:migrate` after `db:migrate` and after the primary database's `db:migrate:NAME`. Both are needed: Rails defines `db:migrate:NAME` only when there is more than one database, so a single-database app has `db:migrate` alone, and the primary is the database named `primary` or else the first, so it can be named anything.
 
 ### migrator.rb — Migration Orchestrator
 

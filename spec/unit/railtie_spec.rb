@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'rake'
 
 # spec_helper.rb deliberately does not load Rails — the gem suite is
 # Rails-free (see spec/support/rails_stub.rb). This spec self-requires
@@ -142,6 +143,88 @@ if railtie_loaded
       it 'does not emit the warning for a non-Header elevator' do
         configure_with(elevator: :subdomain)
         expect { initializer.run(app) }.not_to(output(/Header elevator/).to_stderr)
+      end
+    end
+
+    describe '.enhance_migrate_tasks!' do
+      let(:migrated) { [] }
+
+      around do |example|
+        original_app = Rake.application
+        Rake.application = Rake::Application.new
+        example.run
+      ensure
+        Rake.application = original_app
+      end
+
+      before do
+        allow(Rails).to(receive(:env).and_return(ActiveSupport::StringInquirer.new('test')))
+        Rake::Task.define_task('apartment:migrate') { migrated << :tenants }
+      end
+
+      # The hook reads only each database configuration's name.
+      def stub_databases(*names)
+        db_config = Data.define(:name)
+        configs = names.map { |name| db_config.new(name:) }
+        configurations = double('configurations')
+        allow(configurations).to(receive(:configs_for).with(env_name: 'test').and_return(configs))
+        allow(ActiveRecord::Base).to(receive(:configurations).and_return(configurations))
+      end
+
+      def define_migrate_tasks(*names)
+        names.each { |name| Rake::Task.define_task(name) { migrated << name } }
+      end
+
+      # Rails defines db:migrate:NAME only for more than one database.
+      it 'hooks db:migrate in a single-database app, whatever the database is named' do
+        stub_databases('db_master')
+        define_migrate_tasks('db:migrate')
+
+        Apartment::Railtie.enhance_migrate_tasks!
+        Rake::Task['db:migrate'].invoke
+
+        expect(migrated).to(eq(['db:migrate', :tenants]))
+      end
+
+      it "hooks the primary database's own task, not the others'" do
+        stub_databases('primary', 'animals')
+        define_migrate_tasks('db:migrate', 'db:migrate:primary', 'db:migrate:animals')
+
+        Apartment::Railtie.enhance_migrate_tasks!
+        Rake::Task['db:migrate:animals'].invoke
+        Rake::Task['db:migrate:primary'].invoke
+
+        expect(migrated).to(eq(['db:migrate:animals', 'db:migrate:primary', :tenants]))
+      end
+
+      it 'takes the first database as the primary when none is named primary' do
+        stub_databases('db_master', 'db_audit')
+        define_migrate_tasks('db:migrate', 'db:migrate:db_master', 'db:migrate:db_audit')
+
+        Apartment::Railtie.enhance_migrate_tasks!
+        Rake::Task['db:migrate:db_audit'].invoke
+        Rake::Task['db:migrate:db_master'].invoke
+
+        expect(migrated).to(eq(['db:migrate:db_audit', 'db:migrate:db_master', :tenants]))
+      end
+
+      it 'migrates the tenants once when db:migrate and the primary task both run' do
+        stub_databases('primary', 'animals')
+        define_migrate_tasks('db:migrate', 'db:migrate:primary', 'db:migrate:animals')
+
+        Apartment::Railtie.enhance_migrate_tasks!
+        Rake::Task['db:migrate'].invoke
+        Rake::Task['db:migrate:primary'].invoke
+
+        expect(migrated.count(:tenants)).to(eq(1))
+      end
+
+      it 'hooks nothing that is not defined' do
+        stub_databases
+        Rake.application.clear
+
+        expect { Apartment::Railtie.enhance_migrate_tasks! }.not_to(raise_error)
+        expect(Rake::Task.tasks).to(be_empty)
       end
     end
 
